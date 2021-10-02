@@ -1,0 +1,15 @@
+Parameter,Name,Type,Required,Units,Default,Absolute Minimum,Absolute Maximum,Expected Minimum,Expected Maximum
+TwaterC,Water Temperature,float,true,\u00b0C,0.0,0.0,100.0,4.0,30.0
+q_solar,Solar Radiation,float,true,W/m\u00b2,0.0,0.0,100.0,5.0,100.0
+TairC,Air Temperature,float,true,\u00b0C,0.0,0.0,100.0,5.0,100.0
+wind_kh_kw,Wind Diffusivity Ratio,float,true,unitless,0.0,0.0,100.0,5.0,100.0
+eair_mb,Vapor Pressure,float,true,mb,0.0,0.0,100.0,5.0,100.0
+pressure_mb,Air Pressure,float,true,mb,0.0,0.0,100.0,5.0,100.0
+cloudiness,Cloudiness,float,true,unitless,0.1,0.0,1.0,0.1,1.0
+wind_speed,Wind Speed,float,true,m/s,0.0,0.0,100.0,5.0,100.0
+wind_a,\a\ Coefficient of the Wind Function,float,true,unitless,0.0,0.0,100.0,5.0,100.0
+wind_b,\b\ Coefficient of the Wind Function,float,true,unitless,0.0,0.0,100.0,5.0,100.0
+wind_c,\c\ Coefficient of the Wind Function,float,true,unitless,0.0,0.0,100.0,5.0,100.0
+surface_area,Cell Surface Area,float,true,m\u00b2,10.0,0.01,100000.0,1.0,100.0
+volume,Cell Volume,float,true,m\u00b3,10.0,0.01,100000.0,1.0,100.0
+TsedC,Sediment Temperature,float,false,\u00b0C,5.0,0.0,30.0,4.0,30.0
