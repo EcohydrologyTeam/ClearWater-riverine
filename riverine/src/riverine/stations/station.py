@@ -1,6 +1,6 @@
 import pandas
-import seaborn
-import numpy
+import seaborn as sns
+import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
 import os
@@ -8,6 +8,26 @@ import sys
 
 local_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, local_path)
+
+plt.style.use('seaborn')
+plt.rcParams['figure.figsize'] = (12,5)
+plt.rcParams['grid.color'] = '#AAAAAA'
+plt.rcParams['lines.linewidth'] = 1
+plt.rcParams['axes.facecolor'] = '#FBFBFB'
+plt.rcParams["axes.edgecolor"] = '#222222'
+plt.rcParams["axes.linewidth"] = 0.5
+bluegreen = '#044035'
+plt.rcParams['xtick.color'] = bluegreen # tomato, seagreen
+plt.rcParams['ytick.color'] = bluegreen
+# Shrink the vertical space between subplots
+plt.rcParams['figure.subplot.hspace'] = 0.05
+
+# Set custom colors for plot curves
+# (blue, teal, green, yellow, orange, red)
+# num_lines = 6
+# custom_colors = sns.color_palette("coolwarm", num_lines)
+custom_colors = ['#1F75FE', '#0099C6', '#109618', '#FCE030', '#FF9900', '#DC3912']
+#1E90FF #1F75FE #0096FF #00BFFF #4166F5
 
 
 class Station:
@@ -98,12 +118,14 @@ class Station:
         self.data = pandas.read_hdf(file_path, data_path)
 
     def plot(self, variables: list = []):
-        seaborn.set(rc={'figure.figsize': self.figure_size})
+        # sns.set(rc={'figure.figsize': self.figure_size})
         if variables == []:
             variables = self.data.keys()
         for variable in variables:
             df = self.data[variable]
-            ax = df.plot()
+            # ax = df.plot(color=custom_colors[0])
+            ax = df.plot(color=custom_colors[0])
+            ax.set_prop_cycle("color", custom_colors)
             units = df.attrs['units']
             ax.ticklabel_format(axis='y', useOffset=False)
             ax.set_ylabel(f'{variable} ({units})')
@@ -132,9 +154,8 @@ class Station:
         try:
             interp_value: float = df_interp[variable_name].iloc[0]
         except AttributeError:
-            interp_value = numpy.nan
+            interp_value = np.nan
         return interp_value
-
 
 
 def interpolate_dataframe(df, target_date: str) -> pandas.DataFrame:
