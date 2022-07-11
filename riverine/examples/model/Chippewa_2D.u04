@@ -1,0 +1,159 @@
+Flow Title=2019-test
+Program Version=6.00
+Use Restart= 0 
+Restart Filename=Chippewa_2D.p09.01APR2019 2400.rst
+Initial Flow Loc=                ,                ,        ,18000
+Initial Storage Elev=Perimeter 1     ,679
+Boundary Location=                ,                ,        ,        ,                ,Chippewa        ,                ,Chippewa                        
+Interval=1DAY
+Flow Hydrograph= 93 
+    5770    5760    6200    5630    6400    6970    6610    6100    6620    6450
+    6160    5310    4980    7890   11600   19700   19900   24700   22300   19600
+   22100   22900   29100   31500   34300   33000   31000   31400   34800   36300
+   34500   31400   25900   19000   19800   19400   20500   22200   28400   36600
+   41700   42500   36600   26300   22400   17400   21200   27700   39700   53600
+   65000   61600   48200   40400   36600   37400   37200   34700   29500   27800
+   24700   22600   20600   19000   19200   14900   14500   14700   13600   18400
+   26200   31700   29600   23700   18700   17300   14700   13500   15400   17700
+   34000   51400   65700   60100   44700   34100   28100   26100   26100   32500
+   34100   27500   21100
+Stage Hydrograph TW Check=0
+Flow Hydrograph Slope= 0.00036 
+DSS Path=
+Use DSS=False
+Use Fixed Start Time=True
+Fixed Start Date/Time=01mar2019,12:00
+Is Critical Boundary=False
+Critical Boundary Flow=
+Boundary Location=                ,                ,        ,        ,                ,Chippewa        ,                ,Lake Pepin                      
+Interval=1DAY
+Flow Hydrograph= 93 
+   11800   12300   12400   12200   12400   11900   11700   11800   12700   13000
+   13300   14000   14800   19300   24400   27400   31100   34600   37500   40600
+   45400   53100   64100   85700  102000  102000  102000  102000  102000  102000
+  103000  103000  103000  103000  103000  103000  104000  104000  104000  104000
+  104000  104000  105000  105000  105000  105000  105000  105000  106000  106000
+  106000  106000  106000  106000  107000  107000  107000  107000  107000  107000
+  106000  101000   96400   91900   91800   93000   90600   88300   82600   81700
+   79000   76400   78400   81100   83600   85700   85800   82300   82800   81700
+   81800   82600   86800   89700   93900   94800   95300   97300   99000  100000
+  102000  102000  101000
+Stage Hydrograph TW Check=0
+Flow Hydrograph Slope= 0.00016 
+DSS File=..\..\2018\ChippewaRiverBedload\RAS_Final\Sediment\Chippewa.dss
+DSS Path=/MISSISSIPPI R LAKE PEPIN/765.51/FLOW/01JAN1974/1DAY/1974-1979/
+Use DSS=False
+Use Fixed Start Time=True
+Fixed Start Date/Time=01mar2019,12:00
+Is Critical Boundary=False
+Critical Boundary Flow=
+Boundary Location=                ,                ,        ,        ,                ,Chippewa        ,                ,LD4                             
+Interval=1DAY
+Stage Hydrograph= 93 
+  666.68  666.81  666.82   666.8  666.83  666.87  666.86  666.87  666.87  666.98
+  666.98  667.12  667.19  667.19  667.49     666  666.86   666.5  666.58  666.76
+  667.01  667.24  667.48  667.37  668.25  669.37  670.12  670.79  671.24  671.56
+  671.82  671.98  672.04  671.83  671.37  671.04  670.73  670.46   670.3  670.26
+  670.33  670.46  670.62   670.5  669.92  669.42  668.94  668.78  669.14   669.8
+  670.53  671.29  671.69  671.64  671.33  671.16  671.18   671.1  670.98   670.6
+  670.32  669.92  669.51  669.11  668.69  668.39  667.99  667.61  667.28  667.25
+  667.28  667.54  667.85  667.94  667.76  667.48  667.39  667.16  666.87  666.96
+  667.12  667.66  668.51  669.81  670.24  670.06  669.69  669.36  669.37   669.5
+  669.75   669.9   669.8
+Stage Hydrograph Use Initial Stage=-1
+Stage Hydrograph TW Check=0
+DSS File=..\..\2018\ChippewaRiverBedload\RAS_Final\Sediment\Chippewa.dss
+DSS Path=/MISSISSIPPI R LOWER POOL 4/754.00/STAGE/01JAN1974/1DAY/1974-1979/
+Use DSS=False
+Use Fixed Start Time=True
+Fixed Start Date/Time=01mar2019,12:00
+Is Critical Boundary=False
+Critical Boundary Flow=
+Boundary Location=                ,                ,        ,        ,                ,Perimeter 1     ,                ,Upstream                        
+Interval=1DAY
+Flow Hydrograph= 35 
+18093.43 20945.317590.3917795.6817894.2518799.35 21183.925784.34 29417.631212.03
+30869.3327557.3622019.8118605.3317883.1320663.0426045.1431659.6335918.0138000.63
+36393.5732851.6630240.1329036.32 29247.228879.45 27243.424800.8523211.5921170.78
+19524.8518062.4918160.14 16979.614304.42
+Stage Hydrograph TW Check=0
+Flow Hydrograph Slope= 0.00022 
+DSS Path=
+Use DSS=False
+Use Fixed Start Time=False
+Fixed Start Date/Time=,
+Is Critical Boundary=False
+Critical Boundary Flow=
+Boundary Location=                ,                ,        ,        ,                ,Perimeter 1     ,                ,Downstream                      
+Interval=1DAY
+Stage Hydrograph= 35 
+ 679.743 680.239 679.775 679.757  679.75 679.793 680.173 680.986 681.454 681.663
+ 681.645  681.29 680.392 679.857 679.761 680.123 681.006 681.679 682.136 682.386
+ 682.247 681.879 681.591 681.441 681.463 681.426 681.243  680.88 680.593 680.228
+ 679.936 679.786 679.755 679.748 679.743
+Stage Hydrograph Use Initial Stage=-1
+Stage Hydrograph TW Check=0
+DSS Path=
+Use DSS=False
+Use Fixed Start Time=False
+Fixed Start Date/Time=,
+Is Critical Boundary=False
+Critical Boundary Flow=
+Met Point Raster Parameters=,,,,
+Precipitation Mode=Disable
+Wind Mode=No Wind Forces
+Air Density Mode=
+Met BC=Precipitation|Expanded View=0
+Met BC=Precipitation|Point Interpolation=Nearest
+Met BC=Precipitation|Gridded Source=DSS
+Met BC=Evapotranspiration|Expanded View=0
+Met BC=Evapotranspiration|Point Interpolation=Nearest
+Met BC=Evapotranspiration|Gridded Source=DSS
+Met BC=Wind Speed|Expanded View=0
+Met BC=Wind Speed|Constant Units=ft/s
+Met BC=Wind Speed|Point Interpolation=Nearest
+Met BC=Wind Speed|Gridded Source=DSS
+Met BC=Wind Direction|Expanded View=0
+Met BC=Wind Direction|Point Interpolation=Nearest
+Met BC=Wind Direction|Gridded Source=DSS
+Met BC=Wind Velocity X|Expanded View=0
+Met BC=Wind Velocity X|Constant Units=ft/s
+Met BC=Wind Velocity X|Point Interpolation=Nearest
+Met BC=Wind Velocity X|Gridded Source=DSS
+Met BC=Wind Velocity Y|Expanded View=0
+Met BC=Wind Velocity Y|Constant Units=ft/s
+Met BC=Wind Velocity Y|Point Interpolation=Nearest
+Met BC=Wind Velocity Y|Gridded Source=DSS
+Met BC=Air Density|Mode=Constant
+Met BC=Air Density|Expanded View=0
+Met BC=Air Density|Constant Value=1.225
+Met BC=Air Density|Point Interpolation=Nearest
+Met BC=Air Density|Gridded Source=DSS
+Met BC=Air Temperature|Expanded View=0
+Met BC=Air Temperature|Point Interpolation=Nearest
+Met BC=Air Temperature|Gridded Source=DSS
+Met BC=Humidity|Expanded View=0
+Met BC=Humidity|Point Interpolation=Nearest
+Met BC=Humidity|Gridded Source=DSS
+Met BC=Air Pressure|Expanded View=0
+Met BC=Air Pressure|Point Interpolation=Nearest
+Met BC=Air Pressure|Gridded Source=DSS
+Non-Newtonian Method= 0 
+Non-Newtonian Constant Vol Conc=0
+Non-Newtonian Yield Method= 0 
+Non-Newtonian Yield Coef=0, 0
+User Yeild=   0
+Non-Newtonian Sed Visc= 0 
+Non-Newtonian Obrian B=0
+User Viscosity=0
+User Viscosity Ratio=0
+Herschel-Bulkley Coef=0, 0
+Clastic Method= 0 
+Coulomb Phi=0
+Voellmy X=0
+Non-Newtonian Hindered FV= 0 
+Non-Newtonian FV K=0
+Non-Newtonian ds=0
+Non-Newtonian Max Cv=0
+Non-Newtonian Bulking Method= 0 
+Non-Newtonian High C Transport= 0 
