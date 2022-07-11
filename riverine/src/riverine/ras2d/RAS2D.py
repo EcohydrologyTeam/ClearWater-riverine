@@ -81,19 +81,24 @@ class RAS_HDF5:
         self.results = {}
         self.geometry = {}
 
+
+
     def read(self):
         with h5py.File(self.hdf5_file_path, 'r') as infile:
             '''
             Read the Geometry data
             '''
+
+            project_name = infile['Geometry/2D Flow Areas/Attributes'][()][0][0].decode('UTF-8')
+
             # For the Muncie data set: max value: 5773, shape(5765, 7)
-            self.geometry['elements_array'] = infile['Geometry/2D Flow Areas/2D Interior Area/Cells FacePoint Indexes'][()]
+            self.geometry['elements_array'] = infile[f'Geometry/2D Flow Areas/{project_name}/Cells FacePoint Indexes'][()]
             # For the Muncie data set: shape(5774, 2)
-            self.geometry['nodes_array'] = infile['Geometry/2D Flow Areas/2D Interior Area/FacePoints Coordinate'][()]
-            self.geometry['faces_cell_indexes'] = infile['Geometry/2D Flow Areas/2D Interior Area/Faces Cell Indexes'][()]
-            self.geometry['cells_surface_area'] = infile['Geometry/2D Flow Areas/2D Interior Area/Cells Surface Area'][()]
-            self.geometry['faces_normal_unit_vector_and_length'] = infile['Geometry/2D Flow Areas/2D Interior Area/Faces NormalUnitVector and Length'][()]
-            self.geometry['cells_center_coordinate'] = infile['Geometry/2D Flow Areas/2D Interior Area/Cells Center Coordinate'][()]
+            self.geometry['nodes_array'] = infile[f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate'][()]
+            self.geometry['faces_cell_indexes'] = infile[f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes'][()]
+            self.geometry['cells_surface_area'] = infile[f'Geometry/2D Flow Areas/{project_name}/Cells Surface Area'][()]
+            self.geometry['faces_normal_unit_vector_and_length'] = infile[f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length'][()]
+            self.geometry['cells_center_coordinate'] = infile[f'Geometry/2D Flow Areas/{project_name}/Cells Center Coordinate'][()]
             # faces_area_elevation_values = infile['Geometry/2D Flow Areas/2D Interior Area/Faces Area Elevation Values'][()]
 
             self.geometry['face_length'] = self.geometry['faces_normal_unit_vector_and_length'][:,2]
@@ -101,17 +106,25 @@ class RAS_HDF5:
             '''
             Read the Results data
             '''
-            self.results['depth'] = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/2D Interior Area/Depth'][()]
-            self.results['node_x_velocity'] = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/2D Interior Area/Node X Vel'][()]
-            self.results['node_y_velocity'] = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/2D Interior Area/Node Y Vel'][()]
-            self.results['face_velocity'] = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/2D Interior Area/Face Velocity'][()]
-            self.results['face_q'] = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/2D Interior Area/Face Q'][()]
+            self.results['depth'] = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Depth'][()]
+
+            '''
+            NOTE:
+            The node velocities (Node X Vel and Node Y vel) are not automatically written to the HDF output file. 
+            Have to opt into printing them to HDF: https://www.hec.usace.army.mil/software/hec-ras/documentation/HEC-RAS%205.0%202D%20Modeling%20Users%20Manual.pdf
+            How to handle? Try/except? Do we need them?
+            '''
+
+            self.results['node_x_velocity'] = infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Node X Vel'][()]
+            self.results['node_y_velocity'] = infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Node Y Vel'][()]
+            self.results['face_velocity'] = infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Velocity'][()]
+            self.results['face_q'] = infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Q'][()]
             self.results['node_speed'] = numpy.sqrt(self.results['node_x_velocity']**2 + self.results['node_y_velocity']**2)
             time_stamps_binary = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp'][()]
 
             # Read the specified variables, if any
             for variable in self.variables:
-                data_path = f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/2D Interior Area/{variable}'
+                data_path = f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/{variable}'
                 self.results['variable'] = infile[data_path]
 
         # Convert from binary strings to utf8 strings
