@@ -106,7 +106,7 @@ class RAS_HDF5:
             '''
             Read the Results data
             '''
-            self.results['depth'] = infile['Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Depth'][()]
+            self.results['depth'] = infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Depth'][()]
 
             '''
             NOTE:
