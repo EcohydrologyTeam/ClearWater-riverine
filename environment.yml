@@ -1,0 +1,63 @@
+name: ras2d_wq
+channels:
+  - conda-forge
+  # - nodefaults
+
+dependencies:
+  - python =3.9*
+
+  # Pangeo
+  - scipy
+  - intake  # Intake* installs most Pangeo libs
+  - intake-geopandas
+  - intake-parquet
+  - intake-xarray
+  - intake-thredds
+  - intake-stac  # SpatioTemporal Asset Catalogs (STAC), https://stacspec.org
+  - intake-esm  # Earth System Model (ESM) catalog, https://stacspec.org
+  - rasterio
+  - s3fs  # Access to Amazon S3 filesystem
+  - cftime  # Decodes time units and variable values for netCDF using CF conventions
+  - cf_xarray  # Interprets CF Convention attributes for Xarray objects
+  - gridgeo  # Convert UGRID and SGRID compliant files to a variety of geo-like objects. https://github.com/pyoceans/gridgeo
+  - pytables >=3.7  # PyTables is optional, but required for Dask DataFrame.read_hdf()
+  - hdf5plugin  # HDF5 compression filters for h5py
+  - xlrd  # read legacy Excel files (.xls)
+  - openpyxl # read/write Excel 2010+ files (.xlsx & .xlsm)
+
+  # HoloViz, https://holoviz.org
+  - hvplot  # hvPlot installs most HoloViz libs
+  - geoviews
+  # HoloViz optional libs used by bokeh.io to save plots to static files such as png.
+  # https://holoviews.org/user_guide/Plotting_with_Bokeh.html#exporting-static-files
+  # - selenium  # WebDriver for browser automation
+  # https://www.selenium.dev/documentation/webdriver/getting_started/install_drivers/
+  # - webdriver-manager  # https://github.com/SergeyPirogov/webdriver_manager
+ 
+  # Interactivity & Visualization via Jupyter Notebooks
+  - jupyterlab
+  - nb_conda  # Conda environment & package access extension from within Jupyter
+  - ipywidgets  # Required for HoloViz interactivity
+  - seaborn
+
+  # Optional extension dependencies for JupyterLab
+  - nodejs  # required for many extensions
+  - ipympl  # jupyter-matplotlib, https://github.com/matplotlib/ipympl
+  # - qgrid  # https://github.com/quantopian/qgrid
+
+  # Dev tools (optional)
+  # - python-language-server
+  - jupyter-lsp-python  # Includes both the server extension (jupyter-lsp) and pyls third-party server (python-language-server)
+  - jupyterlab-lsp # Docs at https://github.com/krassowski/jupyterlab-lsp
+
+  # package management
+  - conda
+  - conda-build
+
+  # PIP install requirements only if it is not  possible with conda
+  # https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#using-pip-in-an-environment
+  - pip
+  - pip:
+    # - lckr-jupyterlab-variableinspector  # https://github.com/lckr/jupyterlab-variableInspector
+        #turning off variableInspector in case it is the cause for slowness!
+    # - jupyterlab_hdf  # https://github.com/jupyterlab/jupyterlab-hdf5
