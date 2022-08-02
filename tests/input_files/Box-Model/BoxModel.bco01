@@ -1,0 +1,70 @@
+ 
+                                              HEC-RAS - River Analysis System
+ 
+ 
+Project File:  C:\Users\ctaylor\Desktop\Project Files - Local\2ERCDXX - Clear Water\Box Model\BoxModel.prj
+ 
+Project Name:  BoxModel
+ 
+ 
+Plan Name:     Box Model Plan v01
+ 
+Short ID:      Box Model Plan v01
+ 
+
+Starting Time:   01Jan2022 1200
+
+Ending Time:     01Jan2022 1210
+
+
+                ################################################
+                #                                              #
+                #                                              #
+                #       1D and 2D Unsteady Flow Module         #
+                #                                              #
+                #                                              #
+                #          HEC-RAS 6.2 March 2022              #
+                #                                              #
+                #             29JUL22 at 09:09:15              #
+                #                                              #
+                ################################################
+                
+ 
+ 
+ 
+
+         US Inflow      DS Outflow       Lat Hydro        SA Hydro     Groundwater      Diversions   Precip Excess
+         *********      **********       *********        ********     ***********      **********   *************
+                                                                                                                                  
+
+    Start 1D Reach  Final 1D Reach   Starting SA's      Final SA's
+    **************  **************   *************      **********
+                                                                  
+
+
+
+                 ***   Volume Accounting for 2D Flow Area in Acre Feet   ***
+
+           2D Area    Starting Vol      Ending Vol      Cum Inflow     Cum Outflow           Error   Percent Error
+           *******    ************      **********      **********     ***********           *****   *************
+ 
+ 
+               Box         0.02333         0.02988           2.342           2.335        0.000000        0.000001
+
+
+
+                 ***   Total Volume Accounting (for the entire model) in Acre Feet   ***
+
+Total Boundary Flux of Water In            2.342
+Total Boundary Flux of Water Out           2.335
+
+Starting Volume                          0.02333
+Ending Volume                            0.02988
+
+
+                             Error   Percent Error
+                             *****   *************
+                          0.000000        0.000001
+
+
+

@@ -1,0 +1,67 @@
+Geom Title=Box Model Geo v01
+Program Version=6.20
+Viewing Rectangle= 1641466.26 , 1641530.73 , 668960.2 , 668925.34 
+
+Storage Area=Box             ,1641498.493195,668942.7694988
+Storage Area Surface Line= 5 
+1641514.52856709668958.616219533                
+1641514.52856709668926.922778118                
+1641482.45782281668926.922778118                
+1641482.45782281668958.616219533                
+1641514.52856709668958.616219533                
+Storage Area Type= 1 
+Storage Area Area=
+Storage Area Min Elev=
+Storage Area Is2D=-1
+Storage Area Point Generation Data=,,10,10
+Storage Area 2D Points= 9 
+1641487.45782281668953.6162195331641497.45782281668953.616219533
+1641507.45782281668953.6162195331641487.45782281668943.616219533
+1641497.45782281668943.6162195331641507.45782281668943.616219533
+1641487.45782281668933.6162195331641497.45782281668933.616219533
+1641507.45782281668933.616219533
+Storage Area 2D PointsPerimeterTime=29Jul2022 08:46:50
+Storage Area Mannings=0.06
+2D Cell Volume Filter Tolerance=0.003
+2D Cell Minimum Area Fraction=0.01
+2D Face Profile Filter Tolerance=0.003
+2D Face Area Elevation Profile Filter Tolerance=0.003
+2D Face Area Elevation Conveyance Ratio=0.02
+2D Face Area Laminar Depth=0.06
+2D Multiple Face Mann n=0
+
+BC Line Name=West                            
+BC Line Storage Area=Box             
+BC Line Start Position= 1641482.00875635 , 668958.076548223 
+BC Line Middle Position= 1641482.12672589 , 668942.593045685 
+BC Line End Position= 1641482.24469543 , 668927.109543147 
+BC Line Arc= 2 
+1641482.00875635668958.0765482231641482.24469543668927.109543147
+BC Line Text Position= 1641482.12672589 , 668942.593045685 
+BC Line Name=South                           
+BC Line Storage Area=Box             
+BC Line Start Position= 1641514.21444162 , 668926.578680203 
+BC Line Middle Position= 1641498.52449239 , 668926.608172589 
+BC Line End Position= 1641482.83454315 , 668926.637664975 
+BC Line Arc= 2 
+1641514.21444162668926.5786802031641482.83454315668926.637664975
+BC Line Text Position= 1641498.52449239 , 668926.608172589 
+BC Line Name=North                           
+BC Line Storage Area=Box             
+BC Line Start Position= 1641514.03748731 , 668958.961319797 
+BC Line Middle Position= 1641498.52449239 , 668958.961319797 
+BC Line End Position= 1641483.01149746 , 668958.961319797 
+BC Line Arc= 2 
+1641514.03748731668958.9613197971641483.01149746668958.961319797
+BC Line Text Position= 1641498.52449239 , 668958.961319797 
+LCMann Time=Dec/30/1899 00:00:00
+LCMann Region Time=Dec/30/1899 00:00:00
+LCMann Table=0
+Chan Stop Cuts=-1 
+
+
+
+Use User Specified Reach Order=0
+GIS Ratio Cuts To Invert=-1
+GIS Limit At Bridges=0
+Composite Channel Slope=5
