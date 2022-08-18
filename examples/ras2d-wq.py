@@ -5,47 +5,6 @@ import xarray as xr
 import numba
 import datetime
 
-# variable_paths = {
-#     "dt": {
-#         "dims": "time",
-#         "path":f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Time Step',
-#     },
-#     "faces_surface_area": {
-#         "dims": "nface",
-#         "path": f'Geometry/2D Flow Areas/{project_name}/Cells Surface Area'
-#     },
-#     "edge_length": {
-#         "dims": "nedge",
-#         "path": 
-#     },
-
-# }
-
-
-out["edge_length"] = xr.DataArray(
-    data = ras2d_data.geometry['face_length'],
-    dims = ("nedge"), 
-    attrs={
-        'units': 'feet' # will need to update units based on prj file
-})
-
-
-out["edge_velocity"] = xr.DataArray(
-    data=ras2d_data.results['face_velocity'],
-    dims=("time", 'nedge'),
-    attrs={
-        'units':'feet per second' # will need to update units based on prj file
-    })
-
-out["edge_vertical_area"] = xr.DataArray(
-    data=face_areas_0,
-    dims=("time", 'nedge'),
-    attrs={
-        'units':'feet per second' # will need to update units based on prj file
-    })
-
-}
-
 def parse_attributes(dataset):
     '''Parse the HDF5 attributes array, convert binary strings to Python strings, and return a dictionary of attributes'''
     attrs = {}
