@@ -467,18 +467,18 @@ class LHS:
             TBD if this will remain or if parameters will be integrated into xarray.
         t: timestep index  
         '''
-
+        return
+        
+    def updateValues(self, mesh: xr.Dataset,  t:float):
         flow_out_indices = np.where(mesh['advection_coeff'][t+1] > 0)[0]
         flow_in_indices = np.where(mesh['advection_coeff'][t+1] < 0)[0]
 
         # initialize arrays that will define the sparse matrix 
-        len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices) + 1
+        len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2
         self.rows = np.zeros(len_val)
         self.cols = np.zeros(len_val)
         self.coef = np.zeros(len_val)
-        return
-        
-    def updateValues(self, mesh: xr.Dataset,  t:float):
+
         ###### diagonal terms - the "A" coefficient in the equations detailed above. 
         start = 0
         end = len(mesh['nface'])
@@ -497,10 +497,6 @@ class LHS:
         self.coef[start:end] = mesh['ghost_volumes'][t+1] / seconds 
              
         ###### advection
-        # sometimes on-diagonal, sometimes off-diagonal (upwind differencing)
-        flow_out_indices = np.where(mesh['advection_coeff'][t+1] > 0)[0]
-        flow_in_indices = np.where(mesh['advection_coeff'][t+1] < 0)[0]
-
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
         if len(flow_out_indices) > 0:
             # update indices
