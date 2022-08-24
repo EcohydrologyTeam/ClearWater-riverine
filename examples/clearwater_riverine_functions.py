@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import numba
+from scipy.sparse import *
+from scipy.sparse.linalg import *
 
 def parse_attributes(dataset):
     '''Parse the HDF5 attributes array, convert binary strings to Python strings, and return a dictionary of attributes'''
