@@ -175,45 +175,43 @@ def parse_project_name(infile: h5py._hl.files.File) -> str:
     return project_name
 
 def calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
-    # define the faces (cells) on either side of an edge 
-    # f1 is the first cell (start) and f2 is the second cell (end)
-    f1 = mesh['edge_face_connectivity'].T[0]
-    f2 = mesh['edge_face_connectivity'].T[1]
-
     # get northings/eastings of relevant faces 
-    x1_coords = mesh['face_x'][f1]
-    y1_coords = mesh['face_y'][f1]
-    x2_coords = mesh['face_x'][f2]
-    y2_coords = mesh['face_y'][f2]
+    x1_coords = mesh['face_x'][mesh['edges_face1']]
+    y1_coords = mesh['face_y'][mesh['edges_face1']]
+    x2_coords = mesh['face_x'][mesh['edges_face2']]
+    y2_coords = mesh['face_y'][mesh['edges_face2']]
 
     # calculate distance 
     dist_data = np.sqrt((x1_coords - x2_coords)**2 + (y1_coords - y2_coords)**2)
     return dist_data
 
-def calc_coeff_to_diffusion_term(mesh: xr.Dataset, diffusion_coefficient_input: float) -> np.array:
+def calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
+    '''
+    Calculate the coefficient to the diffusion term. 
+    For each edge, this is calculated as:
+    (Edge vertical area * diffusion coefficient) / (distance between cells) 
+
+    Peter Klaver, Craig Taylor noted that diffusion should be 0 to ghost cells
+    However this caused matrix to be singular, so for now ignoring that and using 
+    a constant diffusion coefficient. We should resolve this logic.  
+    '''
     # diffusion coefficient: ignore diffusion between cells in the mesh and ghost cells
     diffusion_coefficient = np.zeros(len(mesh['nedge']))
 
     # identify ghost cells: 
     # ghost cells are only in the second element of a pair or cell indices that denote an edge together
-    f1 = mesh['edge_face_connectivity'].T[0]
-    f2 = mesh['edge_face_connectivity'].T[1]
-
-    # number of real cells (cell 1 in a pair of cells that define an edge is always a real cell)
-    nreal = f1.max()
-
-    f1_ghost = np.where(f1 <= nreal) 
-    f2_ghost = np.where(f2 <= nreal)
+    f2_ghost = np.where(mesh['edges_face2'] <= mesh.attrs['nreal'])
 
     # set diffusion coefficients where NOT pseusdo cell 
-    diffusion_coefficient[np.array(f2_ghost)] = diffusion_coefficient_input
+    diffusion_coefficient[np.array(f2_ghost)] = mesh.attrs['diffusion_coefficient']
 
     # diffusion_array =  mesh['edge_vertical_area'] * diffusion_coefficient / mesh['face_to_face_dist']
-    diffusion_array =  mesh['edge_vertical_area'] * diffusion_coefficient_input / mesh['face_to_face_dist']
+    diffusion_array =  mesh['edge_vertical_area'] * mesh.attrs['diffusion_coefficient'] / mesh['face_to_face_dist']
     return diffusion_array
 
 def sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.array) -> np.array:
     '''
+    Sums values associated with a certain face (cell). 
     https://stackoverflow.com/questions/67108215/how-to-get-sum-of-values-in-a-numpy-array-based-on-another-array-with-repetitive
     '''
     # _, idx, _ = np.unique(face, return_counts=True, return_inverse=True)
@@ -222,40 +220,38 @@ def sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.
     return sum_array
 
 def calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
+    '''
+    Sums all coefficient to the diffusion term values associated with each individual cell.
+    These values fall on the diagonal of the sparse matrix.
+    '''
     # initialize array
     sum_diffusion_array = np.zeros((len(mesh['time']), len(mesh['nface'])))
-
-    # FACE 1 
     for t in range(len(mesh['time'])):
         # initialize arrays
         f1_sums = np.zeros(len(mesh['nface'])) 
         f2_sums = np.zeros(len(mesh['nface']))
 
-        # faces - maybe kick this out + input to all these functions ?
-        f1 = mesh['edge_face_connectivity'].T[0]
-        f2 = mesh['edge_face_connectivity'].T[1]
-
         # calculate sums for all values
-        f1_sums = sum_vals(mesh, f1, t, f1_sums)
-        f2_sums = sum_vals(mesh, f2, t, f2_sums)
+        f1_sums = sum_vals(mesh, mesh['edges_face1'], t, f1_sums)
+        f2_sums = sum_vals(mesh, mesh['edges_face2'], t, f2_sums)
 
         # add f1_sums and f2_sums together to get total 
-        # need to do this because sometimes a cell is f1 (the first cell in a pair defining an edge)
-        # and osmetimes a cell is f2 (the second cell in a pair defining an edge)
+        # need to do this because sometimes a cell is the first cell in a pair defining an edge
+        # and sometimes a cell is the second cell in a pair defining an edge
         sum_diffusion_array[t] = f1_sums + f2_sums
     return sum_diffusion_array
 
 def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
-    # faces - maybe kick this out + input to all these functions ?
-    f1 = mesh['edge_face_connectivity'].T[0]
-    f2 = mesh['edge_face_connectivity'].T[1]
-
-    # find ghost cells receiving flow  - kick this out too?
-    nreal = f1.max()
-    f2_ghost = np.where(f2 > nreal)[0]  
-
+    '''
+    In RAS2D output, all ghost cells (boundary cells) have a volume of 0. 
+    However, this results in an error in the sparse matrix solver
+    because nothing can leave the mesh. 
+    Therefore, we must calculate the 'volume' in the ghost cells as 
+    the total flow across the face in a given timestep. 
+    '''
+    f2_ghost = np.where(mesh['edges_face2'] > mesh.attrs['nreal'])[0]  
     ghost_vels = np.zeros((len(mesh['time']), len(mesh['nedge'])))
-
+    
     for t in range(len(mesh['time'])):
         # positive velocities 
         positive_velocity_indices = np.where(mesh['edge_velocity'][t] > 0 )[0]
@@ -275,7 +271,7 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     ghost_vols = np.zeros((len(mesh['time']), len(mesh['nface'])))
     for t in range(len(mesh['time'])):
         indices = np.where(ghost_flux_vols[t] > 0)[0]
-        cell_ind = f2[indices]
+        cell_ind = mesh['edges_face2'][indices]
         vals = ghost_flux_vols[t][indices]
         if len(cell_ind) > 0:
             ghost_vols[t][np.array(cell_ind)] = vals 
@@ -379,8 +375,25 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
 
 
 def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float) -> xr.Dataset:
+    '''
+    Populates data variables in UGRID-compliant xarray.
+
+    Inputs:
+    infle: HDF input file containing RAS2D output. 
+    diffusion_coefficient_input: user-defined diffusion coefficient for entire project space. 
+
+    Output:
+    mesh: sUGRID-complaint xarray Dataset.
+    '''
+    
     # pre-computed values
     mesh = define_ugrid(infile, project_name)
+
+    # store additional useful information for various coefficient calculations in the mesh
+    mesh['edges_face1'] = hdf_to_xarray(mesh['edge_face_connectivity'].T[0], ('nedge'), attrs={'Units':''})  
+    mesh['edges_face2'] = hdf_to_xarray(mesh['edge_face_connectivity'].T[1], ('nedge'), attrs={'Units':''})  
+    mesh.attrs['nreal'] = mesh['edge_face_connectivity'].T[0].max()
+    mesh.attrs['diffusion_coefficient'] = diffusion_coefficient_input
 
     # surface area 
     mesh['faces_surface_area'] = hdf_to_xarray(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Surface Area'],
@@ -435,7 +448,7 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     mesh['face_to_face_dist'] = hdf_to_xarray(distances, ('nedge'), attrs={'Units': 'ft'})
 
     # coefficient to diffusion term
-    coeff_to_diffusion = calc_coeff_to_diffusion_term(mesh, diffusion_coefficient_input)
+    coeff_to_diffusion = calc_coeff_to_diffusion_term(mesh)
     mesh['coeff_to_diffusion'] = hdf_to_xarray(coeff_to_diffusion, ("time", "nedge"), attrs={'Units': 'ft3/s'})
 
     # sum of diffusion coeff
@@ -455,6 +468,7 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     # ghost cell volumes
     ghost_volumes = calc_ghost_cell_volumes(mesh)
     mesh['ghost_volumes'] = hdf_to_xarray(ghost_volumes, ('time', 'nface'), attrs={'Units':'ft3'})
+
     
     return mesh
 
@@ -469,12 +483,17 @@ class LHS:
         t: timestep index  
         '''
         return
+                
         
-    def updateValues(self, mesh: xr.Dataset,  t:float):
+    def updateValues(self, mesh: xr.Dataset, t: float):
+        '''
+        Updates values in the LHS matrix based on the timestep. 
+        '''
+        # define edges where flow is flowing in versus out and find all empty cells
+        # at the t+1 timestep
         flow_out_indices = np.where(mesh['advection_coeff'][t+1] > 0)[0]
         flow_in_indices = np.where(mesh['advection_coeff'][t+1] < 0)[0]
         empty_cells = np.where(mesh['volume'][t+1] == 0)[0]
-
 
         # initialize arrays that will define the sparse matrix 
         len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells)
@@ -482,23 +501,23 @@ class LHS:
         self.cols = np.zeros(len_val)
         self.coef = np.zeros(len_val)
 
-        # put dummy values in dry cells 
+        # put dummy values in dry cells
         start = 0
         end = len(empty_cells)
         self.rows[start:end] = empty_cells
         self.cols[start:end] = empty_cells
         self.coef[start:end] = 1
 
-        ###### diagonal terms - the "A" coefficient in the equations detailed above. 
+        ###### diagonal terms - load and sum of diffusion coefficients associated with each cell
         start = end
         end = end + len(mesh['nface'])
         self.rows[start:end] = mesh['nface']
         self.cols[start:end] = mesh['nface']
         seconds = mesh['dt'].values[t] # / np.timedelta64(1, 's'))
-        self.coef[start:end] = mesh['volume'][t+1] / seconds + mesh['sum_coeff_to_diffusion'][t+1] # maybe rename in final code: diffusion term coeff
+        self.coef[start:end] = mesh['volume'][t+1] / seconds + mesh['sum_coeff_to_diffusion'][t+1] 
 
-        # add ghost cell volumes tp diagonals
-        # note: these values are 0 for cell that is NOT a ghost cell
+        # add ghost cell volumes to diagonals: based on flow across face into ghost cell
+        # note: these values are 0 for cell that is not a ghost cell
         # note: also 0 for any ghost cell that is not RECEIVING flow 
         start = end
         end = end + len(mesh['nface'])
@@ -509,7 +528,6 @@ class LHS:
         ###### advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
         if len(flow_out_indices) > 0:
-            # update indices
             start = end
             end = end + len(flow_out_indices)
 
@@ -550,22 +568,19 @@ class LHS:
             pass
         
         ###### off-diagonal terms - diffusion
-        f1 = mesh['edge_face_connectivity'].T[0]
-        f2 = mesh['edge_face_connectivity'].T[1]
-
         # update indices
         start = end
         end = end + len(mesh['nedge'])
-        self.rows[start:end] = f1
-        self.cols[start:end] = f2
+        self.rows[start:end] = mesh['edges_face1']
+        self.cols[start:end] = mesh['edges_face2']
         self.coef[start:end] = -1 * mesh['coeff_to_diffusion'][t+1]
 
         # update indices and repeat 
         start = end
         end = end + len(mesh['nedge'])
-        self.cols[start:end] = f1
-        self.rows[start:end] = f2
-        self.coef[start:end] = -1 * mesh['coeff_to_diffusion'][t+1] # last one
+        self.rows[start:end] = mesh['edges_face2']
+        self.cols[start:end] = mesh['edges_face1']
+        self.coef[start:end] = -1 * mesh['coeff_to_diffusion'][t+1] 
         return
 
 class RHS:
@@ -576,52 +591,69 @@ class RHS:
         params: A class instance containing additional parameters. 
             TBD if this will remain or if parameters will be integrated into xarray.
         t: timestep index  
+        inp: array of shape (time x nface) with user-defined inputs of concentrations
+            in each cell at each timestep.
         '''
         self.conc = np.zeros(len(mesh['nface']))
-        # this will be updated: meant for inital testing 
-        # dropping something in
         self.conc = inp[t] 
-        # for k in inp.keys():
-        #     if inp[k]['time'] == t:
-        #         self.conc[k] = inp[k]['concentration'] # put a concentration in the top left cell to start: tweak this to take initial
         self.vals = np.zeros(len(mesh['nface']))
-        seconds = mesh['dt'].values[t] # / np.timedelta64(1, 's'))
+        seconds = mesh['dt'].values[t] 
         self.vals[:] = mesh['volume'][t] / seconds * self.conc 
         return 
-    def updateValues(self, vector, ds, t, inp):
-        seconds = ds['dt'].values[t] # / np.timedelta64(1, 's'))
-        # this will be updated: meant for inital testing 
-        # dropping something in
-        vector += inp[t][:] 
-        # for k in inp.keys():
-        #     if inp[k]['time'] == t:
-        #         vector[k] += inp[k]['concentration']  # put a concentration in the top left cell to start: tweak this to take initial 
-        self.vals[:] = vector * ds['volume'][t] / seconds
-        
+    def updateValues(self, solution: np.array, mesh: xr.Dataset, t: float, inp: np.array):
+        ''' 
+        Update right hand side data based on:
+            solution: solution from solving the sparse matrix 
+            inp: array of shape (time x nface) with user defined inputs of concentrations
+                in each cell at each timestep. 
+        '''
+        seconds = mesh['dt'].values[t] 
+        solution += inp[t][:]  
+        self.vals[:] = solution * mesh['volume'][t] / seconds
         return
 
 
 def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
+    '''
+    Steps through each timestep in the output of a RAS2D model (mesh) 
+    and solves the total-load advection-diffusion transport equation 
+    using user defined input (inp) of cell concentrations at given timesteps.
+
+    mesh: xarray dataset containing all geometry and ouptut results from RAS2D.
+            Should follow UGRID conventions.
+    inp: array of shape (time x nface) with user-defined inputs of concentrations
+            in each cell at each timestep.
+    '''
+    output = np.zeros((len(mesh['time']), len(mesh['nface'])))
     t = 0
     b = RHS(mesh, t, inp)
-    output = np.zeros((len(mesh['time']), len(mesh['nface'])))
+    output[0] = b.vals 
+
     for t in range(len(mesh['time']) - 1):
-        output[t] = b.vals
         lhs = LHS(mesh, t)
         lhs.updateValues(mesh, t)
         A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(mesh['nface']),len(mesh['nface'])))
         x = spsolve(A, b.vals)
         b.updateValues(x, mesh, t+1, inp)
-    output[len(mesh['time']) - 1][:] = np.nan
+        output[t+1] = b.vals
+
+    # output[len(mesh['time']) - 1][:] = np.nan
     mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': 'ft3'}) # check units 
     return mesh
 
 
-def main(fpath: str, diffusion_coefficient: float):
+def main(fpath: str, diffusion_coefficient_input: float):
+    '''
+    fpath: path to HDF file containing RAS2D output. 
+    diffusion_coefficient_input: user-defined diffusion coefficient for entire project space. 
+
+    Plan to wrap wq_simulation function within the main function instead of running separately.
+    For now, separate for testing purposes. 
+    '''
     # define project name 
     with h5py.File(fpath, 'r') as infile:
         project_name = parse_project_name(infile)
-        mesh = populate_ugrid(infile, project_name, diffusion_coefficient)
+        mesh = populate_ugrid(infile, project_name, diffusion_coefficient_input)
     return mesh
 
 
