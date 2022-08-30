@@ -569,7 +569,7 @@ class LHS:
         return
 
 class RHS:
-    def __init__(self, mesh: xr.Dataset, t: float, inp: Dict[int, list]):
+    def __init__(self, mesh: xr.Dataset, t: float, inp: np.array):
         '''
         mesh: xarray dataset containing all geometry and ouptut results from RAS2D.
             Should follow UGRID conventions.
@@ -579,10 +579,11 @@ class RHS:
         '''
         self.conc = np.zeros(len(mesh['nface']))
         # this will be updated: meant for inital testing 
-        # dropping something in 
-        for k in inp.keys():
-            if inp[k]['time'] == t:
-                self.conc[k] = inp[k]['concentration'] # put a concentration in the top left cell to start: tweak this to take initial
+        # dropping something in
+        self.conc = inp[t] 
+        # for k in inp.keys():
+        #     if inp[k]['time'] == t:
+        #         self.conc[k] = inp[k]['concentration'] # put a concentration in the top left cell to start: tweak this to take initial
         self.vals = np.zeros(len(mesh['nface']))
         seconds = mesh['dt'].values[t] # / np.timedelta64(1, 's'))
         self.vals[:] = mesh['volume'][t] / seconds * self.conc 
@@ -590,16 +591,17 @@ class RHS:
     def updateValues(self, vector, ds, t, inp):
         seconds = ds['dt'].values[t] # / np.timedelta64(1, 's'))
         # this will be updated: meant for inital testing 
-        # dropping something in 
-        for k in inp.keys():
-            if inp[k]['time'] == t:
-                vector[k] += inp[k]['concentration']  # put a concentration in the top left cell to start: tweak this to take initial 
+        # dropping something in
+        vector += inp[t][:] 
+        # for k in inp.keys():
+        #     if inp[k]['time'] == t:
+        #         vector[k] += inp[k]['concentration']  # put a concentration in the top left cell to start: tweak this to take initial 
         self.vals[:] = vector * ds['volume'][t] / seconds
         
         return
 
 
-def wq_simulation(mesh: xr.Dataset, inp: Dict[int, Dict[str, int]]) -> xr.Dataset:
+def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
     t = 0
     b = RHS(mesh, t, inp)
     output = np.zeros((len(mesh['time']), len(mesh['nface'])))
