@@ -6,6 +6,7 @@ import numba
 import datetime
 from scipy.sparse import *
 from scipy.sparse.linalg import *
+from typing import Dict
 
 ### TODD FUNCTIONS
 
@@ -472,16 +473,25 @@ class LHS:
     def updateValues(self, mesh: xr.Dataset,  t:float):
         flow_out_indices = np.where(mesh['advection_coeff'][t+1] > 0)[0]
         flow_in_indices = np.where(mesh['advection_coeff'][t+1] < 0)[0]
+        empty_cells = np.where(mesh['volume'][t+1] == 0)[0]
+
 
         # initialize arrays that will define the sparse matrix 
-        len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2
+        len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells)
         self.rows = np.zeros(len_val)
         self.cols = np.zeros(len_val)
         self.coef = np.zeros(len_val)
 
-        ###### diagonal terms - the "A" coefficient in the equations detailed above. 
+        # put dummy values in dry cells 
         start = 0
-        end = len(mesh['nface'])
+        end = len(empty_cells)
+        self.rows[start:end] = empty_cells
+        self.cols[start:end] = empty_cells
+        self.coef[start:end] = 1
+
+        ###### diagonal terms - the "A" coefficient in the equations detailed above. 
+        start = end
+        end = end + len(mesh['nface'])
         self.rows[start:end] = mesh['nface']
         self.cols[start:end] = mesh['nface']
         seconds = mesh['dt'].values[t] # / np.timedelta64(1, 's'))
@@ -559,7 +569,7 @@ class LHS:
         return
 
 class RHS:
-    def __init__(self, mesh: xr.Dataset, t: float):
+    def __init__(self, mesh: xr.Dataset, t: float, inp: Dict[int, list]):
         '''
         mesh: xarray dataset containing all geometry and ouptut results from RAS2D.
             Should follow UGRID conventions.
@@ -568,20 +578,30 @@ class RHS:
         t: timestep index  
         '''
         self.conc = np.zeros(len(mesh['nface']))
-        self.conc[0] = 5000 # put a concentration in the top left cell to start: tweak this to take initial
+        # this will be updated: meant for inital testing 
+        # dropping something in 
+        for k in inp.keys():
+            if inp[k]['time'] == t:
+                self.conc[k] = inp[k]['concentration'] # put a concentration in the top left cell to start: tweak this to take initial
         self.vals = np.zeros(len(mesh['nface']))
         seconds = mesh['dt'].values[t] # / np.timedelta64(1, 's'))
         self.vals[:] = mesh['volume'][t] / seconds * self.conc 
         return 
-    def updateValues(self, vector, ds, t):
+    def updateValues(self, vector, ds, t, inp):
         seconds = ds['dt'].values[t] # / np.timedelta64(1, 's'))
+        # this will be updated: meant for inital testing 
+        # dropping something in 
+        for k in inp.keys():
+            if inp[k]['time'] == t:
+                vector[k] += inp[k]['concentration']  # put a concentration in the top left cell to start: tweak this to take initial 
         self.vals[:] = vector * ds['volume'][t] / seconds
+        
         return
 
 
-def wq_simulation(mesh: xr.Dataset) -> xr.Dataset:
+def wq_simulation(mesh: xr.Dataset, inp: Dict[int, Dict[str, int]]) -> xr.Dataset:
     t = 0
-    b = RHS(mesh, t)
+    b = RHS(mesh, t, inp)
     output = np.zeros((len(mesh['time']), len(mesh['nface'])))
     for t in range(len(mesh['time']) - 1):
         output[t] = b.vals
@@ -589,7 +609,7 @@ def wq_simulation(mesh: xr.Dataset) -> xr.Dataset:
         lhs.updateValues(mesh, t)
         A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(mesh['nface']),len(mesh['nface'])))
         x = spsolve(A, b.vals)
-        b.updateValues(x, mesh, t+1)
+        b.updateValues(x, mesh, t+1, inp)
     output[len(mesh['time']) - 1][:] = np.nan
     mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': 'ft3'}) # check units 
     return mesh
