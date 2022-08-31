@@ -251,7 +251,8 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     '''
     f2_ghost = np.where(mesh['edges_face2'] > mesh.attrs['nreal'])[0]  
     ghost_vels = np.zeros((len(mesh['time']), len(mesh['nedge'])))
-    
+
+    # volume leaving 
     for t in range(len(mesh['time'])):
         # positive velocities 
         positive_velocity_indices = np.where(mesh['edge_velocity'][t] > 0 )[0]
@@ -268,17 +269,48 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     ghost_flux_vols = ghost_vels * mesh['edge_vertical_area'] * mesh['dt']
     
     # transfer values (acssociated with EDGES) to corresponding CELLS (FACES)
-    ghost_vols = np.zeros((len(mesh['time']), len(mesh['nface'])))
+    ghost_vols_out = np.zeros((len(mesh['time']), len(mesh['nface'])))
     for t in range(len(mesh['time'])):
         indices = np.where(ghost_flux_vols[t] > 0)[0]
         cell_ind = mesh['edges_face2'][indices]
         vals = ghost_flux_vols[t][indices]
         if len(cell_ind) > 0:
-            ghost_vols[t][np.array(cell_ind)] = vals 
+            ghost_vols_out[t][np.array(cell_ind)] = vals 
+        else:
+            pass
+    
+    # SEEMS LIKE FLOW ACROSS FACE IS 0 FOR BOUNDARY CELLS WITH VOLUME COMING IN.
+    # THIS WOULD SUGGEST YOU NEED TO PROVIDE A TOTAL LOAD FOR THESE CELLS
+    # NOT A CONCENTRATION... TO CONFIRM?
+    # # volume coming in
+    ghost_vels_in = np.zeros((len(mesh['time']), len(mesh['nedge'])))
+
+    for t in range(len(mesh['time'])):
+        # positive velocities
+        negative_velocity_indices = np.where(mesh['edge_velocity'][t] < 0 )[0]
+
+        # get intersection - this is where water is flowing IN from a ghost cell
+        index_list = np.intersect1d(negative_velocity_indices, f2_ghost)
+
+        if len(index_list) == 0:
+            pass
+        else:
+            ghost_vels_in[t][index_list] = mesh['edge_velocity'][t][index_list]
+
+    ghost_flux_in_vols = ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
+
+    ghost_vols_in = np.zeros((len(mesh['time']), len(mesh['nface'])))
+    for t in range(1, len(mesh['time'])):
+        indices = np.where(ghost_flux_in_vols[t] > 0)[0]
+        cell_ind = mesh['edges_face2'][indices]
+        vals = ghost_flux_in_vols[t][indices]
+        if len(cell_ind) > 0:
+            ghost_vols_in[t-1][np.array(cell_ind)] = vals # shifts this back a timestep
         else:
             pass
 
-    return ghost_vols
+        all_ghost_vols = ghost_vols_out + ghost_vols_in
+    return all_ghost_vols 
 
 
 def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
@@ -598,7 +630,10 @@ class RHS:
         self.conc = inp[t] 
         self.vals = np.zeros(len(mesh['nface']))
         seconds = mesh['dt'].values[t] 
-        self.vals[:] = mesh['volume'][t] / seconds * self.conc 
+        # SHOULD GHOST VOLUMES BE INCLUDED?
+        vol = mesh['volume'][t] + mesh['ghost_volumes'][t]
+        self.vals[:] = vol / seconds * self.conc 
+        # self.vals[:] = mesh['volume'][t] / seconds * self.conc 
         return 
     def updateValues(self, solution: np.array, mesh: xr.Dataset, t: float, inp: np.array):
         ''' 
@@ -609,7 +644,10 @@ class RHS:
         '''
         seconds = mesh['dt'].values[t] 
         solution += inp[t][:]  
-        self.vals[:] = solution * mesh['volume'][t] / seconds
+        # SHOULD GHOST VOLUMES BE INCLUDED?
+        vol = mesh['volume'][t] + mesh['ghost_volumes'][t]
+        self.vals[:] = solution * vol / seconds
+        # self.vals[:] = solution * mesh['volume'][t] / seconds
         return
 
 
