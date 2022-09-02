@@ -346,7 +346,7 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
     # x-coordinates
     mesh = mesh.assign_coords(
         node_x=xr.DataArray(
-            data = infile[f'Geometry/2D Flow Areas/{project_name}/Cells FacePoint Indexes'][()].T[0],
+            data = infile[f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate'][()].T[0],
             # data=[f[0] for f in ras2d_data.geometry['nodes_array']],
             dims=("node",),
             )   
@@ -354,7 +354,7 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
     # y-coordinates
     mesh = mesh.assign_coords(
             node_y=xr.DataArray(
-            data=infile[f'Geometry/2D Flow Areas/{project_name}/Cells FacePoint Indexes'][()].T[1],
+            data=infile[f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate'][()].T[1],
             dims=("node",),
         )
     )

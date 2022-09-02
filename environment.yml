@@ -9,7 +9,7 @@ dependencies:
   # Pangeo
   - scipy
   - intake  # Intake* installs most Pangeo libs
-  - intake-geopandas
+  - intake-geopandas=0.8.0
   - intake-parquet
   - intake-xarray
   - intake-thredds
