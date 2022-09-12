@@ -454,7 +454,13 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
                                         cells_volume_elevation_values_df['Elevation'].values,
                                         cells_volume_elevation_values_df['Volume'].values,
                                             )
-    mesh['volume'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'}) 
+    mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'})
+
+    try:
+        mesh['volume'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume'], ('time', 'nface')) 
+    except KeyError: 
+        print("Warning! Cell volumes are being manually calculated. Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
+        mesh['volume'] = mesh['volume_archive']
 
     # calculate edge vertical area 
     faces_area_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Info'])
@@ -471,8 +477,12 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
                                         faces_area_elevation_values_df['Z'].values,
                                         faces_area_elevation_values_df['Area'].values,
                                     )
-    mesh['edge_vertical_area'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
-    
+    mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
+    try:
+        mesh['edge_vertical_area'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge'))
+    except KeyError:
+        print("Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
+        mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
 
     # computed values 
     # distance between centroids 
@@ -490,6 +500,9 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     # advection
     advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
     mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
+
+    advection_coefficient_archive = mesh['edge_vertical_area_archive'] * mesh['edge_velocity']
+    mesh['advection_coeff_archive'] = hdf_to_xarray(advection_coefficient_archive, ('time', 'nedge'), attrs={'Units':'ft3/s'})
 
     # dt
     dt = np.ediff1d(mesh['time'])
@@ -521,23 +534,23 @@ class LHS:
         '''
         Updates values in the LHS matrix based on the timestep. 
         '''
-        # define edges where flow is flowing in versus out and find all empty cells
+        # define edges where flow is flowing in versus out and find all dry cells
         # at the t+1 timestep
-        flow_out_indices = np.where(mesh['advection_coeff'][t+1] > 0)[0]
-        flow_in_indices = np.where(mesh['advection_coeff'][t+1] < 0)[0]
-        empty_cells = np.where(mesh['volume'][t+1] == 0)[0]
+        flow_out_indices = np.where(mesh['edge_velocity'][t+1] > 0)[0]
+        flow_in_indices = np.where(mesh['edge_velocity'][t+1] < 0)[0]
+        dry_cells = np.where(mesh['volume'][t+1] == 0)[0]
 
         # initialize arrays that will define the sparse matrix 
-        len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells)
+        len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(dry_cells)
         self.rows = np.zeros(len_val)
         self.cols = np.zeros(len_val)
         self.coef = np.zeros(len_val)
 
         # put dummy values in dry cells
         start = 0
-        end = len(empty_cells)
-        self.rows[start:end] = empty_cells
-        self.cols[start:end] = empty_cells
+        end = len(dry_cells)
+        self.rows[start:end] = dry_cells
+        self.cols[start:end] = dry_cells
         self.coef[start:end] = 1
 
         ###### diagonal terms - load and sum of diffusion coefficients associated with each cell
@@ -567,7 +580,7 @@ class LHS:
             # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
             self.rows[start:end] = mesh['edge_face_connectivity'].T[0][flow_out_indices]
             self.cols[start:end] = mesh['edge_face_connectivity'].T[0][flow_out_indices]
-            self.coef[start:end] = mesh['advection_coeff'][t+1][flow_out_indices]  
+            self.coef[start:end] = mesh['advection_coeff'][t+1][flow_out_indices] 
 
             # subtract from corresponding neighbor cell (off-diagonal)
             start = end
@@ -587,7 +600,7 @@ class LHS:
             ## so the coefficient will be off-diagonal 
             self.rows[start:end] = mesh['edge_face_connectivity'].T[0][flow_in_indices]
             self.cols[start:end] = mesh['edge_face_connectivity'].T[1][flow_in_indices]
-            self.coef[start:end] = mesh['advection_coeff'][t+1][flow_in_indices] 
+            self.coef[start:end] = mesh['advection_coeff'][t+1][flow_in_indices] * -1
 
             ## update indices 
             start = end
@@ -595,7 +608,7 @@ class LHS:
             ## do the opposite on the corresponding diagonal 
             self.rows[start:end] = mesh['edge_face_connectivity'].T[1][flow_in_indices]
             self.cols[start:end] = mesh['edge_face_connectivity'].T[1][flow_in_indices]
-            self.coef[start:end] = mesh['advection_coeff'][t+1][flow_in_indices]  * -1 
+            self.coef[start:end] = mesh['advection_coeff'][t+1][flow_in_indices]
         else:
             pass
         
