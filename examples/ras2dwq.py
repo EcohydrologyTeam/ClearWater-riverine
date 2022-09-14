@@ -300,6 +300,8 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     ghost_flux_in_vols = ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
 
     ghost_vols_in = np.zeros((len(mesh['time']), len(mesh['nface'])))
+    all_ghost_vols = np.zeros((len(mesh['time']), len(mesh['nface'])))
+
     for t in range(1, len(mesh['time'])):
         indices = np.where(ghost_flux_in_vols[t] > 0)[0]
         cell_ind = mesh['edges_face2'][indices]
@@ -309,8 +311,8 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         else:
             pass
 
-        all_ghost_vols = ghost_vols_out + ghost_vols_in
-    return all_ghost_vols 
+        # all_ghost_vols[:] = ghost_vols_out + ghost_vols_in
+    return ghost_vols_in, ghost_vols_out 
 
 
 def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
@@ -406,7 +408,7 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
 
 
 
-def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float) -> xr.Dataset:
+def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float, testing: bool) -> xr.Dataset:
     '''
     Populates data variables in UGRID-compliant xarray.
 
@@ -417,10 +419,14 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     Output:
     mesh: sUGRID-complaint xarray Dataset.
     '''
+
+    print("Populating Mesh...")
     
     # pre-computed values
+    print(" Initializing Geometry...")
     mesh = define_ugrid(infile, project_name)
 
+    print(" Storing Results...")
     # store additional useful information for various coefficient calculations in the mesh
     mesh['edges_face1'] = hdf_to_xarray(mesh['edge_face_connectivity'].T[0], ('nedge'), attrs={'Units':''})  
     mesh['edges_face2'] = hdf_to_xarray(mesh['edge_face_connectivity'].T[1], ('nedge'), attrs={'Units':''})  
@@ -442,79 +448,96 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     # compute necessary values 
     # TO DO: clean all this up; review functions to see if they can be simplified 
     # calculate cell volume
-    cells_volume_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
-    cells_volume_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
-    # question: is it better to separate all of these things
-    # or just input mesh, cells_volume_elevation_info_df / values df 
-    cell_volumes = compute_cell_volumes(
-                                        mesh['water_surface_elev'].values,
-                                        mesh['faces_surface_area'].values,
-                                        cells_volume_elevation_info_df['Starting Index'].values,
-                                        cells_volume_elevation_info_df['Count'].values,
-                                        cells_volume_elevation_values_df['Elevation'].values,
-                                        cells_volume_elevation_values_df['Volume'].values,
-                                            )
-    mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'})
+    if testing == True:
+        cells_volume_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
+        cells_volume_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
+        # question: is it better to separate all of these things
+        # or just input mesh, cells_volume_elevation_info_df / values df 
+        cell_volumes = compute_cell_volumes(
+                                            mesh['water_surface_elev'].values,
+                                            mesh['faces_surface_area'].values,
+                                            cells_volume_elevation_info_df['Starting Index'].values,
+                                            cells_volume_elevation_info_df['Count'].values,
+                                            cells_volume_elevation_values_df['Elevation'].values,
+                                            cells_volume_elevation_values_df['Volume'].values,
+                                                )
+        mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'})
 
-    try:
+        try:
+            mesh['volume'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume'], ('time', 'nface')) 
+        except KeyError: 
+            print("Warning! Cell volumes are being manually calculated. Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
+            mesh['volume'] = mesh['volume_archive']
+    else:
         mesh['volume'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume'], ('time', 'nface')) 
-    except KeyError: 
-        print("Warning! Cell volumes are being manually calculated. Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
-        mesh['volume'] = mesh['volume_archive']
 
     # calculate edge vertical area 
-    faces_area_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Info'])
-    faces_area_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Values'])
-    faces_normalunitvector_and_length_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length'])
-    faces_cell_indexes_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes'])
-    # should we be using 0 or 1 ?
-    face_areas_0 = compute_face_areas(
-                                        mesh['water_surface_elev'].values,
-                                        faces_normalunitvector_and_length_df['Face Length'].values,
-                                        faces_cell_indexes_df['Cell 0'].values,
-                                        faces_area_elevation_info_df['Starting Index'].values,
-                                        faces_area_elevation_info_df['Count'].values,
-                                        faces_area_elevation_values_df['Z'].values,
-                                        faces_area_elevation_values_df['Area'].values,
-                                    )
-    mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
-    try:
+
+    if testing == True:
+        faces_area_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Info'])
+        faces_area_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Values'])
+        faces_normalunitvector_and_length_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length'])
+        faces_cell_indexes_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes'])
+        # should we be using 0 or 1 ?
+        face_areas_0 = compute_face_areas(
+                                            mesh['water_surface_elev'].values,
+                                            faces_normalunitvector_and_length_df['Face Length'].values,
+                                            faces_cell_indexes_df['Cell 0'].values,
+                                            faces_area_elevation_info_df['Starting Index'].values,
+                                            faces_area_elevation_info_df['Count'].values,
+                                            faces_area_elevation_values_df['Z'].values,
+                                            faces_area_elevation_values_df['Area'].values,
+                                        )
+        mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
+        try:
+            mesh['edge_vertical_area'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge'))
+        except KeyError:
+            print("Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
+            mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
+    else:
         mesh['edge_vertical_area'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge'))
-    except KeyError:
-        print("Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
-        mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
 
     # computed values 
     # distance between centroids 
+    print(" Computing Necessary Values...")
+    print("     Computing distance between centroids")
     distances = calc_distances_cell_centroids(mesh)
     mesh['face_to_face_dist'] = hdf_to_xarray(distances, ('nedge'), attrs={'Units': 'ft'})
 
     # coefficient to diffusion term
+    print("     Computing coefficient to diffusion term")
     coeff_to_diffusion = calc_coeff_to_diffusion_term(mesh)
     mesh['coeff_to_diffusion'] = hdf_to_xarray(coeff_to_diffusion, ("time", "nedge"), attrs={'Units': 'ft3/s'})
 
     # sum of diffusion coeff
+    print("     Computing sum of coefficient to diffusion term")
     sum_coeff_to_diffusion = calc_sum_coeff_to_diffusion_term(mesh)
     mesh['sum_coeff_to_diffusion'] = hdf_to_xarray(sum_coeff_to_diffusion, ('time', 'nface'), attrs={'Units':'ft3/s'})
 
     # advection
+    print("     Computing advection coefficient")
     advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
     mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
 
-    advection_coefficient_archive = mesh['edge_vertical_area_archive'] * mesh['edge_velocity']
-    mesh['advection_coeff_archive'] = hdf_to_xarray(advection_coefficient_archive, ('time', 'nedge'), attrs={'Units':'ft3/s'})
+    if testing == True:
+        advection_coefficient_archive = mesh['edge_vertical_area_archive'] * mesh['edge_velocity']
+        mesh['advection_coeff_archive'] = hdf_to_xarray(advection_coefficient_archive, ('time', 'nedge'), attrs={'Units':'ft3/s'})
 
     # dt
+    print("     Computing dt")
     dt = np.ediff1d(mesh['time'])
     dt = dt / np.timedelta64(1, 's')
     dt = np.insert(dt, len(dt), np.nan)
     mesh['dt'] = hdf_to_xarray(dt, ('time'), attrs={'Units': 's'})
 
     # ghost cell volumes
-    ghost_volumes = calc_ghost_cell_volumes(mesh)
-    mesh['ghost_volumes'] = hdf_to_xarray(ghost_volumes, ('time', 'nface'), attrs={'Units':'ft3'})
+    print("     Computing ghost cell volumes")
+    ghost_vols_in, ghost_vols_out = calc_ghost_cell_volumes(mesh)
+    mesh['ghost_volumes_in'] = hdf_to_xarray(ghost_vols_in, ('time', 'nface'), attrs={'Units':'ft3'})
+    mesh['ghost_volumes_out'] = hdf_to_xarray(ghost_vols_out, ('time', 'nface'), attrs={'Units':'ft3'})
 
     
+    print("     Done!")
     return mesh
 
 # matrix solver 
@@ -568,7 +591,7 @@ class LHS:
         end = end + len(mesh['nface'])
         self.rows[start:end] = mesh['nface']
         self.cols[start:end] = mesh['nface']
-        self.coef[start:end] = mesh['ghost_volumes'][t+1] / seconds 
+        self.coef[start:end] = mesh['ghost_volumes_out'][t+1] / seconds 
              
         ###### advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
@@ -644,7 +667,7 @@ class RHS:
         self.vals = np.zeros(len(mesh['nface']))
         seconds = mesh['dt'].values[t] 
         # SHOULD GHOST VOLUMES BE INCLUDED?
-        vol = mesh['volume'][t] + mesh['ghost_volumes'][t]
+        vol = mesh['volume'][t] + mesh['ghost_volumes_in'][t]
         self.vals[:] = vol / seconds * self.conc 
         # self.vals[:] = mesh['volume'][t] / seconds * self.conc 
         return 
@@ -658,7 +681,7 @@ class RHS:
         seconds = mesh['dt'].values[t] 
         solution += inp[t][:]  
         # SHOULD GHOST VOLUMES BE INCLUDED?
-        vol = mesh['volume'][t] + mesh['ghost_volumes'][t]
+        vol = mesh['volume'][t] + mesh['ghost_volumes_in'][t]
         self.vals[:] = solution * vol / seconds
         # self.vals[:] = solution * mesh['volume'][t] / seconds
         return
@@ -680,7 +703,16 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
     b = RHS(mesh, t, inp)
     output[0] = b.vals 
 
+    print("Starting WQ Simulation...")
+
     for t in range(len(mesh['time']) - 1):
+        if t == int(len(mesh['time']) / 4):
+            print(" 25%")
+        elif t == int(len(mesh['time']) / 2):
+            print(" 50%")
+        elif t == int(3 * len(mesh['time']) / 4):
+            print(" 75%")
+
         lhs = LHS(mesh, t)
         lhs.updateValues(mesh, t)
         A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(mesh['nface']),len(mesh['nface'])))
@@ -689,11 +721,12 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
         output[t+1] = b.vals
 
     # output[len(mesh['time']) - 1][:] = np.nan
+    print(  "100%")
     mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': 'ft3'}) # check units 
     return mesh
 
 
-def main(fpath: str, diffusion_coefficient_input: float):
+def main(fpath: str, diffusion_coefficient_input: float, testing: bool = True) -> xr.Dataset:
     '''
     fpath: path to HDF file containing RAS2D output. 
     diffusion_coefficient_input: user-defined diffusion coefficient for entire project space. 
@@ -704,7 +737,5 @@ def main(fpath: str, diffusion_coefficient_input: float):
     # define project name 
     with h5py.File(fpath, 'r') as infile:
         project_name = parse_project_name(infile)
-        mesh = populate_ugrid(infile, project_name, diffusion_coefficient_input)
+        mesh = populate_ugrid(infile, project_name, diffusion_coefficient_input, testing)
     return mesh
-
-
