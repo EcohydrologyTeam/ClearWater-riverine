@@ -147,3 +147,4 @@ dmypy.json
 muncie-*.png
 examples/data/OhioRiver_m.p04
 examples/data/OhioRiver_m.p04.hdf
+examples/data/OhioRiver_m.p07.hdf
