@@ -7,7 +7,6 @@ import datetime
 from scipy.sparse import *
 from scipy.sparse.linalg import *
 from typing import Dict
-import matplotlib.pyplot as plt
 
 ### TODD FUNCTIONS
 
@@ -499,14 +498,9 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
     try:
         mesh['advection_coeff'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge')) * np.sign(mesh['edge_velocity'])
-        mesh['edge_vertical_area'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge')) / abs(mesh['edge_velocity'])
-        # mesh['edge_vertical_area'][np.isnan(mesh['edge_vertical_area'])] = 0 # mesh['edge_vertical_area_archive'][np.where(mesh['edge_vertical_area'].isnull())]
-        mesh['edge_vertical_area'].fillna(0)
-        # for t in range(len(mesh['times'])):
-        #     plt.plot(range(len(mesh['times'])), mesh['edge_vertical_area'][t])
-        # plt.show()
-
-
+        mesh['edge_vertical_area'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge')) / mesh['edge_velocity']
+        # mesh['edge_vertical_area'][np.where(mesh['edge_vertical_area'].isnull())] = mesh['edge_vertical_area_archive'][np.where(mesh['edge_vertical_area'].isnull())]
+        mesh['edge_vertical_area'] = mesh['edge_vertical_area'].fillna(0)
     except KeyError:
         print(" Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
         mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
@@ -528,6 +522,7 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     # advection
     advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
     mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
+    # mesh['advection_coeff_archive'] = 
 
     # dt
     dt = np.ediff1d(mesh['time'])
