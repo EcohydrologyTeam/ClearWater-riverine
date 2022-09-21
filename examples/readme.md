@@ -1,21 +1,13 @@
-# Guide to Examples Repo
+# Guide to Examples
 
-**General Exploration**:
-* [HDF_Exploration.ipynb](HDF_Exploration.ipynb): Explores data stored in RAS HDF output. 
-* [File_Conversion.ipynb](File_Conversion.ipynb): Includes detailed information about UGRID-compliance for polotting 2d flexible meshes. 
-* [compute_cell_volume_and_face_area.ipynb](compute_cell_volume_and_face_area.ipynb)
-* [compute_distances_between_cell_centers.ipynb](compute_cell_volume_and_face_area.ipynb)
-* [advection_diffusion.ipynb](advection_diffusion.ipynb)
+The `examples` directory contains Jupyter notebooks to teach users how to use the package. Notebooks designed as a tutorial will be numbered in the sequence they should be used (i.e. 1_Intro.ipynb, etc.).
 
-**Application**: 
-* [Box-Model.ipynb](Box-Model.ipynb): Explores RAS HDF output and geometry for a simple 3x3 box and stores necessary information in an UGRID-compliant xarray (using guidelines outlined in more detail in File_Conversion.ipynb). This includes calculation of relevant coefficients for the advection-diffusion equations. The notebook saves the xarray to a .zarr file. 
-* [Sparse_Matrix_Framework.ipynb](Sparse_Matrix_Framework.ipynb): Sets up the framework for solving each timestep using the sparse matrix framework. Solves the box model set up in Box-Model.ipynb.
-* [Sparse_Matrix_Framework-muncie.ipynb](Sparse_Matrix_Framework-muncie.ipynb): the script above worked for the box model, where all cells are wet. However, when we attempted to run this on a model with dry cells (the muncie model), it could not solve because the matrix was singluar (rows of all 0). This notebook consists of exploration of trying to figure out and resolve that issue. 
+Sub-directories are for supporting files:
+- `examples/data` is for data files required to run the example notebooks.
+- `examples/dev_sandbox` is for exploratory work by the development team as they develop new capabilities, including for informal testing.
+- `examples/temp` is for temporary output files that users might create during the demo. 
+  - This sub-directory will be in the `.gitignore`, so that output files are not saved to the repo.
 
-
-**Testing Module**:
-* [testing.ipynb](testing.ipynb): Uses the `ras2dwq.py` to set up a mesh and run the water quality model.
-
-
-**Plotting**:
-* [plotting.ipynb](plotting.ipynb): plays around with different plotting options from Holoviz, including Geoviews and Datashader.
+### Example Notebooks
+- [testing.ipynb](testing.ipynb): Uses the `ras2dwq.py` to set up a mesh and run the a very simple water quality model in a 9-cell "box".
+- [Ohio River.ipynb](Ohio River.ipynb): Provides an example of running a more complicated test case.
