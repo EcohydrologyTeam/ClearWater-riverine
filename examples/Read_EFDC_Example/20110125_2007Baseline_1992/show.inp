@@ -1,0 +1,8 @@
+C  show.inp file, in free format across line
+C                                                                              8
+C  NSTYPE    NSHOWR    ISHOWC   JSHOWC   ISHPRT                                0
+C
+C  ZSSMIN    ZSSMAX    SSALMAX                                                 0
+C
+   4           1800        207      358    1800
+     -500.     500.       35.

@@ -145,3 +145,13 @@ dmypy.json
 
 # Images
 muncie-*.png
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/DYECON.bin
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/20110125_2007Baseline_1992_EFDC.mdb
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/CEval_1992_1001.csv
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/CEval_1992_1004.csv
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/CEval_1992_1007.csv
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/CEval_1992_1010.csv
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/CEval_1992_1017.csv
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/CEval_1992_1018.csv
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/GRIDMASK.bin
+examples/Read_EFDC_Example/20110125_2007Baseline_1992/EFDC_Jun09_IVF-sse3.exe
