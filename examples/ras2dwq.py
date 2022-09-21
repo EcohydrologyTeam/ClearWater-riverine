@@ -7,6 +7,7 @@ import datetime
 from scipy.sparse import *
 from scipy.sparse.linalg import *
 from typing import Dict
+import matplotlib.pyplot as plt
 
 ### TODD FUNCTIONS
 
@@ -45,14 +46,12 @@ def hdf_to_pandas(dataset) -> pd.DataFrame:
 def interp(x0: float, x1: float, y0: float, y1: float, xi: float):
     '''
     Linear interpolation:
-
     Inputs:
         x0: Lower x value
         x1: Upper x value
         y0: Lower y value
         y1: Upper y value
         xi: x value to interpolate
-
     Returns:
         y1: interpolated y value
     '''
@@ -190,7 +189,6 @@ def calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     Calculate the coefficient to the diffusion term. 
     For each edge, this is calculated as:
     (Edge vertical area * diffusion coefficient) / (distance between cells) 
-
     Peter Klaver, Craig Taylor noted that diffusion should be 0 to ghost cells
     However this caused matrix to be singular, so for now ignoring that and using 
     a constant diffusion coefficient. We should resolve this logic.  
@@ -309,8 +307,8 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         else:
             pass
 
-        all_ghost_vols = ghost_vols_out + ghost_vols_in
-    return all_ghost_vols 
+        # all_ghost_vols = ghost_vols_out + ghost_vols_in
+    return ghost_vols_in, ghost_vols_out
 
 
 def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
@@ -406,21 +404,20 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
 
 
 
-def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float) -> xr.Dataset:
+def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float, testing: bool) -> xr.Dataset:
     '''
     Populates data variables in UGRID-compliant xarray.
-
     Inputs:
     infle: HDF input file containing RAS2D output. 
     diffusion_coefficient_input: user-defined diffusion coefficient for entire project space. 
-
     Output:
     mesh: sUGRID-complaint xarray Dataset.
     '''
-    
-    # pre-computed values
+    print("Populating Mesh...")
+    print(" Initializing Geometry...")
     mesh = define_ugrid(infile, project_name)
 
+    print(" Storing Results...")
     # store additional useful information for various coefficient calculations in the mesh
     mesh['edges_face1'] = hdf_to_xarray(mesh['edge_face_connectivity'].T[0], ('nedge'), attrs={'Units':''})  
     mesh['edges_face2'] = hdf_to_xarray(mesh['edge_face_connectivity'].T[1], ('nedge'), attrs={'Units':''})  
@@ -442,21 +439,49 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     # compute necessary values 
     # TO DO: clean all this up; review functions to see if they can be simplified 
     # calculate cell volume
-    cells_volume_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
-    cells_volume_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
-    # question: is it better to separate all of these things
-    # or just input mesh, cells_volume_elevation_info_df / values df 
-    cell_volumes = compute_cell_volumes(
-                                        mesh['water_surface_elev'].values,
-                                        mesh['faces_surface_area'].values,
-                                        cells_volume_elevation_info_df['Starting Index'].values,
-                                        cells_volume_elevation_info_df['Count'].values,
-                                        cells_volume_elevation_values_df['Elevation'].values,
-                                        cells_volume_elevation_values_df['Volume'].values,
-                                            )
-    mesh['volume'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'}) 
+    print(" Computing Necessary Values...")
+    if testing == True:
+        cells_volume_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
+        cells_volume_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
+        # question: is it better to separate all of these things
+        # or just input mesh, cells_volume_elevation_info_df / values df 
+        cell_volumes = compute_cell_volumes(
+                                            mesh['water_surface_elev'].values,
+                                            mesh['faces_surface_area'].values,
+                                            cells_volume_elevation_info_df['Starting Index'].values,
+                                            cells_volume_elevation_info_df['Count'].values,
+                                            cells_volume_elevation_values_df['Elevation'].values,
+                                            cells_volume_elevation_values_df['Volume'].values,
+                                                )
+        mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'}) 
+        try:
+            mesh['volume'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume'], ('time', 'nface'))
+            mesh['volume'][:,mesh.attrs['nreal'].values+1:] = 0
+        except KeyError: 
+            print(" Warning! Cell volumes are being manually calculated. Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
+            mesh['volume'] = mesh['volume_archive']
+    else:
+        try:
+            mesh['volume'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume'], ('time', 'nface')) 
+            mesh['volume'][:,mesh.attrs['nreal'].values+1:] = 0
+        except KeyError: 
+            print(" Warning! Cell volumes are being manually calculated. Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
+            cells_volume_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
+            cells_volume_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
+            # question: is it better to separate all of these things
+            # or just input mesh, cells_volume_elevation_info_df / values df 
+            cell_volumes = compute_cell_volumes(
+                                                mesh['water_surface_elev'].values,
+                                                mesh['faces_surface_area'].values,
+                                                cells_volume_elevation_info_df['Starting Index'].values,
+                                                cells_volume_elevation_info_df['Count'].values,
+                                                cells_volume_elevation_values_df['Elevation'].values,
+                                                cells_volume_elevation_values_df['Volume'].values,
+                                                    )
+            mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'})
+            mesh['volume'] = mesh['volume_archive']
 
-    # calculate edge vertical area 
+    # edge vertical area
     faces_area_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Info'])
     faces_area_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Values'])
     faces_normalunitvector_and_length_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length'])
@@ -471,8 +496,21 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
                                         faces_area_elevation_values_df['Z'].values,
                                         faces_area_elevation_values_df['Area'].values,
                                     )
-    mesh['edge_vertical_area'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
-    
+    mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
+    try:
+        mesh['advection_coeff'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge')) * np.sign(mesh['edge_velocity'])
+        mesh['edge_vertical_area'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge')) / abs(mesh['edge_velocity'])
+        # mesh['edge_vertical_area'][np.isnan(mesh['edge_vertical_area'])] = 0 # mesh['edge_vertical_area_archive'][np.where(mesh['edge_vertical_area'].isnull())]
+        mesh['edge_vertical_area'].fillna(0)
+        # for t in range(len(mesh['times'])):
+        #     plt.plot(range(len(mesh['times'])), mesh['edge_vertical_area'][t])
+        # plt.show()
+
+
+    except KeyError:
+        print(" Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
+        mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
+
 
     # computed values 
     # distance between centroids 
@@ -498,8 +536,9 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     mesh['dt'] = hdf_to_xarray(dt, ('time'), attrs={'Units': 's'})
 
     # ghost cell volumes
-    ghost_volumes = calc_ghost_cell_volumes(mesh)
-    mesh['ghost_volumes'] = hdf_to_xarray(ghost_volumes, ('time', 'nface'), attrs={'Units':'ft3'})
+    ghost_volumes_in, ghost_volumes_out = calc_ghost_cell_volumes(mesh)
+    mesh['ghost_volumes_in'] = hdf_to_xarray(ghost_volumes_in, ('time', 'nface'), attrs={'Units':'ft3'})
+    mesh['ghost_volumes_out'] = hdf_to_xarray(ghost_volumes_out, ('time', 'nface'), attrs={'Units':'ft3'})
 
     
     return mesh
@@ -551,11 +590,12 @@ class LHS:
         # add ghost cell volumes to diagonals: based on flow across face into ghost cell
         # note: these values are 0 for cell that is not a ghost cell
         # note: also 0 for any ghost cell that is not RECEIVING flow 
+
         start = end
         end = end + len(mesh['nface'])
         self.rows[start:end] = mesh['nface']
         self.cols[start:end] = mesh['nface']
-        self.coef[start:end] = mesh['ghost_volumes'][t+1] / seconds 
+        self.coef[start:end] = mesh['ghost_volumes_out'][t+1] / seconds 
              
         ###### advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
@@ -631,7 +671,7 @@ class RHS:
         self.vals = np.zeros(len(mesh['nface']))
         seconds = mesh['dt'].values[t] 
         # SHOULD GHOST VOLUMES BE INCLUDED?
-        vol = mesh['volume'][t] + mesh['ghost_volumes'][t]
+        vol = mesh['volume'][t] + mesh['ghost_volumes_in'][t]
         self.vals[:] = vol / seconds * self.conc 
         # self.vals[:] = mesh['volume'][t] / seconds * self.conc 
         return 
@@ -645,7 +685,7 @@ class RHS:
         seconds = mesh['dt'].values[t] 
         solution += inp[t][:]  
         # SHOULD GHOST VOLUMES BE INCLUDED?
-        vol = mesh['volume'][t] + mesh['ghost_volumes'][t]
+        vol = mesh['volume'][t] + mesh['ghost_volumes_in'][t]
         self.vals[:] = solution * vol / seconds
         # self.vals[:] = solution * mesh['volume'][t] / seconds
         return
@@ -656,18 +696,24 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
     Steps through each timestep in the output of a RAS2D model (mesh) 
     and solves the total-load advection-diffusion transport equation 
     using user defined input (inp) of cell concentrations at given timesteps.
-
     mesh: xarray dataset containing all geometry and ouptut results from RAS2D.
             Should follow UGRID conventions.
     inp: array of shape (time x nface) with user-defined inputs of concentrations
             in each cell at each timestep.
     '''
+    print("Starting WQ Simulation...")
     output = np.zeros((len(mesh['time']), len(mesh['nface'])))
     t = 0
     b = RHS(mesh, t, inp)
     output[0] = b.vals 
 
     for t in range(len(mesh['time']) - 1):
+        if t == int(len(mesh['time']) / 4):
+            print(' 25%')
+        elif t == int(len(mesh['time']) / 2):
+            print(' 50%')
+        if t == int(3 * len(mesh['time']) / 4):
+            print(' 75%')
         lhs = LHS(mesh, t)
         lhs.updateValues(mesh, t)
         A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(mesh['nface']),len(mesh['nface'])))
@@ -675,23 +721,21 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
         b.updateValues(x, mesh, t+1, inp)
         output[t+1] = b.vals
 
+    print(' 100%')
     # output[len(mesh['time']) - 1][:] = np.nan
     mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': 'ft3'}) # check units 
     return mesh
 
 
-def main(fpath: str, diffusion_coefficient_input: float):
+def main(fpath: str, diffusion_coefficient_input: float, testing: bool = False):
     '''
     fpath: path to HDF file containing RAS2D output. 
     diffusion_coefficient_input: user-defined diffusion coefficient for entire project space. 
-
     Plan to wrap wq_simulation function within the main function instead of running separately.
     For now, separate for testing purposes. 
     '''
     # define project name 
     with h5py.File(fpath, 'r') as infile:
         project_name = parse_project_name(infile)
-        mesh = populate_ugrid(infile, project_name, diffusion_coefficient_input)
+        mesh = populate_ugrid(infile, project_name, diffusion_coefficient_input, testing)
     return mesh
-
-

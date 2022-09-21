@@ -145,6 +145,11 @@ dmypy.json
 
 # Images
 muncie-*.png
+examples/data/OhioRiver_m.p04
+examples/data/OhioRiver_m.p04.hdf
+examples/data/OhioRiver_m.p07.hdf
+
+# Read EFDC ignore
 examples/Read_EFDC_Example/20110125_2007Baseline_1992/DYECON.bin
 examples/Read_EFDC_Example/20110125_2007Baseline_1992/20110125_2007Baseline_1992_EFDC.mdb
 examples/Read_EFDC_Example/20110125_2007Baseline_1992/CEval_1992_1001.csv
