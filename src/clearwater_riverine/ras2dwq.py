@@ -497,13 +497,17 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
                                     )
     mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
     try:
-        mesh['advection_coeff'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge')) * np.sign(mesh['edge_velocity'])
-        mesh['edge_vertical_area'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge')) / mesh['edge_velocity']
+        mesh['advection_coeff'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge'))  * np.sign(abs(mesh['edge_velocity']))
+        mesh['edge_vertical_area'] = mesh['advection_coeff'] / mesh['edge_velocity']
         # mesh['edge_vertical_area'][np.where(mesh['edge_vertical_area'].isnull())] = mesh['edge_vertical_area_archive'][np.where(mesh['edge_vertical_area'].isnull())]
         mesh['edge_vertical_area'] = mesh['edge_vertical_area'].fillna(0)
+        # advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
+        # mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
     except KeyError:
         print(" Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
         mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
+        advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
+        mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
 
 
     # computed values 
@@ -520,8 +524,8 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     mesh['sum_coeff_to_diffusion'] = hdf_to_xarray(sum_coeff_to_diffusion, ('time', 'nface'), attrs={'Units':'ft3/s'})
 
     # advection
-    advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
-    mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
+    # advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
+    # mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
     # mesh['advection_coeff_archive'] = 
 
     # dt
