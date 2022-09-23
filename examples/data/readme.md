@@ -1,8 +1,4 @@
-Tests
+Example Data
 ===
 
-`tests` is for unit testing scripts (i.e. `test_basic.py`) designed for automated testing. 
-
-Example models do not belong in this folder, nor do Jupyter Notebooks.
-
-Testing scripts in this folder may access use case datasets in `examples/data`.
+`examples/data` is for data files required to run the example notebooks, and also for use by any automated and unit testing scripts in the `tests` directory.

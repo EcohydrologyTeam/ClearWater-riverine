@@ -5,7 +5,7 @@ The `examples` directory contains Jupyter notebooks to teach users how to use th
 Sub-directories are for supporting files:
 - `examples/data` is for data files required to run the example notebooks.
 - `examples/dev_sandbox` is for exploratory work by the development team as they develop new capabilities, including for informal testing.
-- `examples/temp` is for temporary output files that users might create during the demo. 
+- `examples/temp` is for temporary output files that users might create while running examples. 
   - This sub-directory will be in the `.gitignore`, so that output files are not saved to the repo.
 
 ### Example Notebooks
