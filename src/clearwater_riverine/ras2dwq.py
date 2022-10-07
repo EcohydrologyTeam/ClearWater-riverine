@@ -10,8 +10,10 @@ from typing import Dict
 
 ### TODD FUNCTIONS
 
-def parse_attributes(dataset):
-    '''Parse the HDF5 attributes array, convert binary strings to Python strings, and return a dictionary of attributes'''
+def parse_attributes(dataset) -> Dict:
+    '''
+    Parse the HDF5 attributes array, convert binary strings to Python strings, and return a dictionary of attributes
+    '''
     attrs = {}
     for key, value in dataset.attrs.items():
         if type(value) == np.bytes_:
@@ -254,12 +256,34 @@ def compute_face_areas_from_faceWSE(water_surface_elev_arr: np.ndarray, faces_le
 
 
 def parse_project_name(infile: h5py._hl.files.File) -> str:
-    '''Parse the name of a project'''
+    '''
+    Parse the name of a project's 2D Flow Area
+
+    Parameters:
+        infile (h5py._hl.files.File):    HDF File containing RAS2D output 
+
+    Returns:
+        project_name (str):     name of the first 2D Flow area listed in the attributes 
+
+    Notes: 
+        RAS models can have multiple 2D flow areas within a single project. 
+        The code is not currently configured to handle this kind of situation.
+        This is a 'back burner' issue (#7) to address in the future. 
+    '''
     project_name = infile['Geometry/2D Flow Areas/Attributes'][()][0][0].decode('UTF-8')
     return project_name
 
 def calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
-    # get northings/eastings of relevant faces 
+    '''
+    Calculate the distance between cell centroids
+
+    Parameters:
+        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+
+    Returns:
+        dist_data (np.array):   Array of distances between all cell centroids 
+    '''
+    # Get northings and eastings of relevant faces 
     x1_coords = mesh['face_x'][mesh['edges_face1']]
     y1_coords = mesh['face_y'][mesh['edges_face1']]
     x2_coords = mesh['face_x'][mesh['edges_face2']]
@@ -274,9 +298,13 @@ def calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     Calculate the coefficient to the diffusion term. 
     For each edge, this is calculated as:
     (Edge vertical area * diffusion coefficient) / (distance between cells) 
-    Peter Klaver, Craig Taylor noted that diffusion should be 0 to ghost cells
-    However this caused matrix to be singular, so for now ignoring that and using 
-    a constant diffusion coefficient. We should resolve this logic.  
+    
+    Parameters:
+        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+
+    Returns:
+        diffusion_array (np.array):     Array of diffusion coefficients associated with each edge
+
     '''
     # diffusion coefficient: ignore diffusion between cells in the mesh and ghost cells
     diffusion_coefficient = np.zeros(len(mesh['nedge']))
@@ -294,8 +322,18 @@ def calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
 
 def sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.array) -> np.array:
     '''
-    Sums values associated with a certain face (cell). 
+    Sums values associated with a given cell. 
+    Developed this function with help from the following Stack Overflow thread:  
     https://stackoverflow.com/questions/67108215/how-to-get-sum-of-values-in-a-numpy-array-based-on-another-array-with-repetitive
+    
+    Parameters:
+        mesh (xr.Dataset):      Mesh created by the populate_ugrid function
+        face (np.array):        Array containing all cells on one side of an edge connection
+        time_index (float):     Timestep for calculation 
+        sum_array (np.array):   Empty array to populate with sum values
+
+    Returns:
+        sum_array (np.array):   Array populated with sum values     
     '''
     # _, idx, _ = np.unique(face, return_counts=True, return_inverse=True)
     nodal_values = np.bincount(face.values, mesh['coeff_to_diffusion'][time_index])
@@ -304,8 +342,16 @@ def sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.
 
 def calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     '''
-    Sums all coefficient to the diffusion term values associated with each individual cell.
-    These values fall on the diagonal of the sparse matrix.
+    Sums all coefficient to the diffusion term values associated with each individual cell
+    (i.e., transfers values associated with EDGES to relevant CELLS)
+    These values fall on the diagonal of the LHS matrix when solving the transport equation. 
+
+    Parameters:
+        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+
+    Returns:
+        sum_diffusion_array: Array containing the sum of all diffusion coefficients 
+                                associated with each cell. 
     '''
     # initialize array
     sum_diffusion_array = np.zeros((len(mesh['time']), len(mesh['nface'])))
@@ -330,7 +376,14 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     However, this results in an error in the sparse matrix solver
     because nothing can leave the mesh. 
     Therefore, we must calculate the 'volume' in the ghost cells as 
-    the total flow across the face in a given timestep. 
+    the total flow across the face in a given timestep.
+
+    Parameters:
+        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+
+    Returns:
+        ghost_vols_in:       Volume entering the domain from ghost cells
+        ghost_vols_out:      Volume leaving the domain to ghost cells
     '''
     f2_ghost = np.where(mesh['edges_face2'] > mesh.attrs['nreal'])[0]  
     ghost_vels = np.zeros((len(mesh['time']), len(mesh['nedge'])))
@@ -397,7 +450,17 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
 
 
 def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
-    '''Define UGRID-compliant xarray'''
+    '''
+    Define UGRID-compliant xarray
+
+    Parameters:
+        infile (h5py._hl.files.File):    HDF File containing RAS2D output 
+        project_name (str):              Name of the 2D Flow Area being modeled
+
+    Returns:
+        UGRID-compliant xarray with all geometry / time coordinates populated
+
+    '''
 
     # initialize mesh
     mesh = xr.Dataset()
@@ -492,11 +555,20 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
 def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float, testing: bool) -> xr.Dataset:
     '''
     Populates data variables in UGRID-compliant xarray.
-    Inputs:
-    infle: HDF input file containing RAS2D output. 
-    diffusion_coefficient_input: user-defined diffusion coefficient for entire project space. 
-    Output:
-    mesh: sUGRID-complaint xarray Dataset.
+
+    Parameters:
+        infile (h5py._hl.files.File):           HDF File containing RAS2D output 
+        project_name (str):                     Name of the 2D Flow Area being modeled
+        diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
+        testing (bool):                         Boolean specifying whether we are comparing output from calculated values of volume and edge vertical area
+                                                    with values printed from RAS. 
+
+    Returns: 
+        mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
+
+    Notes:
+        This function requires cleanup. We should remove the testing boolean input once the comparison is made. 
+        Should remove some messy calculations and excessive code for vertical area calculations.         
     '''
     print("Populating Mesh...")
     print(" Initializing Geometry...")
@@ -660,11 +732,20 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
 class LHS:
     def __init__(self, mesh: xr.Dataset, t: float):
         '''
-        mesh: xarray dataset containing all geometry and ouptut results from RAS2D.
-            Should follow UGRID conventions.
-        params: A class instance containing additional parameters. 
-            TBD if this will remain or if parameters will be integrated into xarray.
-        t: timestep index  
+        Initialize Sparse Matrix used to solve transport equation. 
+        Rather than looping through every single cell at every timestep, we can instead set up a sparse 
+        matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
+
+        We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load 
+        concentrations. This discretization produces a linear system of equations that can be represented by 
+        a sprase-matrix problem. 
+
+        Parameters: 
+            mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
+            t (float):           Timestep
+        
+        Notes:
+            This is empty right now. Figure out what should go here versus updateValues function. 
         '''
         return
                 
@@ -672,6 +753,34 @@ class LHS:
     def updateValues(self, mesh: xr.Dataset, t: float):
         '''
         Updates values in the LHS matrix based on the timestep. 
+
+        Rather than looping through every single cell at every timestep, we can instead set up a sparse 
+        matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
+        We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load 
+        concentrations. This discretization produces a linear system of equations that can be represented by 
+        a sprase-matrix problem. 
+
+        A sparse matrix is a matrix that is mostly zeroes. Here, we will set up an NCELL x NCELL sparse matrix. 
+            - The diagonal values represent the reference cell ("P")
+            - The non-zero off-diagonal values represent the other cells that share an edge with that cell:
+                i.e., neighboring cell ("N") that shares a face ("f") with P. 
+
+        This function populates the sparse matrix with:
+            - Values on the Diagonal (associated with the cell with the same index as that row/column):
+                - Load at the t+1 timestep (volume at the t + 1 timestep / change in time)
+                - Sum of diffusion coefficients associated with a cell
+                - FOR DRY CELLS ONLY (volume = 0), insert a dummy value (1) so that the matrix is not singular
+            - Values Off-Diagonal:
+                - Coefficient to the diffusion term at the t+1 timestep 
+            - Advection: a special case (updwinds scheme)
+                - When the advection coefficient is positive, the concentration across the face will be the reference cell ("P")
+                    so the coefficient will go in the diagonal. This value will then be subtracted from the corresponding neighbor cell.
+                - When the advection coefficient is negative, the concentration across the face will be the neighbor cell ("N")
+                    so the coefficient will be off-diagonal. This value will the subtracted from the corresponding reference cell.
+
+        Parameters:
+            mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
+            t (float):           Timestep
         '''
         # define edges where flow is flowing in versus out and find all empty cells
         # at the t+1 timestep
@@ -771,13 +880,20 @@ class LHS:
 class RHS:
     def __init__(self, mesh: xr.Dataset, t: float, inp: np.array):
         '''
-        mesh: xarray dataset containing all geometry and ouptut results from RAS2D.
-            Should follow UGRID conventions.
-        params: A class instance containing additional parameters. 
-            TBD if this will remain or if parameters will be integrated into xarray.
-        t: timestep index  
-        inp: array of shape (time x nface) with user-defined inputs of concentrations
-            in each cell at each timestep.
+        Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions. 
+
+        Parameters:
+            mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
+            t (float):           Timestep
+            inp (np.array):      Array of shape (time x nface) with user-defined inputs of concentrations
+                                    in each cell at each timestep. 
+
+        Notes:
+            Need to consider how ghost volumes / cells will be handled. 
+            Need to consider how we will format the user-defined inputs 
+                - An Excel file?
+                - A modifiable table in a Jupyter notebook?
+                - Alternatives?
         '''
         self.conc = np.zeros(len(mesh['nface']))
         self.conc = inp[t] 
@@ -788,12 +904,25 @@ class RHS:
         self.vals[:] = vol / seconds * self.conc 
         # self.vals[:] = mesh['volume'][t] / seconds * self.conc 
         return 
+
     def updateValues(self, solution: np.array, mesh: xr.Dataset, t: float, inp: np.array):
         ''' 
-        Update right hand side data based on:
+        Update right hand side data based on the solution from the previous timestep
             solution: solution from solving the sparse matrix 
             inp: array of shape (time x nface) with user defined inputs of concentrations
-                in each cell at each timestep. 
+                in each cell at each timestep 
+
+        Parameters:
+            solution (np.array):    Solution of concentrations at timestep t from solving sparse matrix. 
+            mesh (xr.Dataset):      UGRID-complaint xarray Dataset with all data required for the transport equation.
+            t (float):              Timestep
+            inp (np.array):         Array of shape (time x nface) with user-defined inputs of concentrations
+                                        in each cell at each timestep.
+
+        Returns:
+            Updates the solution to loads. 
+            This is required to solve the trasnport equation at the following timestep.
+
         '''
         seconds = mesh['dt'].values[t] 
         solution += inp[t][:]  
@@ -809,10 +938,19 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
     Steps through each timestep in the output of a RAS2D model (mesh) 
     and solves the total-load advection-diffusion transport equation 
     using user defined input (inp) of cell concentrations at given timesteps.
-    mesh: xarray dataset containing all geometry and ouptut results from RAS2D.
-            Should follow UGRID conventions.
-    inp: array of shape (time x nface) with user-defined inputs of concentrations
-            in each cell at each timestep.
+
+    Parameters:
+        mesh (xr.Dataset):      UGRID-complaint xarray Dataset with all data required for the transport equation.
+        inp:                    Array of shape (time x nface) with user-defined inputs of concentrations
+                                    in each cell at each timestep.
+
+    Returns:
+        mesh (xr.Dataset):      Populates the mesh xarray with load values. 
+
+
+    Notes:
+        This function should fall under some sort of RAS2D WQ class,
+        so that we can call model.wq_simulation() instead of cwr.wq_simulation(mesh). 
     '''
     print("Starting WQ Simulation...")
     output = np.zeros((len(mesh['time']), len(mesh['nface'])))
@@ -842,10 +980,24 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
 
 def main(fpath: str, diffusion_coefficient_input: float, testing: bool = False):
     '''
-    fpath: path to HDF file containing RAS2D output. 
-    diffusion_coefficient_input: user-defined diffusion coefficient for entire project space. 
-    Plan to wrap wq_simulation function within the main function instead of running separately.
-    For now, separate for testing purposes. 
+    Initialize project mesh
+
+    Parameters:
+        fpath (str):                            Path to HDF file containing RAS2D output. 
+        diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
+        testing (bool):                         Boolean specifying whether we are comparing output from calculated values of volume and edge vertical area
+                                                    with values printed from RAS. 
+ 
+    Returns:
+        mesh (xr.Dataset):      Creates a UGRID-compliant xarray Dataset with all data required for transport equation.
+
+
+    Notes:
+        This should instead be under the __init__ function of some class,
+        so that we can do model = RAS2DWQ(fpath, diffusion_coefficient_input) instead. 
+        To do:
+            - Create this class and move functions around. 
+            - Remove testing boolean. 
     '''
     # define project name 
     with h5py.File(fpath, 'r') as infile:
