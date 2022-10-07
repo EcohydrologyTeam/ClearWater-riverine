@@ -164,6 +164,92 @@ def compute_face_areas(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np
 
     return face_areas
 
+@numba.njit
+def compute_face_areas_from_faceWSE(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np.ndarray, faces_cell_indexes_arr: np.ndarray, starting_index_arr: np.ndarray, count_arr: np.ndarray, elev_arr: np.ndarray, area_arr: np.ndarray, ntimes: int, nfaces: int):
+    '''
+    Compute the areas of the RAS cell faces using lookup table with the
+    water surface elevation from the optional HEC-RAS hdf5 output "Face
+    Water Surface"
+    
+        Parameters
+    ----------
+    water_surface_elev_arr: np.ndarray
+        face water surface array from HEC-RAS HDF5 file-- optional output variable "Face Water Surface"
+    faces_lengths_arr: np.ndarray
+        face length from HEC-RAS HDF5 file-- "Faces NormalUnitVector and Length" table
+    faces_cell_indexes_arr: np.ndarray
+        face cell index array from HEC-RAS HDF5 file-- "Faces Cell Indexes"
+    starting_index_arr: np.ndarray
+        Starting index array for area-elevation relationship table from HEC-RAS HDF5 file-- "Faces Area Elevation Info"
+    count_arr: np.ndarray
+        Count of rows array for area-elevation relationship table from HEC-RAS HDF5 file-- "Faces Area Elevation Info"
+    elev_arr: np.ndarray
+        elevation array from the area-elevation relationship table from HEC-RAS HDF5 file-- "Faces Area Elevation Values"
+    area_arr: np.ndarray
+        area array from the area-elevation relationship table from HEC-RAS HDF5 file-- "Faces Area Elevation Values"
+    ntimes: int
+        Number of output time steps in model simulation
+    ###ncells: int
+        ###Number of cells in model domain
+    nfaces: int
+        Number of faces in model domain
+
+    Returns
+    ----------
+    np.ndarray
+        Array of face areas
+    '''
+    face_areas = np.zeros((ntimes, nfaces))
+    for time in range(ntimes):
+        for face in range(nfaces):
+            ###cell = faces_cell_indexes_arr[face]
+            water_surface_elev = water_surface_elev_arr[time, face]
+            index = starting_index_arr[face] # Start index in the area-elevation table for this cell (note: this is indexed by faces)
+            count = count_arr[face] # Number of points in the table for this cell (note: this is indexed by faces)
+
+            # A number of cells have an index that is just past the end of the array. According to Mark Jensen, 
+            # these are ghost cells and have a volume of 0.0. The count for these cells should also always be zero. 
+            # The code checks for either condition.
+            if index >= len(elev_arr) or count == 0:
+                face_areas[time, face] = 0.0
+            else:
+                elev = elev_arr[index:index + count] # Get the water surface elevation (Z) array for this face
+                area = area_arr[index:index + count] # Get the face area array for this face
+
+                if water_surface_elev > elev[-1]:
+                    '''
+                    Compute the net face surface area: the max face area in the lookup table plus the face area of 
+                    the water above the max elevation in the lookup table.
+                    
+                    The validity of this method was confirmed by Mark Jensen on Jul 29, 2022.
+                    '''
+                    face_areas[time, face] = area[-1] + (water_surface_elev - elev[-1]) * faces_lengths_arr[face]
+                elif water_surface_elev == elev[-1]:
+                    face_areas[time, face] = area[-1]
+                elif water_surface_elev <= elev[0]:
+                    face_areas[time, face] = area[0]
+                else:
+                    # Interpolate
+                    face_areas[time, face] = 0.0 # Default
+                    npts = len(elev)
+                    for i in range(npts-1, -1, -1):
+                        #if elev[i] < water_surface_elev:
+                        if elev[i] < water_surface_elev and elev[i+1] >= water_surface_elev:
+                            face_areas[time, face] = interp(elev[i], elev[i+1], area[i], area[i+1], water_surface_elev)
+                            # print('i, x, m, x1, y1, y: ', i, x, m, x1, y1, y)
+                            if face_areas[time, face] < 0:
+                                print('Computed face area = ', face_areas[time, face])
+                                print('Time Step: ', time)
+                                #print('Cell number: ', cell)
+                                print('Face number: ', face)
+                                print('water_surface_elev: ', water_surface_elev)
+                                print('elev: ', elev)
+                                print('area: ', area)
+                                # msg = 'Negative face area: computed face area = ' + str(face_areas[time, face])
+                                raise(ValueError('Negative face area'))
+
+    return face_areas
+
 ### END OF TODD's CODE 
 
 
