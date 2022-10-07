@@ -30,7 +30,8 @@ dependencies:
   - geoviews
   # HoloViz optional libs used by bokeh.io to save plots to static files such as png.
   # https://holoviews.org/user_guide/Plotting_with_Bokeh.html#exporting-static-files
-  # - selenium  # WebDriver for browser automation
+  - selenium  # WebDriver for browser automation
+  - firefox geckodriver
   # https://www.selenium.dev/documentation/webdriver/getting_started/install_drivers/
   # - webdriver-manager  # https://github.com/SergeyPirogov/webdriver_manager
  
