@@ -162,3 +162,10 @@ examples/Read_EFDC/20110125_2007Baseline_1992/EFDC_Jun09_IVF-sse3.exe
 examples/data_temp/
 OhioRiver_m.p07.hdf
 examples/data/OhioRiver_m.p10.hdf
+examples/data/ohio_river.parquet/part.0.parquet
+examples/data/shapefiles/EFDC.dbf
+examples/data/shapefiles/EFDC.prj
+examples/data/shapefiles/EFDC.sbn
+examples/data/shapefiles/EFDC.sbx
+examples/data/shapefiles/EFDC.shp
+examples/data/shapefiles/EFDC.shx
