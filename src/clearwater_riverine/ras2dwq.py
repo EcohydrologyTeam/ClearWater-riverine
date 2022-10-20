@@ -8,6 +8,22 @@ from scipy.sparse import *
 from scipy.sparse.linalg import *
 from typing import Dict
 
+
+UNIT_DETAILS = {'Metric': {'Length': 'm',
+                            'Velocity': 'm/s',
+                            'Area': 'm2', 
+                            'Volume' : 'm3',
+                            'Load': 'm3/s' ,
+                            },
+                'Imperial': {'Length': 'ft', 
+                            'Velocity': 'ft/s', 
+                            'Area': 'ft2', 
+                            'Volume': 'ft3',
+                            'Load': 'm3/s',
+                            }
+                }
+
+
 ### TODD FUNCTIONS
 
 def parse_attributes(dataset) -> Dict:
@@ -550,6 +566,25 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
         
     return mesh
 
+def determine_units(mesh: xr.Dataset) -> str:
+    '''
+    Determines units of RAS2D HDF output file. 
+
+    Parameters:
+        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+
+    Returns:
+        units (str):         Either 'Metric' or 'Imperial'
+
+    ''' 
+    u = mesh.edge_velocity.Units
+    if u == 'm/s':
+        units = 'Metric'
+    elif u == 'ft/s':
+        units = 'Imperial'
+    else:
+        print(f"Unable to handle {u} units")
+    return units
 
 
 def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float, testing: bool) -> xr.Dataset:
@@ -597,6 +632,8 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     # TO DO: clean all this up; review functions to see if they can be simplified 
     # calculate cell volume
     print(" Computing Necessary Values...")
+    # Determine Units 
+    units = determine_units(mesh)
     if testing == True:
         cells_volume_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
         cells_volume_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
@@ -635,7 +672,7 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
                                                 cells_volume_elevation_values_df['Elevation'].values,
                                                 cells_volume_elevation_values_df['Volume'].values,
                                                     )
-            mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': 'ft3'})
+            mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': UNIT_DETAILS[units]['Volume']})
             mesh['volume'] = mesh['volume_archive']
 
     # edge vertical area
@@ -654,10 +691,12 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
                                             faces_area_elevation_values_df['Z'].values,
                                             faces_area_elevation_values_df['Area'].values,
                                         )
-        mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
+        mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': UNIT_DETAILS[units]['Area']})
         try:
             mesh['advection_coeff'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge'))  * np.sign(abs(mesh['edge_velocity']))
+            mesh['advection_coeff'].attrs['Units'] = UNIT_DETAILS[units]['Load']
             mesh['edge_vertical_area'] = mesh['advection_coeff'] / mesh['edge_velocity']
+            mesh['edge_vertical_area'].attrs['Units'] = UNIT_DETAILS[units]['Area']
             # mesh['edge_vertical_area'][np.where(mesh['edge_vertical_area'].isnull())] = mesh['edge_vertical_area_archive'][np.where(mesh['edge_vertical_area'].isnull())]
             mesh['edge_vertical_area'] = mesh['edge_vertical_area'].fillna(0)
             # advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
@@ -666,13 +705,16 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
             print(" Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
             mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
             advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
-            mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
+            mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':UNIT_DETAILS[units]['Load']})
+
     else:
         try:
             mesh['advection_coeff'] = hdf_to_xarray(infile[f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow'], ('time', 'nedge'))  * np.sign(abs(mesh['edge_velocity']))
+            mesh['advection_coeff'].attrs['Units'] = UNIT_DETAILS[units]['Load']
             mesh['edge_vertical_area'] = mesh['advection_coeff'] / mesh['edge_velocity']
             # mesh['edge_vertical_area'][np.where(mesh['edge_vertical_area'].isnull())] = mesh['edge_vertical_area_archive'][np.where(mesh['edge_vertical_area'].isnull())]
             mesh['edge_vertical_area'] = mesh['edge_vertical_area'].fillna(0)
+            mesh['edge_vertical_area'].attrs['Units'] = UNIT_DETAILS[units]['Area']
             # advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
             # mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})  
         except KeyError:
@@ -693,21 +735,22 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
                                             )
             mesh['edge_vertical_area_archive'] = hdf_to_xarray(face_areas_0, ('time', 'nedge'), attrs={'Units': 'ft'})
             mesh['edge_vertical_area'] = mesh['edge_vertical_area_archive']
+            mesh['edge_vertical_area'].attrs['Units'] = UNIT_DETAILS[units]['Area']
             advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
-            mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})
+            mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':UNIT_DETAILS[units]['Load']})
 
     # computed values 
     # distance between centroids 
     distances = calc_distances_cell_centroids(mesh)
-    mesh['face_to_face_dist'] = hdf_to_xarray(distances, ('nedge'), attrs={'Units': 'ft'})
+    mesh['face_to_face_dist'] = hdf_to_xarray(distances, ('nedge'), attrs={'Units': UNIT_DETAILS[units]['Length']})
 
     # coefficient to diffusion term
     coeff_to_diffusion = calc_coeff_to_diffusion_term(mesh)
-    mesh['coeff_to_diffusion'] = hdf_to_xarray(coeff_to_diffusion, ("time", "nedge"), attrs={'Units': 'ft3/s'})
+    mesh['coeff_to_diffusion'] = hdf_to_xarray(coeff_to_diffusion, ("time", "nedge"), attrs={'Units': UNIT_DETAILS[units]['Load']})
 
     # sum of diffusion coeff
     sum_coeff_to_diffusion = calc_sum_coeff_to_diffusion_term(mesh)
-    mesh['sum_coeff_to_diffusion'] = hdf_to_xarray(sum_coeff_to_diffusion, ('time', 'nface'), attrs={'Units':'ft3/s'})
+    mesh['sum_coeff_to_diffusion'] = hdf_to_xarray(sum_coeff_to_diffusion, ('time', 'nface'), attrs={'Units': UNIT_DETAILS[units]['Load']})
 
     # advection
     # advection_coefficient = mesh['edge_vertical_area'] * mesh['edge_velocity'] 
@@ -722,10 +765,8 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
 
     # ghost cell volumes
     ghost_volumes_in, ghost_volumes_out = calc_ghost_cell_volumes(mesh)
-    mesh['ghost_volumes_in'] = hdf_to_xarray(ghost_volumes_in, ('time', 'nface'), attrs={'Units':'ft3'})
-    mesh['ghost_volumes_out'] = hdf_to_xarray(ghost_volumes_out, ('time', 'nface'), attrs={'Units':'ft3'})
-
-    
+    mesh['ghost_volumes_in'] = hdf_to_xarray(ghost_volumes_in, ('time', 'nface'), attrs={'Units': UNIT_DETAILS[units]['Volume']})
+    mesh['ghost_volumes_out'] = hdf_to_xarray(ghost_volumes_out, ('time', 'nface'), attrs={'Units':UNIT_DETAILS[units]['Volume']})
     return mesh
 
 # matrix solver 
@@ -974,7 +1015,7 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
 
     print(' 100%')
     # output[len(mesh['time']) - 1][:] = np.nan
-    mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': 'ft3'}) # check units 
+    mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': UNIT_DETAILS[units]['Load']}) 
     return mesh
 
 
