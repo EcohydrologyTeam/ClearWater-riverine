@@ -13,15 +13,19 @@ UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
                             'Area': 'm2', 
                             'Volume' : 'm3',
-                            'Load': 'm3/s' ,
+                            'Load': 'm3/s',
                             },
                 'Imperial': {'Length': 'ft', 
                             'Velocity': 'ft/s', 
                             'Area': 'ft2', 
                             'Volume': 'ft3',
-                            'Load': 'm3/s',
+                            'Load': 'ft3/s',
                             }
                 }
+
+CONVERSIONS = {'Metric': {'Liters': 1000},
+               'Imperial': {'Liters': 28.3168}
+               }
 
 
 ### TODD FUNCTIONS
@@ -994,9 +998,16 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
         so that we can call model.wq_simulation() instead of cwr.wq_simulation(mesh). 
     '''
     print("Starting WQ Simulation...")
+
+    # Convert Units
+    units = determine_units(mesh)
+    print(" Assuming input has units of mg/L...")
+    conversion_factor = CONVERSIONS[units]['Liters']
+    inp_converted = inp / conversion_factor # convert to mg/ft3 or mg/m3 
+
     output = np.zeros((len(mesh['time']), len(mesh['nface'])))
     t = 0
-    b = RHS(mesh, t, inp)
+    b = RHS(mesh, t, inp_converted)
     output[0] = b.vals 
 
     for t in range(len(mesh['time']) - 1):
@@ -1010,12 +1021,18 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
         lhs.updateValues(mesh, t)
         A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(mesh['nface']),len(mesh['nface'])))
         x = spsolve(A, b.vals)
-        b.updateValues(x, mesh, t+1, inp)
+        b.updateValues(x, mesh, t+1, inp_converted)
         output[t+1] = b.vals
 
     print(' 100%')
     # output[len(mesh['time']) - 1][:] = np.nan
-    mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': UNIT_DETAILS[units]['Load']}) 
+    # output_mg_l = output * conversion_factor
+    mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': 'mg/s'}) 
+    
+    concentration = mesh['load'] / (mesh['volume'] * conversion_factor) * mesh['dt']
+    mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': 'mg/L'})
+    # concentration
+
     return mesh
 
 
