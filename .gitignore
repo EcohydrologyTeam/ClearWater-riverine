@@ -172,3 +172,10 @@ examples/data/shapefiles/EFDC.shx
 examples/data/OhioRiver_m.p12.hdf
 examples/data/ohio_river-2010.parquet/part.0.parquet
 examples/data/OhioRiver_m.p18.hdf
+examples/data/EFDC_to_RAS_PointSource_links.txt
+examples/data/formatted_dser_data.txt
+examples/data/formatted_dser_data_B.txt
+examples/data/formatted_dser_header.txt
+examples/data/formatted_qser_data.txt
+examples/data/formatted_qser_data_B.txt
+examples/data/formatted_qser_header.txt
