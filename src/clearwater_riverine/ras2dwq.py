@@ -23,8 +23,8 @@ UNIT_DETAILS = {'Metric': {'Length': 'm',
                             }
                 }
 
-CONVERSIONS = {'Metric': {'Liters': 1000},
-               'Imperial': {'Liters': 28.3168}
+CONVERSIONS = {'Metric': {'Liters': 0.001},
+               'Imperial': {'Liters': 0.0353147}
                }
 
 
@@ -978,7 +978,7 @@ class RHS:
         return
 
 
-def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
+def wq_simulation(mesh: xr.Dataset, inp: np.array, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1) -> xr.Dataset:
     '''
     Steps through each timestep in the output of a RAS2D model (mesh) 
     and solves the total-load advection-diffusion transport equation 
@@ -988,6 +988,14 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
         mesh (xr.Dataset):      UGRID-complaint xarray Dataset with all data required for the transport equation.
         inp:                    Array of shape (time x nface) with user-defined inputs of concentrations
                                     in each cell at each timestep.
+        input_mass_units:       User-defined mass units for concentration timeseries. Assumes mg if no value
+                                    is specified. 
+        input_volume_units:     User-defined volume units for concentration timeseries. Assumes L if no value
+                                    is specified.
+        input_liter_conversion: If concentration inputs are not in mass/L, supply the conversion factor to 
+                                    convert the volume unit to liters. For example, if the input timeseries has a
+                                    volume unit of 100 mL, the input_liter_conversion value should be 0.1, because 
+                                    100 mL * 0.1 = 1 L.
 
     Returns:
         mesh (xr.Dataset):      Populates the mesh xarray with load values. 
@@ -1001,9 +1009,13 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
 
     # Convert Units
     units = determine_units(mesh)
-    print(" Assuming input has units of mg/L...")
-    conversion_factor = CONVERSIONS[units]['Liters']
-    inp_converted = inp / conversion_factor # convert to mg/ft3 or mg/m3 
+
+    print(f" Assuming concentration input has units of {input_mass_units}/{input_volume_units}...")
+    print("     If this is not true, please re-run the wq simulation")
+    print("     with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
+
+    conversion_factor = CONVERSIONS[units]['Liters'] 
+    inp_converted = inp / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
 
     output = np.zeros((len(mesh['time']), len(mesh['nface'])))
     t = 0
@@ -1025,12 +1037,9 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array) -> xr.Dataset:
         output[t+1] = b.vals
 
     print(' 100%')
-    # output[len(mesh['time']) - 1][:] = np.nan
-    # output_mg_l = output * conversion_factor
-    mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': 'mg/s'}) 
-    
-    concentration = mesh['load'] / (mesh['volume'] * conversion_factor) * mesh['dt']
-    mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': 'mg/L'})
+    mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
+    concentration = mesh['load'] / mesh['volume'] * conversion_factor * input_liter_conversion * mesh['dt']
+    mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
     # concentration
 
     return mesh
