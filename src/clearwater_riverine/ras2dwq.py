@@ -423,7 +423,7 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
 
     # calculate volume
     ghost_flux_vols = ghost_vels * mesh['edge_vertical_area'] * mesh['dt']
-    
+
     # transfer values (acssociated with EDGES) to corresponding CELLS (FACES)
     ghost_vols_out = np.zeros((len(mesh['time']), len(mesh['nface'])))
     for t in range(len(mesh['time'])):
@@ -450,7 +450,9 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         else:
             ghost_vels_in[t][index_list] = mesh['edge_velocity'][t][index_list]
 
-    ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
+    # ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
+    seconds = mesh['dt']
+    ghost_flux_in_vols = np.sign(ghost_vels_in) * mesh['face_flow'] * seconds
 
     ghost_vols_in = np.zeros((len(mesh['time']), len(mesh['nface'])))
     for t in range(1, len(mesh['time'])):
@@ -916,8 +918,9 @@ class RHS:
 
         '''
         seconds = mesh['dt'].values[t] 
-        solution += inp[t][:]  
-        # SHOULD GHOST VOLUMES BE INCLUDED?
+        # solution += inp[t][:] 
+        # try replacing boundary values instead of adding them:
+        solution[inp[t].nonzero()] = inp[t][inp[t].nonzero()] 
         vol = mesh['volume'][t] + mesh['ghost_volumes_in'][t]
         self.vals[:] = solution * vol / seconds
         # self.vals[:] = solution * mesh['volume'][t] / seconds
@@ -984,7 +987,8 @@ def wq_simulation(mesh: xr.Dataset, inp: np.array, input_mass_units = 'mg', inpu
 
     print(' 100%')
     mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
-    concentration = mesh['load'] / mesh['volume'] * conversion_factor * input_liter_conversion * mesh['dt']
+    temp_vol = mesh['volume'] + mesh['ghost_volumes_in']
+    concentration = mesh['load'] / temp_vol * conversion_factor * input_liter_conversion * mesh['dt']
     mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
     # concentration
 
