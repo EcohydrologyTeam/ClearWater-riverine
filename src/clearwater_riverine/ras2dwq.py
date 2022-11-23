@@ -7,6 +7,12 @@ import datetime
 from scipy.sparse import *
 from scipy.sparse.linalg import *
 from typing import Dict
+import geopandas as gpd
+import holoviews as hv
+import geoviews as gv
+import datetime
+from shapely.geometry import Polygon
+hv.extension("bokeh")
 
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -1008,6 +1014,56 @@ class ClearwaterRiverine:
                               mode='w', 
                               consolidated=True)
         return
+
+    def prep_plot(self):
+        '''
+        Creates a geodataframe of polygons to represent each RAS cell. 
+        '''
+
+        nreal_index = self.mesh.attrs['nreal'] + 1
+        real_face_node_connectivity = self.mesh.face_nodes[0:nreal_index]
+
+        # Turn real mesh cells into polygons
+        polygon_list = []
+        for cell in real_face_node_connectivity:
+            xs = self.mesh.node_x[cell[np.where(cell != -1)]]
+            ys = self.mesh.node_y[cell[np.where(cell != -1)]]
+            p1 = Polygon(list(zip(xs.values, ys.values)))
+            polygon_list.append(p1)
+        
+        gdf_ls = []
+        for t in range(len(self.mesh.time)):
+            temp_gdf = gpd.GeoDataFrame({'cell': self.mesh.nface[0:nreal_index],
+                                        'datetime': pd.to_datetime(self.mesh.time[t].values),
+                                        'concentration': self.mesh.concentration[t][0:nreal_index],
+                                        'volume': self.mesh.volume[t][0:nreal_index],
+                                        'cell': self.mesh.nface[0:nreal_index],
+                                        'geometry': polygon_list}, 
+                                        crs = 'ESRI:102279')
+            gdf_ls.append(temp_gdf)
+        full_df = pd.concat(gdf_ls)
+        full_df.to_crs('EPSG:4326')
+        self.gdf = full_df
+        return
+
+    def plot(self):
+        self.max_plotting_value = self.gdf['concentration'].max() # make option to override?
+        def map_generator(datetime):
+            ras_sub_df = self.gdf[self.gdf == datetime]
+            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
+                                                                          width = 800,
+                                                                          color='concentration',
+                                                                          colorbar = True,
+                                                                          cmap = 'OrRd', 
+                                                                          clim = (0,self.max_plotting_value),
+                                                                          line_width = 0.1,
+                                                                          tools = ['hover'],
+                                                                       )
+            return (ras_map * gv.tile_sources.CartoLight())
+
+        dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
+        self.map = dmap.redim.values(datetime=self.gdf.datetime.unique())
+
 
 
 # def main(fpath: str, diffusion_coefficient_input: float):
