@@ -1015,9 +1015,12 @@ class ClearwaterRiverine:
                               consolidated=True)
         return
 
-    def prep_plot(self):
+    def prep_plot(self, crs: str):
         '''
         Creates a geodataframe of polygons to represent each RAS cell. 
+
+        Parameters:
+            crs:       coordinate system of RAS project. 
         '''
 
         nreal_index = self.mesh.attrs['nreal'] + 1
@@ -1039,18 +1042,18 @@ class ClearwaterRiverine:
                                         'volume': self.mesh.volume[t][0:nreal_index],
                                         'cell': self.mesh.nface[0:nreal_index],
                                         'geometry': polygon_list}, 
-                                        crs = 'ESRI:102279')
+                                        crs = crs)
             gdf_ls.append(temp_gdf)
         full_df = pd.concat(gdf_ls)
-        full_df.to_crs('EPSG:4326')
+        # full_df.to_crs('EPSG:4326')
         self.gdf = full_df
         return
 
     def plot(self):
         self.max_plotting_value = self.gdf['concentration'].max() # make option to override?
         def map_generator(datetime):
-            ras_sub_df = self.gdf[self.gdf == datetime]
-            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
+            ras_sub_df = self.gdf[self.gdf.datetime == datetime]
+            ras_map = gv.Polygons(ras_sub_df.to_crs('EPSG:4326'), vdims=['concentration']).opts(height=600,
                                                                           width = 800,
                                                                           color='concentration',
                                                                           colorbar = True,
@@ -1063,29 +1066,33 @@ class ClearwaterRiverine:
 
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
         self.map = dmap.redim.values(datetime=self.gdf.datetime.unique())
+        return
 
+    def quick_plot(self):
+        self.max_plotting_value = int(self.mesh['concentration'].sel(nface=slice(0, self.mesh.attrs['nreal'])).max())
+        def quick_map_generator(datetime, mval=self.max_plotting_value):
+            ds = self.mesh.sel(time=datetime)
+            # time = self.mesh.indexes["time"].get_indexer(datetime,  method="nearest")
+            self.max_plotting_value = self.mesh['concentration'].values.max() # make option to override?
+            ind = np.where(ds['concentration'][0:self.mesh.attrs['nreal']] > 0)
+            nodes = np.column_stack([ds.face_x[ind], ds.face_y[ind], ds['concentration'][ind], ds['nface'][ind]])
+            nodes = hv.Points(nodes, vdims=['concentration', 'nface'])
+            nodes_all = np.column_stack([ds.face_x[0:self.mesh.attrs['nreal']], ds.face_y[0:self.mesh.attrs['nreal']], ds.volume[0:self.mesh.attrs['nreal']]])
+            nodes_all = hv.Points(nodes_all, vdims='volume')
+            p1 = hv.Scatter(nodes, vdims=['x', 'y', 'concentration', 'nface']).opts(width = 1000,
+                                                                                    height = 500,
+                                                                                    color = 'concentration',
+                                                                                    cmap = 'plasma', 
+                                                                                    clim = (0, mval),
+                                                                                    tools = ['hover'], 
+                                                                                    colorbar = True
+                                                                                    )
+            
+            p2 = hv.Scatter(nodes_all, vdims=['x', 'y', 'volume']).opts(width = 1000,
+                                                                    height = 500,
+                                                                    color = 'grey',
+                                                                     )
+            title = pd.to_datetime(datetime).strftime('%m/%d/%Y %H:%M ')
+            return p1 # hv.Overlay([p2, p1]).opts(title=title)
 
-
-# def main(fpath: str, diffusion_coefficient_input: float):
-#     '''
-#     Initialize project mesh
-
-#     Parameters:
-#         fpath (str):                            Path to HDF file containing RAS2D output. 
-#         diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
- 
-#     Returns:
-#         mesh (xr.Dataset):      Creates a UGRID-compliant xarray Dataset with all data required for transport equation.
-
-
-#     Notes:
-#         This should instead be under the __init__ function of some class,
-#         so that we can do model = RAS2DWQ(fpath, diffusion_coefficient_input) instead. 
-#         To do:
-#             - Create this class and move functions around. 
-#     '''
-#     # define project name 
-#     with h5py.File(fpath, 'r') as infile:
-#         project_name = parse_project_name(infile)
-#         mesh = populate_ugrid(infile, project_name, diffusion_coefficient_input)
-#     return mesh
+        return hv.DynamicMap(quick_map_generator, kdims=['Time']).redim.values(Time=self.mesh.time.values)
