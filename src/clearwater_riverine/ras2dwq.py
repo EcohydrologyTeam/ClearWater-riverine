@@ -1008,6 +1008,8 @@ class ClearwaterRiverine:
 
         # self.mesh.nreal = self.mesh.nreal.values
         self.mesh.attrs['nreal'] = self.mesh.nreal.values
+        # may need to move this if we want to plot things besides concentration
+        self.max_value = int(self.mesh['concentration'].sel(nface=slice(0, self.mesh.attrs['nreal'])).max())
 
         if save == True:
             self.mesh.to_zarr(f'{fpath_out}/{fname_out}.zarr', 
@@ -1020,7 +1022,10 @@ class ClearwaterRiverine:
         Creates a geodataframe of polygons to represent each RAS cell. 
 
         Parameters:
-            crs:       coordinate system of RAS project. 
+            crs:       coordinate system of RAS project.
+
+        Notes:
+            Could we parse the CRS from the PRJ file?
         '''
 
         nreal_index = self.mesh.attrs['nreal'] + 1
@@ -1050,30 +1055,57 @@ class ClearwaterRiverine:
         return
 
     def plot(self):
-        self.max_plotting_value = self.gdf['concentration'].max() # make option to override?
-        def map_generator(datetime):
+        '''
+        Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
+
+        Parameters:
+            None
+
+        Notes:
+            Play button
+            Move re-projection? This is really slow, but I think geoviews requires ESPG:4326 so necessary at some point. 
+            Option to save
+            Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
+            Input parameter of info to plot?
+        '''
+        def map_generator(datetime, mval=self.max_value):
+            '''
+            This function generates plots for the DynamicMap
+            '''
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
             ras_map = gv.Polygons(ras_sub_df.to_crs('EPSG:4326'), vdims=['concentration']).opts(height=600,
                                                                           width = 800,
                                                                           color='concentration',
                                                                           colorbar = True,
                                                                           cmap = 'OrRd', 
-                                                                          clim = (0,self.max_plotting_value),
+                                                                          clim = (0, mval),
                                                                           line_width = 0.1,
                                                                           tools = ['hover'],
                                                                        )
             return (ras_map * gv.tile_sources.CartoLight())
 
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
-        self.map = dmap.redim.values(datetime=self.gdf.datetime.unique())
-        return
+        return dmap.redim.values(datetime=self.gdf.datetime.unique())
 
     def quick_plot(self):
-        self.max_plotting_value = int(self.mesh['concentration'].sel(nface=slice(0, self.mesh.attrs['nreal'])).max())
-        def quick_map_generator(datetime, mval=self.max_plotting_value):
+        '''
+        Creates a dynamic scatterplot of cell centroids colored by cell concentration.
+
+        Parameters:
+            crs:       coordinate system of RAS project.
+
+        Notes:
+            Play button
+            Move re-projection? This is really slow, but I think geoviews requires ESPG:4326 so necessary at some point. 
+            Option to save
+            Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
+            Input parameter of info to plot?
+        '''
+        def quick_map_generator(datetime, mval=self.max_value):
+            '''
+            This function generates plots for the DynamicMap
+            '''
             ds = self.mesh.sel(time=datetime)
-            # time = self.mesh.indexes["time"].get_indexer(datetime,  method="nearest")
-            self.max_plotting_value = self.mesh['concentration'].values.max() # make option to override?
             ind = np.where(ds['concentration'][0:self.mesh.attrs['nreal']] > 0)
             nodes = np.column_stack([ds.face_x[ind], ds.face_y[ind], ds['concentration'][ind], ds['nface'][ind]])
             nodes = hv.Points(nodes, vdims=['concentration', 'nface'])
