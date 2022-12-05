@@ -7,6 +7,12 @@ import datetime
 from scipy.sparse import *
 from scipy.sparse.linalg import *
 from typing import Dict
+import geopandas as gpd
+import holoviews as hv
+import geoviews as gv
+import datetime
+from shapely.geometry import Polygon
+hv.extension("bokeh")
 
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -926,95 +932,199 @@ class RHS:
         # self.vals[:] = solution * mesh['volume'][t] / seconds
         return
 
+class ClearwaterRiverine:
+    def __init__(self, hdf_fpath: str, diffusion_coefficient_input: float):
+        '''
+        Initialize a Clearwater Riverine WQ model by reading HDF output from a RAS2D model. 
 
-def wq_simulation(mesh: xr.Dataset, inp: np.array, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1) -> xr.Dataset:
-    '''
-    Steps through each timestep in the output of a RAS2D model (mesh) 
-    and solves the total-load advection-diffusion transport equation 
-    using user defined input (inp) of cell concentrations at given timesteps.
+        Parameters:
+            hdf_fpath (str):   Filepath to RAS2D HDF output
+            diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
 
-    Parameters:
-        mesh (xr.Dataset):      UGRID-complaint xarray Dataset with all data required for the transport equation.
-        inp:                    Array of shape (time x nface) with user-defined inputs of concentrations
-                                    in each cell at each timestep.
-        input_mass_units:       User-defined mass units for concentration timeseries. Assumes mg if no value
-                                    is specified. 
-        input_volume_units:     User-defined volume units for concentration timeseries. Assumes L if no value
-                                    is specified.
-        input_liter_conversion: If concentration inputs are not in mass/L, supply the conversion factor to 
-                                    convert the volume unit to liters. For example, if the input timeseries has a
-                                    volume unit of 100 mL, the input_liter_conversion value should be 0.1, because 
-                                    100 mL * 0.1 = 1 L.
+        '''
+        with h5py.File(hdf_fpath, 'r') as infile:
+            self.project_name = parse_project_name(infile)
+            self.mesh = populate_ugrid(infile, self.project_name, diffusion_coefficient_input)
+        return
 
-    Returns:
-        mesh (xr.Dataset):      Populates the mesh xarray with load values. 
+    def wq_simulation(self, inp: np.array, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1, save = False, 
+                        fpath_out = '.', fname_out = 'clearwater-riverine-wq-model'):
+        '''
+        Steps through each timestep in the output of a RAS2D model (mesh) 
+        and solves the total-load advection-diffusion transport equation 
+        using user defined input (inp) of cell concentrations at given timesteps.
 
-
-    Notes:
-        This function should fall under some sort of RAS2D WQ class,
-        so that we can call model.wq_simulation() instead of cwr.wq_simulation(mesh). 
-    '''
-    print("Starting WQ Simulation...")
-
-    # Convert Units
-    units = determine_units(mesh)
-
-    print(f" Assuming concentration input has units of {input_mass_units}/{input_volume_units}...")
-    print("     If this is not true, please re-run the wq simulation")
-    print("     with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
-
-    conversion_factor = CONVERSIONS[units]['Liters'] 
-    inp_converted = inp / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
-
-    output = np.zeros((len(mesh['time']), len(mesh['nface'])))
-    t = 0
-    b = RHS(mesh, t, inp_converted)
-    output[0] = b.vals 
-
-    for t in range(len(mesh['time']) - 1):
-        if t == int(len(mesh['time']) / 4):
-            print(' 25%')
-        elif t == int(len(mesh['time']) / 2):
-            print(' 50%')
-        if t == int(3 * len(mesh['time']) / 4):
-            print(' 75%')
-        lhs = LHS(mesh, t)
-        lhs.updateValues(mesh, t)
-        A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(mesh['nface']),len(mesh['nface'])))
-        x = spsolve(A, b.vals)
-        b.updateValues(x, mesh, t+1, inp_converted)
-        output[t+1] = b.vals
-
-    print(' 100%')
-    mesh['load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
-    temp_vol = mesh['volume'] + mesh['ghost_volumes_in']
-    concentration = mesh['load'] / temp_vol * conversion_factor * input_liter_conversion * mesh['dt']
-    mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
-    # concentration
-
-    return mesh
-
-
-def main(fpath: str, diffusion_coefficient_input: float):
-    '''
-    Initialize project mesh
-
-    Parameters:
-        fpath (str):                            Path to HDF file containing RAS2D output. 
-        diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
+        Parameters:
+            inp:                    Array of shape (time x nface) with user-defined inputs of concentrations
+                                        in each cell at each timestep.
+            input_mass_units:       User-defined mass units for concentration timeseries. Assumes mg if no value
+                                        is specified. 
+            input_volume_units:     User-defined volume units for concentration timeseries. Assumes L if no value
+                                        is specified.
+            input_liter_conversion: If concentration inputs are not in mass/L, supply the conversion factor to 
+                                        convert the volume unit to liters. For example, if the input timeseries has a
+                                        volume unit of 100 mL, the input_liter_conversion value should be 0.1, because 
+                                        100 mL * 0.1 = 1 L.
+            save:                   Boolean indicating whether the file should be saved. Default is to not save the output.
+            fpath_out:              Filepath where the output file should be stored. Default to save in current directory.
+            fname_out:              Filename of saved output.
  
-    Returns:
-        mesh (xr.Dataset):      Creates a UGRID-compliant xarray Dataset with all data required for transport equation.
+        '''
+        print("Starting WQ Simulation...")
 
+        # Convert Units
+        units = determine_units(self.mesh)
 
-    Notes:
-        This should instead be under the __init__ function of some class,
-        so that we can do model = RAS2DWQ(fpath, diffusion_coefficient_input) instead. 
-        To do:
-            - Create this class and move functions around. 
-    '''
-    # define project name 
-    with h5py.File(fpath, 'r') as infile:
-        project_name = parse_project_name(infile)
-        mesh = populate_ugrid(infile, project_name, diffusion_coefficient_input)
-    return mesh
+        print(f" Assuming concentration input has units of {input_mass_units}/{input_volume_units}...")
+        print("     If this is not true, please re-run the wq simulation with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
+
+        conversion_factor = CONVERSIONS[units]['Liters'] 
+        inp_converted = inp / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
+
+        output = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+        t = 0
+        b = RHS(self.mesh, t, inp_converted)
+        output[0] = b.vals 
+
+        for t in range(len(self.mesh['time']) - 1):
+            if t == int(len(self.mesh['time']) / 4):
+                print(' 25%')
+            elif t == int(len(self.mesh['time']) / 2):
+                print(' 50%')
+            if t == int(3 * len(self.mesh['time']) / 4):
+                print(' 75%')
+            lhs = LHS(self.mesh, t)
+            lhs.updateValues(self.mesh, t)
+            A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(self.mesh['nface']),len(self.mesh['nface'])))
+            x = spsolve(A, b.vals)
+            b.updateValues(x, self.mesh, t+1, inp_converted)
+            output[t+1] = b.vals
+
+        print(' 100%')
+        self.mesh['pollutant_load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
+        temp_vol = self.mesh['volume'] + self.mesh['ghost_volumes_in']
+        concentration = self.mesh['pollutant_load'] / temp_vol * conversion_factor * input_liter_conversion * self.mesh['dt']
+        self.mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
+
+        # self.mesh.nreal = self.mesh.nreal.values
+        self.mesh.attrs['nreal'] = self.mesh.nreal.values
+        # may need to move this if we want to plot things besides concentration
+        self.max_value = int(self.mesh['concentration'].sel(nface=slice(0, self.mesh.attrs['nreal'])).max())
+
+        if save == True:
+            self.mesh.to_zarr(f'{fpath_out}/{fname_out}.zarr', 
+                              mode='w', 
+                              consolidated=True)
+        return
+
+    def prep_plot(self, crs: str):
+        '''
+        Creates a geodataframe of polygons to represent each RAS cell. 
+
+        Parameters:
+            crs:       coordinate system of RAS project.
+
+        Notes:
+            Could we parse the CRS from the PRJ file?
+        '''
+
+        nreal_index = self.mesh.attrs['nreal'] + 1
+        real_face_node_connectivity = self.mesh.face_nodes[0:nreal_index]
+
+        # Turn real mesh cells into polygons
+        polygon_list = []
+        for cell in real_face_node_connectivity:
+            xs = self.mesh.node_x[cell[np.where(cell != -1)]]
+            ys = self.mesh.node_y[cell[np.where(cell != -1)]]
+            p1 = Polygon(list(zip(xs.values, ys.values)))
+            polygon_list.append(p1)
+        
+        gdf_ls = []
+        for t in range(len(self.mesh.time)):
+            temp_gdf = gpd.GeoDataFrame({'cell': self.mesh.nface[0:nreal_index],
+                                        'datetime': pd.to_datetime(self.mesh.time[t].values),
+                                        'concentration': self.mesh.concentration[t][0:nreal_index],
+                                        'volume': self.mesh.volume[t][0:nreal_index],
+                                        'cell': self.mesh.nface[0:nreal_index],
+                                        'geometry': polygon_list}, 
+                                        crs = crs)
+            gdf_ls.append(temp_gdf)
+        full_df = pd.concat(gdf_ls)
+        # full_df.to_crs('EPSG:4326')
+        self.gdf = full_df
+        return
+
+    def plot(self):
+        '''
+        Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
+
+        Parameters:
+            None
+
+        Notes:
+            Play button
+            Move re-projection? This is really slow, but I think geoviews requires ESPG:4326 so necessary at some point. 
+            Option to save
+            Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
+            Input parameter of info to plot?
+        '''
+        def map_generator(datetime, mval=self.max_value):
+            '''
+            This function generates plots for the DynamicMap
+            '''
+            ras_sub_df = self.gdf[self.gdf.datetime == datetime]
+            ras_map = gv.Polygons(ras_sub_df.to_crs('EPSG:4326'), vdims=['concentration']).opts(height=600,
+                                                                          width = 800,
+                                                                          color='concentration',
+                                                                          colorbar = True,
+                                                                          cmap = 'OrRd', 
+                                                                          clim = (0, mval),
+                                                                          line_width = 0.1,
+                                                                          tools = ['hover'],
+                                                                       )
+            return (ras_map * gv.tile_sources.CartoLight())
+
+        dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
+        return dmap.redim.values(datetime=self.gdf.datetime.unique())
+
+    def quick_plot(self):
+        '''
+        Creates a dynamic scatterplot of cell centroids colored by cell concentration.
+
+        Parameters:
+            crs:       coordinate system of RAS project.
+
+        Notes:
+            Play button
+            Move re-projection? This is really slow, but I think geoviews requires ESPG:4326 so necessary at some point. 
+            Option to save
+            Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
+            Input parameter of info to plot?
+        '''
+        def quick_map_generator(datetime, mval=self.max_value):
+            '''
+            This function generates plots for the DynamicMap
+            '''
+            ds = self.mesh.sel(time=datetime)
+            ind = np.where(ds['concentration'][0:self.mesh.attrs['nreal']] > 0)
+            nodes = np.column_stack([ds.face_x[ind], ds.face_y[ind], ds['concentration'][ind], ds['nface'][ind]])
+            nodes = hv.Points(nodes, vdims=['concentration', 'nface'])
+            nodes_all = np.column_stack([ds.face_x[0:self.mesh.attrs['nreal']], ds.face_y[0:self.mesh.attrs['nreal']], ds.volume[0:self.mesh.attrs['nreal']]])
+            nodes_all = hv.Points(nodes_all, vdims='volume')
+            p1 = hv.Scatter(nodes, vdims=['x', 'y', 'concentration', 'nface']).opts(width = 1000,
+                                                                                    height = 500,
+                                                                                    color = 'concentration',
+                                                                                    cmap = 'plasma', 
+                                                                                    clim = (0, mval),
+                                                                                    tools = ['hover'], 
+                                                                                    colorbar = True
+                                                                                    )
+            
+            p2 = hv.Scatter(nodes_all, vdims=['x', 'y', 'volume']).opts(width = 1000,
+                                                                    height = 500,
+                                                                    color = 'grey',
+                                                                     )
+            title = pd.to_datetime(datetime).strftime('%m/%d/%Y %H:%M ')
+            return p1 # hv.Overlay([p2, p1]).opts(title=title)
+
+        return hv.DynamicMap(quick_map_generator, kdims=['Time']).redim.values(Time=self.mesh.time.values)
