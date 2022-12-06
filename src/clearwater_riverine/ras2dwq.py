@@ -12,6 +12,7 @@ import holoviews as hv
 import geoviews as gv
 import datetime
 from shapely.geometry import Polygon
+import hvplot.xarray
 hv.extension("bokeh")
 
 
@@ -1108,6 +1109,10 @@ class ClearwaterRiverine:
             ys = self.mesh.node_y[cell[np.where(cell != -1)]]
             p1 = Polygon(list(zip(xs.values, ys.values)))
             polygon_list.append(p1)
+
+        poly_gdf = gpd.GeoDataFrame({'geometry': polygon_list},
+                                    crs = crs)
+        poly_gdf = poly_gdf.to_crs('EPSG:4326')
         
         gdf_ls = []
         for t in range(len(self.mesh.time)):
@@ -1116,8 +1121,8 @@ class ClearwaterRiverine:
                                         'concentration': self.mesh.concentration[t][0:nreal_index],
                                         'volume': self.mesh.volume[t][0:nreal_index],
                                         'cell': self.mesh.nface[0:nreal_index],
-                                        'geometry': polygon_list}, 
-                                        crs = crs)
+                                        'geometry': poly_gdf['geometry']}, 
+                                        crs = 'EPSG:4326')
             gdf_ls.append(temp_gdf)
         full_df = pd.concat(gdf_ls)
         # full_df.to_crs('EPSG:4326')
@@ -1143,7 +1148,7 @@ class ClearwaterRiverine:
             This function generates plots for the DynamicMap
             '''
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
-            ras_map = gv.Polygons(ras_sub_df.to_crs('EPSG:4326'), vdims=['concentration']).opts(height=600,
+            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
                                                                           width = 800,
                                                                           color='concentration',
                                                                           colorbar = True,
@@ -1162,7 +1167,6 @@ class ClearwaterRiverine:
         Creates a dynamic scatterplot of cell centroids colored by cell concentration.
 
         Parameters:
-            crs:       coordinate system of RAS project.
 
         Notes:
             Play button
@@ -1171,6 +1175,7 @@ class ClearwaterRiverine:
             Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
             Input parameter of info to plot?
         '''
+
         def quick_map_generator(datetime, mval=self.max_value):
             '''
             This function generates plots for the DynamicMap
@@ -1181,6 +1186,7 @@ class ClearwaterRiverine:
             nodes = hv.Points(nodes, vdims=['concentration', 'nface'])
             nodes_all = np.column_stack([ds.face_x[0:self.mesh.attrs['nreal']], ds.face_y[0:self.mesh.attrs['nreal']], ds.volume[0:self.mesh.attrs['nreal']]])
             nodes_all = hv.Points(nodes_all, vdims='volume')
+
             p1 = hv.Scatter(nodes, vdims=['x', 'y', 'concentration', 'nface']).opts(width = 1000,
                                                                                     height = 500,
                                                                                     color = 'concentration',
