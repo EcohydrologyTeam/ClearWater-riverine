@@ -12,6 +12,7 @@ import holoviews as hv
 import geoviews as gv
 import datetime
 from shapely.geometry import Polygon
+import hvplot.xarray
 hv.extension("bokeh")
 
 
@@ -727,6 +728,29 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     mesh['ghost_volumes_out'] = hdf_to_xarray(ghost_volumes_out, ('time', 'nface'), attrs={'Units':UNIT_DETAILS[units]['Volume']})
     return mesh
 
+def populate_boundary_information(infile: h5py._hl.files.File) -> pd.DataFrame:
+    '''
+    Parse attribute information from RAS2D HDF output required to set up boundary conditions.
+
+    Parameters:
+        infile (h5py._hl.files.File):    HDF File containing RAS2D output 
+
+    Returns:
+        boundary_data (pd.DataFrame):         Information about RAS boundaries 
+    '''
+
+    external_faces = pd.DataFrame(infile['Geometry/Boundary Condition Lines/External Faces'][()])
+    attributes = pd.DataFrame(infile['Geometry/Boundary Condition Lines/Attributes/'][()])
+    str_df = attributes.select_dtypes([object])
+    str_df = str_df.stack().str.decode('utf-8').unstack()
+    for col in str_df:
+        attributes[col] = str_df[col]
+    boundary_attributes = attributes
+    # merge attributes and boundary condition data 
+    boundary_attributes['BC Line ID'] = boundary_attributes.index
+    boundary_data = pd.merge(external_faces, boundary_attributes, on = 'BC Line ID', how = 'left')
+    return boundary_data
+
 # matrix solver 
 class LHS:
     def __init__(self, mesh: xr.Dataset, t: float):
@@ -945,18 +969,65 @@ class ClearwaterRiverine:
         with h5py.File(hdf_fpath, 'r') as infile:
             self.project_name = parse_project_name(infile)
             self.mesh = populate_ugrid(infile, self.project_name, diffusion_coefficient_input)
+            self.boundary_data = populate_boundary_information(infile)
+    
+
+    def initial_conditions(self, fpath: str):
+        '''
+        Define initial conditions for RAS2D model from CSV file. 
+
+        Parameters:
+            fpath (str):    Filepath to CSV containing initial conditions. The CSV should have two columns:
+                                one called Cell_Index and one called Concentration, which denote the concentration
+                                in each cell within the model domain at the first timestep. 
+
+        Notes:
+            Should we have the option to change what timestep gets initial conditions?
+                Would that be a time index or datetime or either?
+            Would there be use cases where a user would want to infuse conditions into the results that
+                aren't initial conditions?
+            Allow other file types?
+            Where / when should we deal with units and conversions?
+        '''
+        init = pd.read_csv(fpath)
+        init['Cell_Index'] = init.Cell_Index.astype(int)
+        self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+        self.input_array[0, [init['Cell_Index']]] =  init['Concentration']
+        return 
+
+    def boundary_conditions(self, fpath: str):
+        '''
+        Define boundary conditions for RAS2D water quality model from CSV file. 
+
+        Parameters:
+            fpath (str):    Filepath to CSV containing boundary conditions. The CSV should have the following columns:
+                                RAS2D_TS_Name (the timeseries name, as labeled in the RAS model)
+                                Datetime
+                                Concentration 
+        '''
+        bc_df = pd.read_csv(fpath, parse_dates=['Datetime'])
+        bc_df = bc_df[(bc_df.Datetime >= self.mesh.time.min().values) & (bc_df.Datetime <= self.mesh.time.max().values)]
+
+        boundary_df = pd.merge(bc_df, self.boundary_data, left_on = 'RAS2D_TS_Name', right_on = 'Name', how='left')
+        # Define the ghost cell associated with the Face Index
+        boundary_df['Ghost Cell'] = self.mesh.edges_face2[boundary_df['Face Index'].to_list()]
+        boundary_df['Domain Cell'] = self.mesh.edges_face1[boundary_df['Face Index'].to_list()]
+        # Find time index
+        boundary_df.reset_index(inplace=True)
+        boundary_df['Time Index'] = [np.where(self.mesh.time == i)[0][0] for i in boundary_df.Datetime]
+        # Put values into input array
+        self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
         return
 
-    def wq_simulation(self, inp: np.array, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1, save = False, 
+
+    def wq_simulation(self, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1, save = False, 
                         fpath_out = '.', fname_out = 'clearwater-riverine-wq-model'):
         '''
         Steps through each timestep in the output of a RAS2D model (mesh) 
         and solves the total-load advection-diffusion transport equation 
-        using user defined input (inp) of cell concentrations at given timesteps.
+        using boundary and initial conditions.
 
         Parameters:
-            inp:                    Array of shape (time x nface) with user-defined inputs of concentrations
-                                        in each cell at each timestep.
             input_mass_units:       User-defined mass units for concentration timeseries. Assumes mg if no value
                                         is specified. 
             input_volume_units:     User-defined volume units for concentration timeseries. Assumes L if no value
@@ -979,11 +1050,11 @@ class ClearwaterRiverine:
         print("     If this is not true, please re-run the wq simulation with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
 
         conversion_factor = CONVERSIONS[units]['Liters'] 
-        inp_converted = inp / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
+        self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
 
         output = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
         t = 0
-        b = RHS(self.mesh, t, inp_converted)
+        b = RHS(self.mesh, t, self.inp_converted)
         output[0] = b.vals 
 
         for t in range(len(self.mesh['time']) - 1):
@@ -997,7 +1068,7 @@ class ClearwaterRiverine:
             lhs.updateValues(self.mesh, t)
             A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(self.mesh['nface']),len(self.mesh['nface'])))
             x = spsolve(A, b.vals)
-            b.updateValues(x, self.mesh, t+1, inp_converted)
+            b.updateValues(x, self.mesh, t+1, self.inp_converted)
             output[t+1] = b.vals
 
         print(' 100%')
@@ -1038,6 +1109,10 @@ class ClearwaterRiverine:
             ys = self.mesh.node_y[cell[np.where(cell != -1)]]
             p1 = Polygon(list(zip(xs.values, ys.values)))
             polygon_list.append(p1)
+
+        poly_gdf = gpd.GeoDataFrame({'geometry': polygon_list},
+                                    crs = crs)
+        poly_gdf = poly_gdf.to_crs('EPSG:4326')
         
         gdf_ls = []
         for t in range(len(self.mesh.time)):
@@ -1046,8 +1121,8 @@ class ClearwaterRiverine:
                                         'concentration': self.mesh.concentration[t][0:nreal_index],
                                         'volume': self.mesh.volume[t][0:nreal_index],
                                         'cell': self.mesh.nface[0:nreal_index],
-                                        'geometry': polygon_list}, 
-                                        crs = crs)
+                                        'geometry': poly_gdf['geometry']}, 
+                                        crs = 'EPSG:4326')
             gdf_ls.append(temp_gdf)
         full_df = pd.concat(gdf_ls)
         # full_df.to_crs('EPSG:4326')
@@ -1073,7 +1148,7 @@ class ClearwaterRiverine:
             This function generates plots for the DynamicMap
             '''
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
-            ras_map = gv.Polygons(ras_sub_df.to_crs('EPSG:4326'), vdims=['concentration']).opts(height=600,
+            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
                                                                           width = 800,
                                                                           color='concentration',
                                                                           colorbar = True,
@@ -1092,7 +1167,6 @@ class ClearwaterRiverine:
         Creates a dynamic scatterplot of cell centroids colored by cell concentration.
 
         Parameters:
-            crs:       coordinate system of RAS project.
 
         Notes:
             Play button
@@ -1101,6 +1175,7 @@ class ClearwaterRiverine:
             Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
             Input parameter of info to plot?
         '''
+
         def quick_map_generator(datetime, mval=self.max_value):
             '''
             This function generates plots for the DynamicMap
@@ -1111,6 +1186,7 @@ class ClearwaterRiverine:
             nodes = hv.Points(nodes, vdims=['concentration', 'nface'])
             nodes_all = np.column_stack([ds.face_x[0:self.mesh.attrs['nreal']], ds.face_y[0:self.mesh.attrs['nreal']], ds.volume[0:self.mesh.attrs['nreal']]])
             nodes_all = hv.Points(nodes_all, vdims='volume')
+
             p1 = hv.Scatter(nodes, vdims=['x', 'y', 'concentration', 'nface']).opts(width = 1000,
                                                                                     height = 500,
                                                                                     color = 'concentration',
