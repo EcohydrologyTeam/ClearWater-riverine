@@ -1,16 +1,14 @@
+import datetime
+from typing import Dict
+import numba
 import h5py
 import numpy as np
 import pandas as pd
 import xarray as xr
-import numba
-import datetime
-from scipy.sparse import *
-from scipy.sparse.linalg import *
-from typing import Dict
-import geopandas as gpd
+from scipy.sparse import csr_matrix, linalg
 import holoviews as hv
 import geoviews as gv
-import datetime
+import geopandas as gpd
 from shapely.geometry import Polygon
 import hvplot.xarray
 hv.extension("bokeh")
@@ -38,9 +36,9 @@ CONVERSIONS = {'Metric': {'Liters': 0.001},
 ### TODD FUNCTIONS
 
 def parse_attributes(dataset) -> Dict:
-    '''
+    """
     Parse the HDF5 attributes array, convert binary strings to Python strings, and return a dictionary of attributes
-    '''
+    """
     attrs = {}
     for key, value in dataset.attrs.items():
         if type(value) == np.bytes_:
@@ -58,21 +56,21 @@ def parse_attributes(dataset) -> Dict:
     return attrs
 
 def hdf_to_xarray(dataset, dims, attrs=None) -> xr.DataArray:
-    '''Read n-dimensional HDF5 dataset and return it as an xarray.DataArray'''
+    """Read n-dimensional HDF5 dataset and return it as an xarray.DataArray"""
     if attrs == None:
         attrs = parse_attributes(dataset)
     data_array = xr.DataArray(dataset[()], dims = dims, attrs = attrs)
     return data_array
 
-def hdf_to_pandas(dataset) -> pd.DataFrame:
-    '''Read n-dimensional HDF5 dataset and return it as an xarray.DataArray'''
+def hdf_to_dataframe(dataset) -> pd.DataFrame:
+    """Read n-dimensional HDF5 dataset and return it as an pandas DataFrame"""
     attrs = parse_attributes(dataset)
     df = pd.DataFrame(dataset[()], columns = attrs['Column'])
     return df
 
 @numba.njit
-def interp(x0: float, x1: float, y0: float, y1: float, xi: float):
-    '''
+def linear_interpolate(x0: float, x1: float, y0: float, y1: float, xi: float):
+    """
     Linear interpolation:
     Inputs:
         x0: Lower x value
@@ -82,14 +80,21 @@ def interp(x0: float, x1: float, y0: float, y1: float, xi: float):
         xi: x value to interpolate
     Returns:
         y1: interpolated y value
-    '''
+    """
     m = (y1 - y0)/(x1 - x0)
     yi = m * (xi - x0) + y0
     return yi
 
 @numba.njit
-def compute_cell_volumes(water_surface_elev_arr: np.ndarray, cells_surface_area_arr: np.ndarray, starting_index_arr: np.ndarray, count_arr: np.ndarray, elev_arr: np.ndarray, vol_arr: np.ndarray, VERBOSE=False) -> float:
-    '''Compute the volumes of the RAS cells using lookup tables'''
+def compute_cell_volumes(
+    water_surface_elev_arr: np.ndarray,
+    cells_surface_area_arr: np.ndarray,
+    starting_index_arr: np.ndarray,
+    count_arr: np.ndarray,
+    elev_arr: np.ndarray,
+    vol_arr: np.ndarray,
+    ) -> np.ndarray:
+    """Compute the volumes of the RAS cells using lookup tables"""
     ntimes, ncells = water_surface_elev_arr.shape
     cell_volumes = np.zeros((ntimes, ncells))
 
@@ -130,14 +135,22 @@ def compute_cell_volumes(water_surface_elev_arr: np.ndarray, cells_surface_area_
                     npts = len(elev)
                     for i in range(npts-1, -1, -1):
                         if elev[i] < water_surface_elev:
-                            cell_volumes[time, cell] = interp(elev[i], elev[i+1], vol[i], vol[i+1], water_surface_elev)
+                            cell_volumes[time, cell] = linear_interpolate(elev[i], elev[i+1], vol[i], vol[i+1], water_surface_elev)
 
     return cell_volumes
 
 @numba.njit
-def compute_face_areas(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np.ndarray, faces_cell_indexes_arr: np.ndarray, starting_index_arr: np.ndarray, count_arr: np.ndarray, elev_arr: np.ndarray, area_arr: np.ndarray):
-    '''Compute the areas of the RAS cell faces using lookup tables'''
-    ntimes, ncells = water_surface_elev_arr.shape
+def compute_face_areas(
+    water_surface_elev_arr: np.ndarray,
+    faces_lengths_arr: np.ndarray,
+    faces_cell_indexes_arr: np.ndarray,
+    starting_index_arr: np.ndarray,
+    count_arr: np.ndarray,
+    elev_arr: np.ndarray,
+    area_arr: np.ndarray,
+    ) -> np.ndarray:
+    """Compute the areas of the RAS cell faces using lookup tables"""
+    ntimes, _ = water_surface_elev_arr.shape
     nfaces = len(faces_lengths_arr)
     face_areas = np.zeros((ntimes, nfaces))
     for time in range(ntimes):
@@ -157,7 +170,7 @@ def compute_face_areas(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np
                 area = area_arr[index:index + count] # Get the face area array for this face
 
                 if water_surface_elev > elev[-1]:
-                    '''
+                    """
                     Compute the net face surface area: the max face area in the lookup table plus the face area of 
                     the water above the max elevation in the lookup table.
                     
@@ -165,7 +178,7 @@ def compute_face_areas(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np
                     is negligible. The error increases with cell size.
                     
                     The validity of this method was confirmed by Mark Jensen on Jul 29, 2022.
-                    '''
+                    """
                     face_areas[time, face] = area[-1] + (water_surface_elev - elev[-1]) * faces_lengths_arr[face]
                 elif water_surface_elev == elev[-1]:
                     face_areas[time, face] = area[-1]
@@ -178,7 +191,7 @@ def compute_face_areas(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np
                     for i in range(npts-1, -1, -1):
                         if elev[i] < water_surface_elev:
                             x = water_surface_elev
-                            face_areas[time, face] = interp(elev[i], elev[i+1], area[i], area[i+1], water_surface_elev)
+                            face_areas[time, face] = linear_interpolate(elev[i], elev[i+1], area[i], area[i+1], water_surface_elev)
                             # print('i, x, m, x1, y1, y: ', i, x, m, x1, y1, y)
                             if face_areas[time, face] < 0:
                                 print('Computed face area = ', face_areas[time, face])
@@ -194,8 +207,18 @@ def compute_face_areas(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np
     return face_areas
 
 @numba.njit
-def compute_face_areas_from_faceWSE(water_surface_elev_arr: np.ndarray, faces_lengths_arr: np.ndarray, faces_cell_indexes_arr: np.ndarray, starting_index_arr: np.ndarray, count_arr: np.ndarray, elev_arr: np.ndarray, area_arr: np.ndarray, ntimes: int, nfaces: int):
-    '''
+def compute_face_areas_from_faceWSE(
+    water_surface_elev_arr: np.ndarray,
+    faces_lengths_arr: np.ndarray,
+    faces_cell_indexes_arr: np.ndarray,
+    starting_index_arr: np.ndarray,
+    count_arr: np.ndarray,
+    elev_arr: np.ndarray,
+    area_arr: np.ndarray,
+    ntimes: int,
+    nfaces: int,
+    ) ->np.ndarray:
+    """
     Compute the areas of the RAS cell faces using lookup table with the
     water surface elevation from the optional HEC-RAS hdf5 output "Face
     Water Surface"
@@ -227,7 +250,7 @@ def compute_face_areas_from_faceWSE(water_surface_elev_arr: np.ndarray, faces_le
     ----------
     np.ndarray
         Array of face areas
-    '''
+    """
     face_areas = np.zeros((ntimes, nfaces))
     for time in range(ntimes):
         for face in range(nfaces):
@@ -283,7 +306,7 @@ def compute_face_areas_from_faceWSE(water_surface_elev_arr: np.ndarray, faces_le
 
 
 def parse_project_name(infile: h5py._hl.files.File) -> str:
-    '''
+    """
     Parse the name of a project's 2D Flow Area
 
     Parameters:
@@ -296,12 +319,12 @@ def parse_project_name(infile: h5py._hl.files.File) -> str:
         RAS models can have multiple 2D flow areas within a single project. 
         The code is not currently configured to handle this kind of situation.
         This is a 'back burner' issue (#7) to address in the future. 
-    '''
+    """
     project_name = infile['Geometry/2D Flow Areas/Attributes'][()][0][0].decode('UTF-8')
     return project_name
 
 def calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
-    '''
+    """
     Calculate the distance between cell centroids
 
     Parameters:
@@ -309,7 +332,7 @@ def calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
 
     Returns:
         dist_data (np.array):   Array of distances between all cell centroids 
-    '''
+    """
     # Get northings and eastings of relevant faces 
     x1_coords = mesh['face_x'][mesh['edges_face1']]
     y1_coords = mesh['face_y'][mesh['edges_face1']]
@@ -321,7 +344,7 @@ def calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
     return dist_data
 
 def calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
-    '''
+    """
     Calculate the coefficient to the diffusion term. 
     For each edge, this is calculated as:
     (Edge vertical area * diffusion coefficient) / (distance between cells) 
@@ -332,7 +355,7 @@ def calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     Returns:
         diffusion_array (np.array):     Array of diffusion coefficients associated with each edge
 
-    '''
+    """
     # diffusion coefficient: ignore diffusion between cells in the mesh and ghost cells
     diffusion_coefficient = np.zeros(len(mesh['nedge']))
 
@@ -348,7 +371,7 @@ def calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     return diffusion_array
 
 def sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.array) -> np.array:
-    '''
+    """
     Sums values associated with a given cell. 
     Developed this function with help from the following Stack Overflow thread:  
     https://stackoverflow.com/questions/67108215/how-to-get-sum-of-values-in-a-numpy-array-based-on-another-array-with-repetitive
@@ -361,14 +384,14 @@ def sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.
 
     Returns:
         sum_array (np.array):   Array populated with sum values     
-    '''
+    """
     # _, idx, _ = np.unique(face, return_counts=True, return_inverse=True)
     nodal_values = np.bincount(face.values, mesh['coeff_to_diffusion'][time_index])
     sum_array[0:len(nodal_values)] = nodal_values
     return sum_array
 
 def calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
-    '''
+    """
     Sums all coefficient to the diffusion term values associated with each individual cell
     (i.e., transfers values associated with EDGES to relevant CELLS)
     These values fall on the diagonal of the LHS matrix when solving the transport equation. 
@@ -379,7 +402,7 @@ def calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     Returns:
         sum_diffusion_array: Array containing the sum of all diffusion coefficients 
                                 associated with each cell. 
-    '''
+    """
     # initialize array
     sum_diffusion_array = np.zeros((len(mesh['time']), len(mesh['nface'])))
     for t in range(len(mesh['time'])):
@@ -398,7 +421,7 @@ def calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     return sum_diffusion_array
 
 def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
-    '''
+    """
     In RAS2D output, all ghost cells (boundary cells) have a volume of 0. 
     However, this results in an error in the sparse matrix solver
     because nothing can leave the mesh. 
@@ -411,7 +434,7 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     Returns:
         ghost_vols_in:       Volume entering the domain from ghost cells
         ghost_vols_out:      Volume leaving the domain to ghost cells
-    '''
+    """
     f2_ghost = np.where(mesh['edges_face2'] > mesh.attrs['nreal'])[0]  
     ghost_vels = np.zeros((len(mesh['time']), len(mesh['nedge'])))
 
@@ -423,9 +446,7 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         # get intersection - this is where water is flowing OUT to a ghost cell
         index_list = np.intersect1d(positive_velocity_indices, f2_ghost)
 
-        if len(index_list) == 0:
-            pass
-        else:
+        if len(index_list) != 0:
             ghost_vels[t][index_list] = mesh['edge_velocity'][t][index_list]
 
     # calculate volume
@@ -439,8 +460,6 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         vals = ghost_flux_vols[t][indices]
         if len(cell_ind) > 0:
             ghost_vols_out[t][np.array(cell_ind)] = vals 
-        else:
-            pass
     
     # # volume coming in
     ghost_vels_in = np.zeros((len(mesh['time']), len(mesh['nedge'])))
@@ -452,9 +471,7 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         # get intersection - this is where water is flowing IN from a ghost cell
         index_list = np.intersect1d(negative_velocity_indices, f2_ghost)
 
-        if len(index_list) == 0:
-            pass
-        else:
+        if len(index_list) != 0:
             ghost_vels_in[t][index_list] = mesh['edge_velocity'][t][index_list]
 
     # ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
@@ -476,7 +493,7 @@ def calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
 
 
 def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
-    '''
+    """
     Define UGRID-compliant xarray
 
     Parameters:
@@ -486,7 +503,7 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
     Returns:
         UGRID-compliant xarray with all geometry / time coordinates populated
 
-    '''
+    """
 
     # initialize mesh
     mesh = xr.Dataset()
@@ -577,7 +594,7 @@ def define_ugrid(infile: h5py._hl.files.File, project_name: str) -> xr.Dataset:
     return mesh
 
 def determine_units(mesh: xr.Dataset) -> str:
-    '''
+    """
     Determines units of RAS2D HDF output file. 
 
     Parameters:
@@ -586,7 +603,7 @@ def determine_units(mesh: xr.Dataset) -> str:
     Returns:
         units (str):         Either 'Metric' or 'Imperial'
 
-    ''' 
+    """ 
     u = mesh.edge_velocity.Units
     if u == 'm/s':
         units = 'Metric'
@@ -598,7 +615,7 @@ def determine_units(mesh: xr.Dataset) -> str:
 
 
 def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coefficient_input: float) -> xr.Dataset:
-    '''
+    """
     Populates data variables in UGRID-compliant xarray.
 
     Parameters:
@@ -612,7 +629,7 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     Notes:
         This function requires cleanup. 
         Should remove some messy calculations and excessive code for vertical area calculations.         
-    '''
+    """
     print("Populating Mesh...")
     print(" Initializing Geometry...")
     mesh = define_ugrid(infile, project_name)
@@ -649,18 +666,18 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
         mesh['volume'][:,mesh.attrs['nreal'].values+1:] = 0
     except KeyError: 
         print(" Warning! Cell volumes are being manually calculated. Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
-        cells_volume_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
-        cells_volume_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
+        cells_volume_elevation_info_df = hdf_to_dataframe(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info'])
+        cells_volume_elevation_values_df = hdf_to_dataframe(infile[f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values'])
         # question: is it better to separate all of these things
         # or just input mesh, cells_volume_elevation_info_df / values df 
         cell_volumes = compute_cell_volumes(
-                                            mesh['water_surface_elev'].values,
-                                            mesh['faces_surface_area'].values,
-                                            cells_volume_elevation_info_df['Starting Index'].values,
-                                            cells_volume_elevation_info_df['Count'].values,
-                                            cells_volume_elevation_values_df['Elevation'].values,
-                                            cells_volume_elevation_values_df['Volume'].values,
-                                                )
+            mesh['water_surface_elev'].values,
+            mesh['faces_surface_area'].values,
+            cells_volume_elevation_info_df['Starting Index'].values,
+            cells_volume_elevation_info_df['Count'].values,
+            cells_volume_elevation_values_df['Elevation'].values,
+            cells_volume_elevation_values_df['Volume'].values,
+        )
         mesh['volume_archive'] = hdf_to_xarray(cell_volumes, ('time', 'nface'), attrs={'Units': UNIT_DETAILS[units]['Volume']})
         mesh['volume'] = mesh['volume_archive']
 
@@ -677,10 +694,10 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
         # mesh['advection_coeff'] = hdf_to_xarray(advection_coefficient, ('time', 'nedge'), attrs={'Units':'ft3/s'})  
     except KeyError:
         print(" Warning! Flows across the face are being manually calculated. This functionality is not fully tested! Please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.")
-        faces_area_elevation_info_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Info'])
-        faces_area_elevation_values_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Values'])
-        faces_normalunitvector_and_length_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length'])
-        faces_cell_indexes_df = hdf_to_pandas(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes'])
+        faces_area_elevation_info_df = hdf_to_dataframe(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Info'])
+        faces_area_elevation_values_df = hdf_to_dataframe(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Values'])
+        faces_normalunitvector_and_length_df = hdf_to_dataframe(infile[f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length'])
+        faces_cell_indexes_df = hdf_to_dataframe(infile[f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes'])
         # should we be using 0 or 1 ?
         face_areas_0 = compute_face_areas(
                                             mesh['water_surface_elev'].values,
@@ -729,7 +746,7 @@ def populate_ugrid(infile: h5py._hl.files.File, project_name: str, diffusion_coe
     return mesh
 
 def populate_boundary_information(infile: h5py._hl.files.File) -> pd.DataFrame:
-    '''
+    """
     Parse attribute information from RAS2D HDF output required to set up boundary conditions.
 
     Parameters:
@@ -737,7 +754,7 @@ def populate_boundary_information(infile: h5py._hl.files.File) -> pd.DataFrame:
 
     Returns:
         boundary_data (pd.DataFrame):         Information about RAS boundaries 
-    '''
+    """
 
     external_faces = pd.DataFrame(infile['Geometry/Boundary Condition Lines/External Faces'][()])
     attributes = pd.DataFrame(infile['Geometry/Boundary Condition Lines/Attributes/'][()])
@@ -753,28 +770,18 @@ def populate_boundary_information(infile: h5py._hl.files.File) -> pd.DataFrame:
 
 # matrix solver 
 class LHS:
-    def __init__(self, mesh: xr.Dataset, t: float):
-        '''
-        Initialize Sparse Matrix used to solve transport equation. 
-        Rather than looping through every single cell at every timestep, we can instead set up a sparse 
-        matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
+    """
+    Initialize Sparse Matrix used to solve transport equation. 
+    Rather than looping through every single cell at every timestep, we can instead set up a sparse 
+    matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
 
-        We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load 
-        concentrations. This discretization produces a linear system of equations that can be represented by 
-        a sprase-matrix problem. 
-
-        Parameters: 
-            mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
-            t (float):           Timestep
-        
-        Notes:
-            This is empty right now. Figure out what should go here versus updateValues function. 
-        '''
-        return
+    We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load 
+    concentrations. This discretization produces a linear system of equations that can be represented by 
+    a sprase-matrix problem. 
+    """
                 
-        
-    def updateValues(self, mesh: xr.Dataset, t: float):
-        '''
+    def update_values(self, mesh: xr.Dataset, t: float):
+        """
         Updates values in the LHS matrix based on the timestep. 
 
         Rather than looping through every single cell at every timestep, we can instead set up a sparse 
@@ -804,7 +811,7 @@ class LHS:
         Parameters:
             mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
             t (float):           Timestep
-        '''
+        """
         # define edges where flow is flowing in versus out and find all empty cells
         # at the t+1 timestep
         flow_out_indices = np.where(mesh['advection_coeff'][t+1] > 0)[0]
@@ -860,8 +867,6 @@ class LHS:
             self.rows[start:end] = mesh['edge_face_connectivity'].T[1][flow_out_indices]
             self.cols[start:end] = mesh['edge_face_connectivity'].T[0][flow_out_indices]
             self.coef[start:end] = mesh['advection_coeff'][t+1][flow_out_indices] * -1  
-        else:
-            pass
 
         if len(flow_in_indices) > 0:
             # update indices
@@ -881,8 +886,6 @@ class LHS:
             self.rows[start:end] = mesh['edge_face_connectivity'].T[1][flow_in_indices]
             self.cols[start:end] = mesh['edge_face_connectivity'].T[1][flow_in_indices]
             self.coef[start:end] = mesh['advection_coeff'][t+1][flow_in_indices]  * -1 
-        else:
-            pass
         
         ###### off-diagonal terms - diffusion
         # update indices
@@ -902,7 +905,7 @@ class LHS:
 
 class RHS:
     def __init__(self, mesh: xr.Dataset, t: float, inp: np.array):
-        '''
+        """
         Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions. 
 
         Parameters:
@@ -917,7 +920,7 @@ class RHS:
                 - An Excel file?
                 - A modifiable table in a Jupyter notebook?
                 - Alternatives?
-        '''
+        """
         self.conc = np.zeros(len(mesh['nface']))
         self.conc = inp[t] 
         self.vals = np.zeros(len(mesh['nface']))
@@ -926,10 +929,9 @@ class RHS:
         vol = mesh['volume'][t] + mesh['ghost_volumes_in'][t]
         self.vals[:] = vol / seconds * self.conc 
         # self.vals[:] = mesh['volume'][t] / seconds * self.conc 
-        return 
 
-    def updateValues(self, solution: np.array, mesh: xr.Dataset, t: float, inp: np.array):
-        ''' 
+    def update_values(self, solution: np.array, mesh: xr.Dataset, t: float, inp: np.array):
+        """ 
         Update right hand side data based on the solution from the previous timestep
             solution: solution from solving the sparse matrix 
             inp: array of shape (time x nface) with user defined inputs of concentrations
@@ -946,7 +948,7 @@ class RHS:
             Updates the solution to loads. 
             This is required to solve the trasnport equation at the following timestep.
 
-        '''
+        """
         seconds = mesh['dt'].values[t] 
         # solution += inp[t][:] 
         # try replacing boundary values instead of adding them:
@@ -958,14 +960,14 @@ class RHS:
 
 class ClearwaterRiverine:
     def __init__(self, hdf_fpath: str, diffusion_coefficient_input: float):
-        '''
+        """
         Initialize a Clearwater Riverine WQ model by reading HDF output from a RAS2D model. 
 
         Parameters:
             hdf_fpath (str):   Filepath to RAS2D HDF output
             diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
 
-        '''
+        """
         with h5py.File(hdf_fpath, 'r') as infile:
             self.project_name = parse_project_name(infile)
             self.mesh = populate_ugrid(infile, self.project_name, diffusion_coefficient_input)
@@ -973,7 +975,7 @@ class ClearwaterRiverine:
     
 
     def initial_conditions(self, fpath: str):
-        '''
+        """
         Define initial conditions for RAS2D model from CSV file. 
 
         Parameters:
@@ -988,7 +990,7 @@ class ClearwaterRiverine:
                 aren't initial conditions?
             Allow other file types?
             Where / when should we deal with units and conversions?
-        '''
+        """
         init = pd.read_csv(fpath)
         init['Cell_Index'] = init.Cell_Index.astype(int)
         self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
@@ -996,7 +998,7 @@ class ClearwaterRiverine:
         return 
 
     def boundary_conditions(self, fpath: str):
-        '''
+        """
         Define boundary conditions for RAS2D water quality model from CSV file. 
 
         Parameters:
@@ -1004,7 +1006,7 @@ class ClearwaterRiverine:
                                 RAS2D_TS_Name (the timeseries name, as labeled in the RAS model)
                                 Datetime
                                 Concentration 
-        '''
+        """
         bc_df = pd.read_csv(fpath, parse_dates=['Datetime'])
         bc_df = bc_df[(bc_df.Datetime >= self.mesh.time.min().values) & (bc_df.Datetime <= self.mesh.time.max().values)]
 
@@ -1022,7 +1024,7 @@ class ClearwaterRiverine:
 
     def wq_simulation(self, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1, save = False, 
                         fpath_out = '.', fname_out = 'clearwater-riverine-wq-model'):
-        '''
+        """
         Steps through each timestep in the output of a RAS2D model (mesh) 
         and solves the total-load advection-diffusion transport equation 
         using boundary and initial conditions.
@@ -1040,7 +1042,7 @@ class ClearwaterRiverine:
             fpath_out:              Filepath where the output file should be stored. Default to save in current directory.
             fname_out:              Filename of saved output.
  
-        '''
+        """
         print("Starting WQ Simulation...")
 
         # Convert Units
@@ -1064,11 +1066,12 @@ class ClearwaterRiverine:
                 print(' 50%')
             if t == int(3 * len(self.mesh['time']) / 4):
                 print(' 75%')
-            lhs = LHS(self.mesh, t)
-            lhs.updateValues(self.mesh, t)
+            # lhs = LHS(self.mesh, t)
+            lhs = LHS()
+            lhs.update_values(self.mesh, t)
             A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(self.mesh['nface']),len(self.mesh['nface'])))
-            x = spsolve(A, b.vals)
-            b.updateValues(x, self.mesh, t+1, self.inp_converted)
+            x = linalg.spsolve(A, b.vals)
+            b.update_values(x, self.mesh, t+1, self.inp_converted)
             output[t+1] = b.vals
 
         print(' 100%')
@@ -1089,7 +1092,7 @@ class ClearwaterRiverine:
         return
 
     def prep_plot(self, crs: str):
-        '''
+        """
         Creates a geodataframe of polygons to represent each RAS cell. 
 
         Parameters:
@@ -1097,7 +1100,7 @@ class ClearwaterRiverine:
 
         Notes:
             Could we parse the CRS from the PRJ file?
-        '''
+        """
 
         nreal_index = self.mesh.attrs['nreal'] + 1
         real_face_node_connectivity = self.mesh.face_nodes[0:nreal_index]
@@ -1130,7 +1133,7 @@ class ClearwaterRiverine:
         return
 
     def plot(self):
-        '''
+        """
         Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
 
         Parameters:
@@ -1142,11 +1145,9 @@ class ClearwaterRiverine:
             Option to save
             Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
             Input parameter of info to plot?
-        '''
+        """
         def map_generator(datetime, mval=self.max_value):
-            '''
-            This function generates plots for the DynamicMap
-            '''
+            """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
             ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
                                                                           width = 800,
@@ -1163,7 +1164,7 @@ class ClearwaterRiverine:
         return dmap.redim.values(datetime=self.gdf.datetime.unique())
 
     def quick_plot(self):
-        '''
+        """
         Creates a dynamic scatterplot of cell centroids colored by cell concentration.
 
         Parameters:
@@ -1174,12 +1175,10 @@ class ClearwaterRiverine:
             Option to save
             Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
             Input parameter of info to plot?
-        '''
+        """
 
         def quick_map_generator(datetime, mval=self.max_value):
-            '''
-            This function generates plots for the DynamicMap
-            '''
+            """This function generates plots for the DynamicMap"""
             ds = self.mesh.sel(time=datetime)
             ind = np.where(ds['concentration'][0:self.mesh.attrs['nreal']] > 0)
             nodes = np.column_stack([ds.face_x[ind], ds.face_y[ind], ds['concentration'][ind], ds['nface'][ind]])
