@@ -1,5 +1,6 @@
 import datetime
-from typing import Dict
+from typing import Dict, Any
+import warnings
 import numba
 import h5py
 import numpy as np
@@ -25,17 +26,24 @@ UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Area': 'ft2', 
                             'Volume': 'ft3',
                             'Load': 'ft3/s',
-                            }
+                            },
+                'Unknown': {'Length': 'L', 
+                            'Velocity': 'L/t', 
+                            'Area': 'L^2', 
+                            'Volume': 'L^3',
+                            'Load': 'L^3/t',
+                            },
                 }
 
 CONVERSIONS = {'Metric': {'Liters': 0.001},
-               'Imperial': {'Liters': 0.0353147}
+               'Imperial': {'Liters': 0.0353147},
+               'Unknown': {'Liters': 0.001},
                }
 
 
 ### TODD FUNCTIONS
 
-def parse_attributes(dataset) -> Dict:
+def parse_attributes(dataset) -> Dict[str, Any]:
     """
     Parse the HDF5 attributes array, convert binary strings to Python strings, and return a dictionary of attributes
     """
@@ -610,7 +618,8 @@ def determine_units(mesh: xr.Dataset) -> str:
     elif u == 'ft/s':
         units = 'Imperial'
     else:
-        print(f"Unable to handle {u} units")
+        warnings.warn(f'Unknown units ({u}). Generic units will be stored in xarray.')
+        units = 'Unknown'
     return units
 
 
