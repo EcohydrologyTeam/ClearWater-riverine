@@ -1,64 +1,44 @@
-name: ras2d_wq
+name: clearwater_riverine
 channels:
   - conda-forge
-  # - nodefaults
+  - defaults
 
 dependencies:
-  - python =3.9*
-
-  # Pangeo
+  - python =3.10
   - scipy
-  - intake  # Intake* installs most Pangeo libs
-  - intake-geopandas=0.8.0
-  - intake-parquet
-  - intake-xarray
-  - intake-thredds
-  - intake-stac  # SpatioTemporal Asset Catalogs (STAC), https://stacspec.org
-  - intake-esm  # Earth System Model (ESM) catalog, https://stacspec.org
-  - rasterio
-  - s3fs  # Access to Amazon S3 filesystem
-  - cftime  # Decodes time units and variable values for netCDF using CF conventions
+  - xarray
   - cf_xarray  # Interprets CF Convention attributes for Xarray objects
-  - gridgeo  # Convert UGRID and SGRID compliant files to a variety of geo-like objects. https://github.com/pyoceans/gridgeo
-  - pytables >=3.7  # PyTables is optional, but required for Dask DataFrame.read_hdf()
+  - h5py
   - hdf5plugin  # HDF5 compression filters for h5py
-  - xlrd  # read legacy Excel files (.xls)
-  - openpyxl # read/write Excel 2010+ files (.xlsx & .xlsm)
+  - gridgeo  # Convert UGRID and SGRID compliant files to a variety of geo-like objects. https://github.com/pyoceans/gridgeo
+  - fastparquet
 
   # HoloViz, https://holoviz.org
   - hvplot  # hvPlot installs most HoloViz libs
   - geoviews
-  # HoloViz optional libs used by bokeh.io to save plots to static files such as png.
-  # https://holoviews.org/user_guide/Plotting_with_Bokeh.html#exporting-static-files
-  - selenium  # WebDriver for browser automation
-  - firefox geckodriver
-  # https://www.selenium.dev/documentation/webdriver/getting_started/install_drivers/
-  # - webdriver-manager  # https://github.com/SergeyPirogov/webdriver_manager
- 
-  # Interactivity & Visualization via Jupyter Notebooks
-  - jupyterlab
-  - nb_conda  # Conda environment & package access extension from within Jupyter
-  - ipywidgets  # Required for HoloViz interactivity
-  - seaborn
 
-  # Optional extension dependencies for JupyterLab
+  # Interactivity via Jupyter Notebooks
+  - jupyterlab
   - nodejs  # required for many extensions
   - ipympl  # jupyter-matplotlib, https://github.com/matplotlib/ipympl
-  # - qgrid  # https://github.com/quantopian/qgrid
+  - ipywidgets  # Required for HoloViz interactivity
 
-  # Dev tools (optional)
-  # - python-language-server
-  - jupyter-lsp-python  # Includes both the server extension (jupyter-lsp) and pyls third-party server (python-language-server)
-  - jupyterlab-lsp # Docs at https://github.com/krassowski/jupyterlab-lsp
+# Dev tools: Language Server Protocol (LSP) (Optional), for:
+  # code navigation + hover suggestions + linters + autocompletion + rename
+  - python-lsp-server # LSP extension for Python (pylsp), including:
+    # Rope for Completions and renaming
+    # Pyflakes linter to detect various errors
+    # McCabe linter for complexity checking
+    # pycodestyle linter for style checking
+    # pydocstyle linter for docstring style checking (disabled by default)
+    # autopep8 for code formatting
+    # YAPF for code formatting (preferred over autopep8)
+    # flake8 for error checking (disabled by default)
+    # pylint for code linting (disabled by default)
+  - pylsp-mypy # MyPy type checking for Python >=3.7.
+  - jupyterlab-lsp # Provides both server extension and lab extension
 
   # package management
   - conda
   - conda-build
-
-  # PIP install requirements only if it is not  possible with conda
-  # https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#using-pip-in-an-environment
-  - pip
-  - pip:
-    # - lckr-jupyterlab-variableinspector  # https://github.com/lckr/jupyterlab-variableInspector
-        #turning off variableInspector in case it is the cause for slowness!
-    # - jupyterlab_hdf  # https://github.com/jupyterlab/jupyterlab-hdf5
+  - conda-libmamba-solver  # Faster env solver, https://conda.github.io/conda-libmamba-solver/
