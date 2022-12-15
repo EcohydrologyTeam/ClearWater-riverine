@@ -36,6 +36,6 @@ class RASInputFactory:
         if self.extension == '.hdf':
             return HDFReader(self.file_path)
         else:
-            raise 
+            raise ValueError("File type is not accepted.")
 
 factory = RASInputFactory()

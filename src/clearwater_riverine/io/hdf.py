@@ -24,6 +24,7 @@ def _hdf_internal_paths(project_name):
         variables.EDGE_VELOCITY: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Velocity',
         variables.EDGE_LENGTH: f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length',
         variables.WATER_SURFACE_ELEVATION: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Water Surface',
+        variables.FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow',
         variables.VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume',
         'project_name': 'Geometry/2D Flow Areas/Attributes',
         'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
@@ -163,7 +164,8 @@ class HDFReader:
                 attrs={'Units':''}
             )
             
-            ras_data.mesh.attrs['nreal'] = ras_data.mesh['edge_face_connectivity'].T[0].max()
+            nreal = ras_data.mesh[variables.EDGE_FACE_CONNECTIVITY].T[0].values.max()
+            ras_data.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] = nreal
             
             ras_data.mesh[variables.FACE_SURFACE_AREA] = _hdf_to_xarray(
                 infile[self.paths[variables.FACE_SURFACE_AREA]],
@@ -187,7 +189,7 @@ class HDFReader:
                     infile[self.paths[variables.VOLUME]], 
                     ('time', 'nface')
                 ) 
-                ras_data.mesh[variables.VOLUME][:, ras_data.mesh.attrs['nreal'].values+1:] = 0 # revisit this
+                ras_data.mesh[variables.VOLUME][:, ras_data.mesh.attrs[variables.NUMBER_OF_REAL_CELLS]+1:] = 0 # revisit this
             except KeyError: 
                 ras_data.volume_calculation_required = True
                 ras_data.face_volume_elevation_info = _hdf_to_dataframe(infile[self.paths['volume elevation info']])
