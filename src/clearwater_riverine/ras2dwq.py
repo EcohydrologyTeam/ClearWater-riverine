@@ -295,7 +295,7 @@ def compute_face_areas_from_faceWSE(
                     for i in range(npts-1, -1, -1):
                         #if elev[i] < water_surface_elev:
                         if elev[i] < water_surface_elev and elev[i+1] >= water_surface_elev:
-                            face_areas[time, face] = interp(elev[i], elev[i+1], area[i], area[i+1], water_surface_elev)
+                            face_areas[time, face] = linear_interpolate(elev[i], elev[i+1], area[i], area[i+1], water_surface_elev)
                             # print('i, x, m, x1, y1, y: ', i, x, m, x1, y1, y)
                             if face_areas[time, face] < 0:
                                 print('Computed face area = ', face_areas[time, face])
@@ -977,6 +977,11 @@ class ClearwaterRiverine:
             diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
 
         """
+        # mesh_data = MeshManager(diffusion_coefficient_input)
+        # ras_data = RASInput(hdf_fpath, mesh_data)
+        # reader = input.ObjectSerializer()
+        # reader.read_to_xarray(data, file_path)
+
         with h5py.File(hdf_fpath, 'r') as infile:
             self.project_name = parse_project_name(infile)
             self.mesh = populate_ugrid(infile, self.project_name, diffusion_coefficient_input)
