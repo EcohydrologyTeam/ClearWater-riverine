@@ -5,12 +5,18 @@ channels:
 
 dependencies:
   - python =3.10
-  - scipy
+  - scipy # installs numpy, pandas and most pyData libraries
+  - geopandas
+  - spatialpandas
   - xarray
   - cf_xarray  # Interprets CF Convention attributes for Xarray objects
   - h5py
   - hdf5plugin  # HDF5 compression filters for h5py
   - gridgeo  # Convert UGRID and SGRID compliant files to a variety of geo-like objects. https://github.com/pyoceans/gridgeo
+  - netCDF4
+  - zarr
+  - numcodecs # buffer compression and transformation codecs for use by zarr
+  - bottleneck # speeds up NaN-skipping and rolling window aggregations by a large factor
   - fastparquet
 
   # HoloViz, https://holoviz.org
