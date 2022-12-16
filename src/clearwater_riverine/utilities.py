@@ -432,7 +432,6 @@ class WQVariableCalculator:
                 mesh_manager.face_area_elevation_values['Elevation'].values,
                 mesh_manager.face_area_elevation_values['Volume'].values,
             )
-            mesh_manager.mesh[variables.VOLUME] = xr.DataArray(cell_volumes, dims = ('time', 'nface'), attrs = {'Units': UNIT_DETAILS[mesh_manager.units]['Volume']})
         
         if mesh_manager.face_area_calculation_required:
             print("""
