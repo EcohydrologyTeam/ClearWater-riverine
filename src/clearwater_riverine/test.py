@@ -7,8 +7,14 @@ hdf_fpath = '../../examples/data/OhioRiver_m.p22.hdf'
 # new framework - handle everything with MeshPopulator
 mesh_data = MeshPopulator(0.1)
 mesh_data.read_ras(hdf_fpath)
-mesh, units = mesh_data.calculate_required_parameters()
-print(mesh)
+mesh_data.calculate_required_parameters()
+
+output_path = '../../examples/data_temp/'
+output_name = 'ohio-river'
+# save_as = 'zarr'
+save_as = 'nc'
+
+mesh_data.save_mesh(output_path, output_name, save_as)
 
 
 # old framework
