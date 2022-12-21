@@ -365,8 +365,12 @@ class MeshManager:
     Define UGRID-compliant xarray
 
     Parameters:
-        infile (h5py._hl.files.File):    HDF File containing RAS2D output 
-        project_name (str):              Name of the 2D Flow Area being modeled
+        mesh: xarray following UGRID conventions
+        volume_calculation_required: (bool) Identifies whether cell volumes must be calculated,
+            or if the cell volumes are contained in the RAS output file
+        face_area_calculation_required (bool): Identifies whether face areas must be calculated,
+            or if that value is contained in the RAS output file
+        self.face_area_elevation_info (pd.DataFrame):
 
     Returns:
         UGRID-compliant xarray with all geometry / time coordinates populated
@@ -414,10 +418,21 @@ class MeshManager:
 
 class WQVariableCalculator:
     def __init__(self, mesh_manager: MeshManager):
-
+        """Determine the units 
+        Args:
+            mesh_manager (MeshManager): mesh manager containing the project mesh
+                and other information required to perform advection-diffusion transport
+                equations.
+        """
         mesh_manager.units = _determine_units(mesh_manager.mesh)
     
     def calculate(self, mesh_manager: MeshManager):
+        """Calculate required values for advection-diffusion transport equation
+        Args:
+            mesh_manager (MeshManager): mesh manager containing the project mesh
+                and other information required to perform advection-diffusion transport
+                equations.
+        """
         if mesh_manager.volume_calculation_required:
             print( """
                 Warning! Cell volumes are being manually calculated. 
@@ -431,6 +446,11 @@ class WQVariableCalculator:
                 mesh_manager.face_area_elevation_info['Count'].values,
                 mesh_manager.face_area_elevation_values['Elevation'].values,
                 mesh_manager.face_area_elevation_values['Volume'].values,
+            )
+            mesh_manager.mesh[variables.VOLUME] = xr.DataArray(
+                cell_volumes,
+                dims =  ('time', 'ncell'),
+                attrs = {'Units': UNIT_DETAILS[mesh_manager.units]['Volume']}
             )
         
         if mesh_manager.face_area_calculation_required:
