@@ -376,8 +376,11 @@ class MeshManager:
         UGRID-compliant xarray with all geometry / time coordinates populated
 
     """
-    def __init__(self, diffusion_coefficient_input: float):
-        """Initialize UGRID-compliant xr.Dataset"""
+    def __init__(self, diffusion_coefficient_input: float) -> None:
+        """Initialize UGRID-compliant xr.Dataset
+        Args:
+            diffusion_coefficient_input (float): diffusion coefficient provided by modeler
+        """
         self.volume_calculation_required = False 
         self.face_area_calculation_required = False
         self.face_area_elevation_info = pd.DataFrame()

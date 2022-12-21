@@ -49,7 +49,6 @@ class RASReader:
             readable (RASInput): abstract interface implemented on any file we weant to read
             file_path (str):  Filepath to RAS output file
         """
-        print(type(readable))
         reader = reading_factory.get_reader(file_path)
         readable.read_to_xarray(reader)
         return readable
