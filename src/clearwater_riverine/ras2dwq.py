@@ -14,6 +14,8 @@ from shapely.geometry import Polygon
 import hvplot.xarray
 hv.extension("bokeh")
 
+from clearwater_riverine.mesh import model_mesh
+
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -968,7 +970,7 @@ class RHS:
         return
 
 class ClearwaterRiverine:
-    def __init__(self, hdf_fpath: str, diffusion_coefficient_input: float):
+    def __init__(self, ras_file_path: str, diffusion_coefficient_input: float, verbose: bool = False) -> None:
         """
         Initialize a Clearwater Riverine WQ model by reading HDF output from a RAS2D model. 
 
@@ -982,11 +984,18 @@ class ClearwaterRiverine:
         # reader = input.ObjectSerializer()
         # reader.read_to_xarray(data, file_path)
 
-        with h5py.File(hdf_fpath, 'r') as infile:
-            self.project_name = parse_project_name(infile)
-            self.mesh = populate_ugrid(infile, self.project_name, diffusion_coefficient_input)
-            self.boundary_data = populate_boundary_information(infile)
-    
+        # with h5py.File(hdf_fpath, 'r') as infile:
+        #     self.project_name = parse_project_name(infile)
+        #     self.mesh = populate_ugrid(infile, self.project_name, diffusion_coefficient_input)
+        #     self.boundary_data = populate_boundary_information(infile)
+
+        # define model mesh
+        self.mesh = model_mesh(diffusion_coefficient_input)
+        if verbose: print("Populating Model Mesh...")
+        self.mesh = self.mesh.cwr.read_ras(ras_file_path)
+        self.boundary_data = self.mesh.attrs['boundary_data']
+        if verbose: print("Calculating Required Parameters...")
+        self.mesh = self.mesh.cwr.calculate_required_parameters()
 
     def initial_conditions(self, fpath: str):
         """
@@ -1023,7 +1032,6 @@ class ClearwaterRiverine:
         """
         bc_df = pd.read_csv(fpath, parse_dates=['Datetime'])
         bc_df = bc_df[(bc_df.Datetime >= self.mesh.time.min().values) & (bc_df.Datetime <= self.mesh.time.max().values)]
-
         boundary_df = pd.merge(bc_df, self.boundary_data, left_on = 'RAS2D_TS_Name', right_on = 'Name', how='left')
         # Define the ghost cell associated with the Face Index
         boundary_df['Ghost Cell'] = self.mesh.edges_face2[boundary_df['Face Index'].to_list()]
@@ -1037,7 +1045,7 @@ class ClearwaterRiverine:
 
 
     def wq_simulation(self, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1, save = False, 
-                        fpath_out = '.', fname_out = 'clearwater-riverine-wq-model'):
+                        output_file_path = './clearwater-riverine-wq-model.zarr'):
         """
         Steps through each timestep in the output of a RAS2D model (mesh) 
         and solves the total-load advection-diffusion transport equation 
@@ -1094,16 +1102,12 @@ class ClearwaterRiverine:
         concentration = self.mesh['pollutant_load'] / temp_vol * conversion_factor * input_liter_conversion * self.mesh['dt']
         self.mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
 
-        # self.mesh.nreal = self.mesh.nreal.values
-        self.mesh.attrs['nreal'] = self.mesh.nreal.values
         # may need to move this if we want to plot things besides concentration
         self.max_value = int(self.mesh['concentration'].sel(nface=slice(0, self.mesh.attrs['nreal'])).max())
 
         if save == True:
-            self.mesh.to_zarr(f'{fpath_out}/{fname_out}.zarr', 
-                              mode='w', 
-                              consolidated=True)
-        return
+            self.mesh.cwr.save_clearwater_xarray(output_file_path)
+
 
     def prep_plot(self, crs: str):
         """

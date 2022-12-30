@@ -3,10 +3,9 @@ import sys
 import xarray as xr
 import pandas as pd
 
-sys.path.insert(0, './io/')
-import inputs
-import outputs
-import utilities 
+from clearwater_riverine.io.inputs import RASInput, RASReader
+from clearwater_riverine.io.outputs import ClearWaterRiverineOutput, ClearWaterRiverineWriter
+from clearwater_riverine.utilities import WQVariableCalculator
 
 def model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
     """
@@ -49,6 +48,9 @@ def model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
 
 @xr.register_dataset_accessor("cwr")
 class ClearWaterXarray:
+    """ 
+    Extension to xarray specific to accessing data to run Clearwater Riverine water quality model. 
+    """
     def __init__(self, xarray_obj: xr.Dataset) -> None:
         self._obj = xarray_obj
         self._obj.attrs['volume_calculation_required'] = False 
@@ -67,15 +69,15 @@ class ClearWaterXarray:
         Args:
             file_path (str): RAS output filepath
         """
-        ras_data = inputs.RASInput(file_path, self._obj)
-        reader = inputs.RASReader()
+        ras_data = RASInput(file_path, self._obj)
+        reader = RASReader()
         reader.read_to_xarray(ras_data, file_path)
         self._obj = ras_data.mesh
         return self._obj
 
     def calculate_required_parameters(self) -> xr.Dataset:
         """Calculate additional values required for advection-diffusion transport equation"""
-        calculator = utilities.WQVariableCalculator(self._obj)
+        calculator = WQVariableCalculator(self._obj)
         calculator.calculate(self._obj)
         return self._obj
 
@@ -94,6 +96,6 @@ class ClearWaterXarray:
         del self._obj.attrs['boundary_data']
 
         # write output
-        mesh_data = outputs.ClearWaterRiverineOutput(output_file_path, self._obj)
-        writer = outputs.ClearWaterRiverineWriter()
+        mesh_data = ClearWaterRiverineOutput(output_file_path, self._obj)
+        writer = ClearWaterRiverineWriter()
         writer.write_mesh(mesh_data, output_file_path)

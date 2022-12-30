@@ -5,7 +5,7 @@ import os
 
 import xarray as xr
 
-from hdf import HDFReader
+from clearwater_riverine.io.hdf import HDFReader
 # from mesh import ClearWaterMesh
 
 class RASInput:

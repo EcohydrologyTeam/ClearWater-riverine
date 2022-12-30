@@ -2,11 +2,12 @@ from typing import Dict, Any
 
 import h5py
 import xarray as xr
-import variables
+# import variables
 import numpy as np
 import pandas as pd
 import datetime
 
+from clearwater_riverine import variables
 
 def _hdf_internal_paths(project_name):
     hdf_paths = {
