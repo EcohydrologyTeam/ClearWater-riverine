@@ -41,10 +41,6 @@ class RASInput:
         reader.define_hydrodynamics(self.mesh)
         reader.define_boundary_hydrodynamics(self.mesh)
         self.mesh = reader.define_coordinates(self.mesh)
-        print("---reader----")
-        print(self.mesh)
-        print("---reader----")
-        # return self.mesh
 
 
 class RASReader:

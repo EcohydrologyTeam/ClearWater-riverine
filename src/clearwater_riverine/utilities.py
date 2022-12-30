@@ -361,65 +361,6 @@ def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         # all_ghost_vols = ghost_vols_out + ghost_vols_in
     return ghost_vols_in, ghost_vols_out
 
-# class MeshManager:
-#     """
-#     Define UGRID-compliant xarray
-
-#     Parameters:
-#         mesh: xarray following UGRID conventions
-#         volume_calculation_required: (bool) Identifies whether cell volumes must be calculated,
-#             or if the cell volumes are contained in the RAS output file
-#         face_area_calculation_required (bool): Identifies whether face areas must be calculated,
-#             or if that value is contained in the RAS output file
-#         self.face_area_elevation_info (pd.DataFrame):
-
-#     Returns:
-#         UGRID-compliant xarray with all geometry / time coordinates populated
-
-#     """
-#     def __init__(self, diffusion_coefficient_input: float) -> None:
-#         """Initialize UGRID-compliant xr.Dataset
-#         Args:
-#             diffusion_coefficient_input (float): diffusion coefficient provided by modeler
-#         """
-#         self.volume_calculation_required = False 
-#         self.face_area_calculation_required = False
-#         self.face_area_elevation_info = pd.DataFrame()
-#         self.face_area_elevation_values = pd.DataFrame()
-#         self.face_normalunitvector_and_length = pd.DataFrame()
-#         self.face_cell_indexes_df = pd.DataFrame()
-#         self.face_volume_elevation_info = pd.DataFrame()
-#         self.face_volume_elevation_values = pd.DataFrame()
-#         self.boundary_data = pd.DataFrame()
-#         self.units = "Unknown"
-
-
-#         # initialize mesh
-#         self.mesh = xr.Dataset()
-#         self.mesh["mesh2d"] = xr.DataArray(
-#             data=0,
-#             attrs={
-#                 # required topology attributes
-#                 'cf_role': 'mesh_topology',
-#                 'long_name': 'Topology data of 2D mesh',
-#                 'topology_dimension': 2,
-#                 'node_coordinates': 'node_x node_y',
-#                 'face_node_connectivity': 'face_nodes',
-#                 # optionally required attributes
-#                 'face_dimension': 'face',
-#                 'edge_node_connectivity': 'edge_nodes',
-#                 'edge_dimension': 'edge',
-#                 # optional attributes 
-#                 'face_edge_connectivity': 'face_edges',
-#                 'face_face_connectivity': 'face_face_connectivity',
-#                 'edge_face_connectivity': 'edge_face_connectivity',
-#                 'boundary_node_connectivity': 'boundary_node_connectivity',
-#                 'face_coordinates': 'face x face_y',
-#                 'edge_coordinates': 'edge_x edge_y',
-#                 },
-#         )
-#         self.mesh.attrs['diffusion_coefficient'] = diffusion_coefficient_input
-
 class WQVariableCalculator:
     def __init__(self, mesh: xr.Dataset):
         """Determine the units 
