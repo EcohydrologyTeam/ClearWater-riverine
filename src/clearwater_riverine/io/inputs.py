@@ -3,8 +3,10 @@ from typing import Type, Union
 import errno
 import os
 
+import xarray as xr
+
 from hdf import HDFReader
-from utilities import MeshManager
+# from mesh import ClearWaterMesh
 
 class RASInput:
     """Reads RAS input to an xarray
@@ -15,11 +17,11 @@ class RASInput:
             and other information required to perform advection-diffusion transport
             equations.
     """
-    def __init__(self, file_path: str, mesh_manager: Type[MeshManager]) -> None:
+    def __init__(self, file_path: str, mesh: xr.Dataset) -> None:
         """ Checks if RAS filepath exists
         Args:
             file_path (str): Filepath to RAS output file 
-            mesh_manager: mesh manager containing the project mesh
+            mesh: Clearwater Mesh containing the project mesh
                 and other information required to perform advection-diffusion transport
                 equations.
         """
@@ -28,17 +30,21 @@ class RASInput:
             raise FileNotFoundError(
                 errno.ENOENT, os.strerror(errno.ENOENT), file_path
             )
-        self.mesh_manager = mesh_manager
+        self.mesh = mesh
     
     def read_to_xarray(self, reader: Type[HDFReader]) -> None:
         """Reads RAS output using appropriate reader
         Args:
             reader (HDFReader): reader class. Currently only supports reading HDF files.
         """
-        reader.define_coordinates(self.mesh_manager)
-        reader.define_topology(self.mesh_manager)
-        reader.define_hydrodynamics(self.mesh_manager)
-        reader.define_boundary_hydrodynamics(self.mesh_manager)
+        reader.define_topology(self.mesh)
+        reader.define_hydrodynamics(self.mesh)
+        reader.define_boundary_hydrodynamics(self.mesh)
+        self.mesh = reader.define_coordinates(self.mesh)
+        print("---reader----")
+        print(self.mesh)
+        print("---reader----")
+        # return self.mesh
 
 
 class RASReader:

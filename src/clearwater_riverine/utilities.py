@@ -5,7 +5,8 @@ import pandas as pd
 import numpy as np
 import xarray as xr 
 
-import variables 
+import variables
+# from mesh import ClearWaterMesh
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -43,7 +44,7 @@ def _determine_units(mesh: xr.Dataset) -> str:
         units (str):         Either 'Metric' or 'Imperial'
 
     """ 
-    u = mesh.edge_velocity.Units
+    u = mesh[variables.EDGE_VELOCITY].Units
     if u == 'm/s':
         units = 'Metric'
     elif u == 'ft/s':
@@ -360,103 +361,103 @@ def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         # all_ghost_vols = ghost_vols_out + ghost_vols_in
     return ghost_vols_in, ghost_vols_out
 
-class MeshManager:
-    """
-    Define UGRID-compliant xarray
+# class MeshManager:
+#     """
+#     Define UGRID-compliant xarray
 
-    Parameters:
-        mesh: xarray following UGRID conventions
-        volume_calculation_required: (bool) Identifies whether cell volumes must be calculated,
-            or if the cell volumes are contained in the RAS output file
-        face_area_calculation_required (bool): Identifies whether face areas must be calculated,
-            or if that value is contained in the RAS output file
-        self.face_area_elevation_info (pd.DataFrame):
+#     Parameters:
+#         mesh: xarray following UGRID conventions
+#         volume_calculation_required: (bool) Identifies whether cell volumes must be calculated,
+#             or if the cell volumes are contained in the RAS output file
+#         face_area_calculation_required (bool): Identifies whether face areas must be calculated,
+#             or if that value is contained in the RAS output file
+#         self.face_area_elevation_info (pd.DataFrame):
 
-    Returns:
-        UGRID-compliant xarray with all geometry / time coordinates populated
+#     Returns:
+#         UGRID-compliant xarray with all geometry / time coordinates populated
 
-    """
-    def __init__(self, diffusion_coefficient_input: float) -> None:
-        """Initialize UGRID-compliant xr.Dataset
-        Args:
-            diffusion_coefficient_input (float): diffusion coefficient provided by modeler
-        """
-        self.volume_calculation_required = False 
-        self.face_area_calculation_required = False
-        self.face_area_elevation_info = pd.DataFrame()
-        self.face_area_elevation_values = pd.DataFrame()
-        self.face_normalunitvector_and_length = pd.DataFrame()
-        self.face_cell_indexes_df = pd.DataFrame()
-        self.face_volume_elevation_info = pd.DataFrame()
-        self.face_volume_elevation_values = pd.DataFrame()
-        self.boundary_data = pd.DataFrame()
-        self.units = "Unknown"
+#     """
+#     def __init__(self, diffusion_coefficient_input: float) -> None:
+#         """Initialize UGRID-compliant xr.Dataset
+#         Args:
+#             diffusion_coefficient_input (float): diffusion coefficient provided by modeler
+#         """
+#         self.volume_calculation_required = False 
+#         self.face_area_calculation_required = False
+#         self.face_area_elevation_info = pd.DataFrame()
+#         self.face_area_elevation_values = pd.DataFrame()
+#         self.face_normalunitvector_and_length = pd.DataFrame()
+#         self.face_cell_indexes_df = pd.DataFrame()
+#         self.face_volume_elevation_info = pd.DataFrame()
+#         self.face_volume_elevation_values = pd.DataFrame()
+#         self.boundary_data = pd.DataFrame()
+#         self.units = "Unknown"
 
 
-        # initialize mesh
-        self.mesh = xr.Dataset()
-        self.mesh["mesh2d"] = xr.DataArray(
-            data=0,
-            attrs={
-                # required topology attributes
-                'cf_role': 'mesh_topology',
-                'long_name': 'Topology data of 2D mesh',
-                'topology_dimension': 2,
-                'node_coordinates': 'node_x node_y',
-                'face_node_connectivity': 'face_nodes',
-                # optionally required attributes
-                'face_dimension': 'face',
-                'edge_node_connectivity': 'edge_nodes',
-                'edge_dimension': 'edge',
-                # optional attributes 
-                'face_edge_connectivity': 'face_edges',
-                'face_face_connectivity': 'face_face_connectivity',
-                'edge_face_connectivity': 'edge_face_connectivity',
-                'boundary_node_connectivity': 'boundary_node_connectivity',
-                'face_coordinates': 'face x face_y',
-                'edge_coordinates': 'edge_x edge_y',
-                },
-        )
-        self.mesh.attrs['diffusion_coefficient'] = diffusion_coefficient_input
+#         # initialize mesh
+#         self.mesh = xr.Dataset()
+#         self.mesh["mesh2d"] = xr.DataArray(
+#             data=0,
+#             attrs={
+#                 # required topology attributes
+#                 'cf_role': 'mesh_topology',
+#                 'long_name': 'Topology data of 2D mesh',
+#                 'topology_dimension': 2,
+#                 'node_coordinates': 'node_x node_y',
+#                 'face_node_connectivity': 'face_nodes',
+#                 # optionally required attributes
+#                 'face_dimension': 'face',
+#                 'edge_node_connectivity': 'edge_nodes',
+#                 'edge_dimension': 'edge',
+#                 # optional attributes 
+#                 'face_edge_connectivity': 'face_edges',
+#                 'face_face_connectivity': 'face_face_connectivity',
+#                 'edge_face_connectivity': 'edge_face_connectivity',
+#                 'boundary_node_connectivity': 'boundary_node_connectivity',
+#                 'face_coordinates': 'face x face_y',
+#                 'edge_coordinates': 'edge_x edge_y',
+#                 },
+#         )
+#         self.mesh.attrs['diffusion_coefficient'] = diffusion_coefficient_input
 
 class WQVariableCalculator:
-    def __init__(self, mesh_manager: MeshManager):
+    def __init__(self, mesh: xr.Dataset):
         """Determine the units 
         Args:
             mesh_manager (MeshManager): mesh manager containing the project mesh
                 and other information required to perform advection-diffusion transport
                 equations.
         """
-        mesh_manager.units = _determine_units(mesh_manager.mesh)
+        mesh.attrs['units'] = _determine_units(mesh)
     
-    def calculate(self, mesh_manager: MeshManager):
+    def calculate(self, mesh: xr.Dataset):
         """Calculate required values for advection-diffusion transport equation
         Args:
-            mesh_manager (MeshManager): mesh manager containing the project mesh
+            mesh (xr.Dataset): mesh containing the project mesh
                 and other information required to perform advection-diffusion transport
                 equations.
         """
-        if mesh_manager.volume_calculation_required:
+        if mesh.attrs['volume_calculation_required']:
             print( """
                 Warning! Cell volumes are being manually calculated. 
                 This functionality is not fully tested. 
                 For best results, please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.
                 """)
             cell_volumes = _compute_cell_volumes(
-                mesh_manager.mesh[variables.WATER_SURFACE_ELEVATION].values,
-                mesh_manager.mesh[variables.FACE_SURFACE_AREA].values,
-                mesh_manager.face_area_elevation_info['Starting Index'].values,
-                mesh_manager.face_area_elevation_info['Count'].values,
-                mesh_manager.face_area_elevation_values['Elevation'].values,
-                mesh_manager.face_area_elevation_values['Volume'].values,
+                mesh[variables.WATER_SURFACE_ELEVATION].values,
+                mesh[variables.FACE_SURFACE_AREA].values,
+                mesh.attrs['face_area_elevation_info']['Starting Index'].values,
+                mesh.attrs['face_area_elevation_info']['Count'].values,
+                mesh.attrs['face_area_elevation_values']['Elevation'].values,
+                mesh.attrs['face_area_elevation_values']['Volume'].values,
             )
-            mesh_manager.mesh[variables.VOLUME] = xr.DataArray(
+            mesh[variables.VOLUME] = xr.DataArray(
                 cell_volumes,
                 dims =  ('time', 'ncell'),
-                attrs = {'Units': UNIT_DETAILS[mesh_manager.units]['Volume']}
+                attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Volume']}
             )
         
-        if mesh_manager.face_area_calculation_required:
+        if mesh.attrs['face_area_calculation_required']:
             print("""
                 Warning! Flows across the face are being manually calculated.
                 This functionality is not fully tested!
@@ -464,68 +465,68 @@ class WQVariableCalculator:
                 """)
             # should we be using 0 or 1 ?
             face_areas = _compute_face_areas(
-                mesh_manager.mesh[variables.WATER_SURFACE_ELEVATION].values,
-                mesh_manager.face_normalunitvector_and_length['Face Length'].values,
-                mesh_manager.face_cell_indexes_df['Cell 0'].values,
-                mesh_manager.face_area_elevation_values['Starting Index'].values,
-                mesh_manager.face_area_elevation_info['Count'].values,
-                mesh_manager.face_area_elevation_values['Z'].values,
-                mesh_manager.face_area_elevation_values['Area'].values,
+                mesh[variables.WATER_SURFACE_ELEVATION].values,
+                mesh.attrs['face_normalunitvector_and_length']['Face Length'].values,
+                mesh.attrs['face_cell_indexes_df']['Cell 0'].values,
+                mesh.attrs['face_area_elevation_values']['Starting Index'].values,
+                mesh.attrs['face_area_elevation_info']['Count'].values,
+                mesh.attrs['face_area_elevation_values']['Z'].values,
+                mesh.attrs['face_area_elevation_values']['Area'].values,
             )
-            mesh_manager.mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
+            mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
                 face_areas,
                 dims =  ('time', 'nedge'),
-                attrs = {'Units': UNIT_DETAILS[mesh_manager.units]['Area']}
+                attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']}
             )
-            advection_coefficient = mesh_manager.mesh[variables.EDGE_VERTICAL_AREA] * mesh_manager.mesh[variables.EDGE_VELOCITY] 
-            mesh_manager.mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
+            advection_coefficient = mesh[variables.EDGE_VERTICAL_AREA] * mesh_manager.mesh[variables.EDGE_VELOCITY] 
+            mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
                 advection_coefficient,
                 dims = ('time', 'nedge'),
-                attrs = {'Units': UNIT_DETAILS[mesh_manager.units]['Load']})
-            mesh_manager.mesh[variables.FLOW_ACROSS_FACE] = xr.DataArray(
+                attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
+            mesh[variables.FLOW_ACROSS_FACE] = xr.DataArray(
                 abs(advection_coefficient),
                 dims = ('time', 'nedge'),
-                attrs={'Units': UNIT_DETAILS[mesh_manager.units]['Load']})
+                attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
         else:
-            mesh_manager.mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
-                mesh_manager.mesh[variables.FLOW_ACROSS_FACE] * np.sign(abs(mesh_manager.mesh[variables.EDGE_VELOCITY])),
+            mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
+                mesh[variables.FLOW_ACROSS_FACE] * np.sign(abs(mesh[variables.EDGE_VELOCITY])),
                 dims = ('time', 'nedge'),
-                attrs={'Units': UNIT_DETAILS[mesh_manager.units]['Load']})
+                attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
             
-            vertical_area = mesh_manager.mesh['advection_coeff'] / mesh_manager.mesh['edge_velocity']
-            mesh_manager.mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
+            vertical_area = mesh['advection_coeff'] / mesh['edge_velocity']
+            mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
                 vertical_area.fillna(0),
                 dims = ('time', 'nedge'),
-                attrs={'Units': UNIT_DETAILS[mesh_manager.units]['Area']})
+                attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']})
         
-        mesh_manager.mesh[variables.FACE_TO_FACE_DISTANCE] = xr.DataArray(
-            _calc_distances_cell_centroids(mesh_manager.mesh),
+        mesh[variables.FACE_TO_FACE_DISTANCE] = xr.DataArray(
+            _calc_distances_cell_centroids(mesh),
             dims = ('nedge'),
-            attrs={'Units': UNIT_DETAILS[mesh_manager.units]['Length']}
+            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Length']}
         )
-        mesh_manager.mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
-            _calc_coeff_to_diffusion_term(mesh_manager.mesh),
+        mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
+            _calc_coeff_to_diffusion_term(mesh),
             dims = ("time", "nedge"),
-            attrs={'Units': UNIT_DETAILS[mesh_manager.units]['Load']}
+            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
         )
-        mesh_manager.mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM] = xr.DataArray(
-            _calc_sum_coeff_to_diffusion_term(mesh_manager.mesh),
+        mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM] = xr.DataArray(
+            _calc_sum_coeff_to_diffusion_term(mesh),
             dims=('time', 'nface'),
-            attrs={'Units': UNIT_DETAILS[mesh_manager.units]['Load']}
+            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
         )
         # dt
-        dt = np.ediff1d(mesh_manager.mesh['time'])
+        dt = np.ediff1d(mesh['time'])
         dt = dt / np.timedelta64(1, 's')
         dt = np.insert(dt, len(dt), np.nan)
-        mesh_manager.mesh[variables.CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
+        mesh[variables.CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
 
         # ghost cell volumes
-        ghost_volumes_in, ghost_volumes_out = _calc_ghost_cell_volumes(mesh_manager.mesh)
-        mesh_manager.mesh[variables.GHOST_CELL_VOLUMES_IN] = xr.DataArray(
+        ghost_volumes_in, ghost_volumes_out = _calc_ghost_cell_volumes(mesh)
+        mesh[variables.GHOST_CELL_VOLUMES_IN] = xr.DataArray(
             ghost_volumes_in,
             dims=('time', 'nface'),
-            attrs={'Units': UNIT_DETAILS[mesh_manager.units]['Volume']})
-        mesh_manager.mesh[variables.GHOST_CELL_VOLUMES_OUT] = xr.DataArray(
+            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Volume']})
+        mesh[variables.GHOST_CELL_VOLUMES_OUT] = xr.DataArray(
             ghost_volumes_out,
             dims=('time', 'nface'),
-            attrs={'Units':UNIT_DETAILS[mesh_manager.units]['Volume']})
+            attrs={'Units':UNIT_DETAILS[mesh.attrs['units']]['Volume']})

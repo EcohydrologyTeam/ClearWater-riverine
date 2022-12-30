@@ -5,9 +5,9 @@ diffusion_coefficient_input = 0.1
 hdf_fpath = '../../examples/data/OhioRiver_m.p22.hdf'
 
 # new framework - handle everything with MeshPopulator
-self.mesh_data = MeshPopulator(0.1)
-self.mesh_data.read_ras(hdf_fpath)
-self.mesh_data.calculate_required_parameters()
+mesh_data = MeshPopulator(0.1)
+mesh_data.read_ras(hdf_fpath)
+mesh_data.calculate_required_parameters()
 
 output_path = '../../examples/data_temp/'
 output_name = 'ohio-river'

@@ -7,8 +7,6 @@ import numpy as np
 import pandas as pd
 import datetime
 
-from utilities import MeshManager
-
 
 def _hdf_internal_paths(project_name):
     hdf_paths = {
@@ -76,17 +74,17 @@ class HDFReader:
         self.project_name = self.infile['Geometry/2D Flow Areas/Attributes'][()][0][0].decode('UTF-8')
         self.paths = _hdf_internal_paths(self.project_name)
     
-    def define_coordinates(self, ras_data: MeshManager):
+    def define_coordinates(self, mesh: xr.Dataset):
         """Populate Coordinates and Dimensions"""
         # x-coordinates
-        ras_data.mesh = ras_data.mesh.assign_coords(
+        mesh = mesh.assign_coords(
             node_x=xr.DataArray(
             data = self.infile[self.paths[variables.NODE_X]][()].T[0],
             dims=('node',),
             )   
         )
         # y-coordinates
-        ras_data.mesh = ras_data.mesh.assign_coords(
+        mesh = mesh.assign_coords(
             node_y=xr.DataArray(
                 data=self.infile[self.paths[variables.NODE_X]][()].T[1],
                 dims=('node',),
@@ -95,15 +93,17 @@ class HDFReader:
         # time
         time_stamps_binary = self.infile[self.paths['binary_time_stamps']][()]
         time_stamps = [x.decode("utf8") for x in time_stamps_binary]
-        ras_data.mesh = ras_data.mesh.assign_coords(
+        xr_time_stamps = [datetime.datetime.strptime(x, '%d%b%Y %H:%M:%S') for x in time_stamps]
+        mesh = mesh.assign_coords(
             time=xr.DataArray(
-            data=[datetime.datetime.strptime(x, '%d%b%Y %H:%M:%S') for x in time_stamps],
-            dims=('time',),
+                data=[datetime.datetime.strptime(x, '%d%b%Y %H:%M:%S') for x in time_stamps],
+                dims=('time',),
             )
         )
+        return mesh
 
-    def define_topology(self, ras_data: MeshManager):
-        ras_data.mesh[variables.FACE_NODES] = xr.DataArray(
+    def define_topology(self, mesh: xr.Dataset):
+        mesh[variables.FACE_NODES] = xr.DataArray(
             data=self.infile[f'Geometry/2D Flow Areas/{self.project_name}/Cells FacePoint Indexes'][()],
             coords={
                 "face_x": ('nface', self.infile[self.paths[variables.FACE_X]][()].T[0]),
@@ -116,7 +116,7 @@ class HDFReader:
                 'start_index': 0, 
                 '_FillValue': -1
         })
-        ras_data.mesh['edge_nodes'] = xr.DataArray(
+        mesh[variables.EDGE_NODES] = xr.DataArray(
             data=self.infile[self.paths[variables.EDGE_NODES]][()],
             dims=("nedge", '2'),
             attrs={
@@ -124,7 +124,7 @@ class HDFReader:
                 'long_name': 'Vertex nodes of mesh edges',
                 'start_index': 0
             })
-        ras_data.mesh['edge_face_connectivity'] = xr.DataArray(
+        mesh[variables.EDGE_FACE_CONNECTIVITY] = xr.DataArray(
             data=self.infile[self.paths[variables.EDGE_FACE_CONNECTIVITY]][()],
             dims=("nedge", '2'),
             attrs={
@@ -133,7 +133,7 @@ class HDFReader:
                 'start_index': 0
             })
 
-    def define_hydrodynamics(self, ras_data: MeshManager):
+    def define_hydrodynamics(self, mesh: xr.Dataset):
         """
         Populates data variables in UGRID-compliant xarray.
 
@@ -149,60 +149,62 @@ class HDFReader:
             This function requires cleanup. 
             Should remove some messy calculations and excessive code for vertical area calculations.         
         """
-        ras_data.mesh[variables.EDGES_FACE1] = _hdf_to_xarray(
-            ras_data.mesh['edge_face_connectivity'].T[0],
+        mesh[variables.EDGES_FACE1] = _hdf_to_xarray(
+            mesh['edge_face_connectivity'].T[0],
             ('nedge'),
             attrs={'Units':''}
         )  
-        ras_data.mesh[variables.EDGES_FACE2] = _hdf_to_xarray(
-            ras_data.mesh['edge_face_connectivity'].T[1], 
+        mesh[variables.EDGES_FACE2] = _hdf_to_xarray(
+            mesh['edge_face_connectivity'].T[1], 
             ('nedge'),
             attrs={'Units':''}
         )
         
-        nreal = ras_data.mesh[variables.EDGE_FACE_CONNECTIVITY].T[0].values.max()
-        ras_data.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] = nreal
+        nreal = mesh[variables.EDGE_FACE_CONNECTIVITY].T[0].values.max()
+        mesh.attrs[variables.NUMBER_OF_REAL_CELLS] = nreal
         
-        ras_data.mesh[variables.FACE_SURFACE_AREA] = _hdf_to_xarray(
+        mesh[variables.FACE_SURFACE_AREA] = _hdf_to_xarray(
             self.infile[self.paths[variables.FACE_SURFACE_AREA]],
             ("nface")
         )
-        ras_data.mesh[variables.EDGE_VELOCITY] = _hdf_to_xarray(
+        mesh[variables.EDGE_VELOCITY] = _hdf_to_xarray(
             self.infile[self.paths[variables.EDGE_VELOCITY]], 
-            ('time', 'nedge')
+            ('time', 'nedge'), 
         )
-        ras_data.mesh[variables.EDGE_LENGTH] = _hdf_to_xarray(
+        mesh[variables.EDGE_LENGTH] = _hdf_to_xarray(
             self.infile[self.paths[variables.EDGE_LENGTH]][:,2],
             ('nedge'), 
             attrs={'Units': 'ft'}
         )
-        ras_data.mesh[variables.WATER_SURFACE_ELEVATION] = _hdf_to_xarray(
+        mesh[variables.WATER_SURFACE_ELEVATION] = _hdf_to_xarray(
             self.infile[self.paths[variables.WATER_SURFACE_ELEVATION]], 
             (['time', 'nface'])
         )
         try:
-            ras_data.mesh[variables.VOLUME] = _hdf_to_xarray(
+            mesh[variables.VOLUME] = _hdf_to_xarray(
                 self.infile[self.paths[variables.VOLUME]], 
                 ('time', 'nface')
             ) 
-            ras_data.mesh[variables.VOLUME][:, ras_data.mesh.attrs[variables.NUMBER_OF_REAL_CELLS]+1:] = 0 # revisit this
+            mesh[variables.VOLUME][:, mesh.attrs[variables.NUMBER_OF_REAL_CELLS]+1:] = 0 # revisit this
         except KeyError: 
-            ras_data.volume_calculation_required = True
-            ras_data.face_volume_elevation_info = _hdf_to_dataframe(self.infile[self.paths['volume elevation info']])
-            ras_data.face_volume_elevation_values = _hdf_to_dataframe(self.infile[self.paths['volume_elevation_values']])
+            mesh.attrs['volume_calculation_required'] = True
+            mesh.attrs['face_volume_elevation_info'] = _hdf_to_dataframe(self.infile[self.paths['volume elevation info']])
+            mesh.attrs['face_volume_elevation_values'] = _hdf_to_dataframe(self.infile[self.paths['volume_elevation_values']])
         try:
-            ras_data.mesh[variables.FLOW_ACROSS_FACE] = _hdf_to_xarray(
+            mesh[variables.FLOW_ACROSS_FACE] = _hdf_to_xarray(
                 self.infile[self.paths[variables.FLOW_ACROSS_FACE]],
                 ('time', 'nedge')
             )
         except:
-            ras_data.face_area_calculation_required = True
-            ras_data.face_area_elevation_info = _hdf_to_dataframe(self.infile[self.paths['area_elevation_info']])
-            ras_data.face_area_elevation_values = _hdf_to_dataframe(self.infile[self.paths['area_elevation_values']])
-            ras_data.face_normalunitvector_and_length = _hdf_to_dataframe(self.infile[self.paths['normalunitvector_length']])
-            ras_data.face_cell_indexes_df = _hdf_to_dataframe(self.infile[self.paths[variables.EDGE_FACE_CONNECTIVITY]])
+            mesh.attrs['face_area_calculation_required'] = True
+            mesh.attrs['face_area_elevation_info'] = _hdf_to_dataframe(self.infile[self.paths['area_elevation_info']])
+            mesh.attrs['face_area_elevation_values'] = _hdf_to_dataframe(self.infile[self.paths['area_elevation_values']])
+            mesh.attrs['face_normalunitvector_and_length'] = _hdf_to_dataframe(self.infile[self.paths['normalunitvector_length']])
+            mesh.attrs['face_cell_indexes_df'] = _hdf_to_dataframe(self.infile[self.paths[variables.EDGE_FACE_CONNECTIVITY]])
+        
+
     
-    def define_boundary_hydrodynamics(self, ras_data: MeshManager):
+    def define_boundary_hydrodynamics(self, mesh: xr.Dataset):
         external_faces = pd.DataFrame(self.infile[self.paths['boundary_condition_external_faces']][()])
         attributes = pd.DataFrame(self.infile[self.paths['boundary_condition_attributes']][()])
         str_df = attributes.select_dtypes([object])
@@ -212,7 +214,7 @@ class HDFReader:
         boundary_attributes = attributes
         # merge attributes and boundary condition data 
         boundary_attributes['BC Line ID'] = boundary_attributes.index
-        ras_data.boundary_data = pd.merge(external_faces, boundary_attributes, on = 'BC Line ID', how = 'left')
+        mesh.attrs['boundary_data'] = pd.merge(external_faces, boundary_attributes, on = 'BC Line ID', how = 'left')
         
     def close(self):
         self.infile.close()
