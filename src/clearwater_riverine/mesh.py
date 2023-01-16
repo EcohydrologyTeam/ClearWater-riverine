@@ -8,8 +8,7 @@ from clearwater_riverine.io.outputs import ClearWaterRiverineOutput, ClearWaterR
 from clearwater_riverine.utilities import WQVariableCalculator
 
 def model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
-    """
-    Initialize the Clearwater Model Mesh
+    """ Initialize the Clearwater Model Mesh
 
     Args:
         diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 

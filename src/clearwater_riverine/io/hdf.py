@@ -10,6 +10,7 @@ import datetime
 from clearwater_riverine import variables
 
 def _hdf_internal_paths(project_name):
+    """ Define HDF paths to relevant data"""
     hdf_paths = {
         variables.NODE_X: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
         variables.NODE_Y: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
@@ -69,7 +70,9 @@ def _hdf_to_dataframe(dataset) -> pd.DataFrame:
     return df
 
 class HDFReader:
+    """ Reads RAS hydrodynamic data required for WQ calculations in Clearwater Riverine Model from HDF file"""
     def __init__(self, file_path: str) -> None:
+        """Opens HDF file and reads information required to set-up model mesh"""
         self.file_path = file_path
         self.infile = h5py.File(file_path, 'r')
         self.project_name = self.infile['Geometry/2D Flow Areas/Attributes'][()][0][0].decode('UTF-8')
@@ -104,6 +107,7 @@ class HDFReader:
         return mesh
 
     def define_topology(self, mesh: xr.Dataset):
+        """Define mesh topology """
         mesh[variables.FACE_NODES] = xr.DataArray(
             data=self.infile[f'Geometry/2D Flow Areas/{self.project_name}/Cells FacePoint Indexes'][()],
             coords={
@@ -135,21 +139,7 @@ class HDFReader:
             })
 
     def define_hydrodynamics(self, mesh: xr.Dataset):
-        """
-        Populates data variables in UGRID-compliant xarray.
-
-        Parameters:
-            infile (h5py._hl.files.File):           HDF File containing RAS2D output 
-            project_name (str):                     Name of the 2D Flow Area being modeled
-            diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
-
-        Returns: 
-            mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
-
-        Notes:
-            This function requires cleanup. 
-            Should remove some messy calculations and excessive code for vertical area calculations.         
-        """
+        """Populates hydrodynamic data in UGRID-compliant xarray."""
         mesh[variables.EDGES_FACE1] = _hdf_to_xarray(
             mesh['edge_face_connectivity'].T[0],
             ('nedge'),
@@ -206,6 +196,7 @@ class HDFReader:
 
     
     def define_boundary_hydrodynamics(self, mesh: xr.Dataset):
+        """Read necessary information on hydrodynamics"""
         external_faces = pd.DataFrame(self.infile[self.paths['boundary_condition_external_faces']][()])
         attributes = pd.DataFrame(self.infile[self.paths['boundary_condition_attributes']][()])
         str_df = attributes.select_dtypes([object])
@@ -218,5 +209,6 @@ class HDFReader:
         mesh.attrs['boundary_data'] = pd.merge(external_faces, boundary_attributes, on = 'BC Line ID', how = 'left')
         
     def close(self):
+        """Close HDF file"""
         self.infile.close()
 

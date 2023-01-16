@@ -37,10 +37,12 @@ class RASInput:
         Args:
             reader (HDFReader): reader class. Currently only supports reading HDF files.
         """
+        self.mesh = reader.define_coordinates(self.mesh)
         reader.define_topology(self.mesh)
         reader.define_hydrodynamics(self.mesh)
         reader.define_boundary_hydrodynamics(self.mesh)
-        self.mesh = reader.define_coordinates(self.mesh)
+        reader.close()
+        
 
 
 class RASReader:

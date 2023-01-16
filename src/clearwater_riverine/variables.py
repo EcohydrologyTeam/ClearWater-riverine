@@ -28,3 +28,7 @@ COEFFICIENT_TO_DIFFUSION_TERM  = 'coeff_to_diffusion'
 SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM = 'sum_coeff_to_diffusion'
 GHOST_CELL_VOLUMES_IN = 'ghost_volumes_in'
 GHOST_CELL_VOLUMES_OUT = 'ghost_volumes_out'
+
+# Water Quality
+POLLUTANT_LOAD = 'pollutant_load'
+CONCENTRATION = 'concentration'

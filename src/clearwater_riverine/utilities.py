@@ -33,10 +33,9 @@ CONVERSIONS = {'Metric': {'Liters': 0.001},
                }
 
 def _determine_units(mesh: xr.Dataset) -> str:
-    """
-    Determines units of RAS2D HDF output file. 
+    """ Determines units of RAS output file. 
 
-    Parameters:
+    Args:
         mesh (xr.Dataset):   Mesh created by the populate_ugrid function
 
     Returns:
@@ -55,16 +54,16 @@ def _determine_units(mesh: xr.Dataset) -> str:
 
 @numba.njit
 def _linear_interpolate(x0: float, x1: float, y0: float, y1: float, xi: float):
-    """
-    Linear interpolation:
-    Inputs:
-        x0: Lower x value
-        x1: Upper x value
-        y0: Lower y value
-        y1: Upper y value
-        xi: x value to interpolate
+    """ Linear interpolation:
+    
+    Args:
+        x0 (float): Lower x value
+        x1 (float): Upper x value
+        y0 (float): Lower y value
+        y1 (float): Upper y value
+        xi (float): x value to interpolate
     Returns:
-        y1: interpolated y value
+        y1 (float): interpolated y value
     """
     m = (y1 - y0)/(x1 - x0)
     yi = m * (xi - x0) + y0
@@ -193,11 +192,10 @@ def _compute_face_areas(
 
 
 def _calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
-    """
-    Calculate the distance between cell centroids
+    """ Calculate the distance between cell centroids
 
-    Parameters:
-        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+    Args:
+        mesh (xr.Dataset): Clearwater Model mesh
 
     Returns:
         dist_data (np.array):   Array of distances between all cell centroids 
@@ -213,12 +211,12 @@ def _calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
     return dist_data
 
 def _calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
-    """
-    Calculate the coefficient to the diffusion term. 
+    """ Calculate the coefficient to the diffusion term. 
+
     For each edge, this is calculated as:
     (Edge vertical area * diffusion coefficient) / (distance between cells) 
     
-    Parameters:
+    Args:
         mesh (xr.Dataset):   Mesh created by the populate_ugrid function
 
     Returns:
@@ -240,13 +238,13 @@ def _calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     return diffusion_array
 
 def _sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.array) -> np.array:
-    """
-    Sums values associated with a given cell. 
+    """ Sums values associated with a given cell. 
+    
     Developed this function with help from the following Stack Overflow thread:  
     https://stackoverflow.com/questions/67108215/how-to-get-sum-of-values-in-a-numpy-array-based-on-another-array-with-repetitive
     
-    Parameters:
-        mesh (xr.Dataset):      Mesh created by the populate_ugrid function
+    Args:
+        mesh (xr.Dataset):      Clearwater Riverine model mesh
         face (np.array):        Array containing all cells on one side of an edge connection
         time_index (float):     Timestep for calculation 
         sum_array (np.array):   Empty array to populate with sum values
@@ -260,13 +258,14 @@ def _sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np
     return sum_array
 
 def _calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
-    """
+    """Calculates the sum of all coefficients to diffusion terms. 
+
     Sums all coefficient to the diffusion term values associated with each individual cell
     (i.e., transfers values associated with EDGES to relevant CELLS)
     These values fall on the diagonal of the LHS matrix when solving the transport equation. 
 
-    Parameters:
-        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+    Args:
+        mesh (xr.Dataset):  Clearwater Riverine model mesh
 
     Returns:
         sum_diffusion_array: Array containing the sum of all diffusion coefficients 
@@ -297,8 +296,8 @@ def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     Therefore, we must calculate the 'volume' in the ghost cells as 
     the total flow across the face in a given timestep.
 
-    Parameters:
-        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+    Args:
+        mesh (xr.Dataset):   Clearwater Riverine model mesh
 
     Returns:
         ghost_vols_in:       Volume entering the domain from ghost cells
@@ -361,21 +360,19 @@ def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     return ghost_vols_in, ghost_vols_out
 
 class WQVariableCalculator:
+    """Calculates all parameters required for advection-diffusion equations"""
     def __init__(self, mesh: xr.Dataset):
         """Determine the units 
         Args:
-            mesh_manager (MeshManager): mesh manager containing the project mesh
-                and other information required to perform advection-diffusion transport
-                equations.
+            mesh (xr.Dataset):   Clearwater Riverine model mesh
         """
         mesh.attrs['units'] = _determine_units(mesh)
     
     def calculate(self, mesh: xr.Dataset):
         """Calculate required values for advection-diffusion transport equation
         Args:
-            mesh (xr.Dataset): mesh containing the project mesh
-                and other information required to perform advection-diffusion transport
-                equations.
+            mesh (xr.Dataset):  Clearwater Riverine model mesh
+
         """
         if mesh.attrs['volume_calculation_required']:
             print( """
@@ -418,7 +415,7 @@ class WQVariableCalculator:
                 dims =  ('time', 'nedge'),
                 attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']}
             )
-            advection_coefficient = mesh[variables.EDGE_VERTICAL_AREA] * mesh_manager.mesh[variables.EDGE_VELOCITY] 
+            advection_coefficient = mesh[variables.EDGE_VERTICAL_AREA] * mesh[variables.EDGE_VELOCITY] 
             mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
                 advection_coefficient,
                 dims = ('time', 'nedge'),
