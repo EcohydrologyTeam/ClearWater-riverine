@@ -1,4 +1,5 @@
 from typing import Dict, Any
+
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -10,6 +11,8 @@ from shapely.geometry import Polygon
 hv.extension("bokeh")
 
 from clearwater_riverine.mesh import model_mesh
+from clearwater_riverine.utilities import _determine_units
+from clearwater_riverine.io.hdf import _hdf_to_xarray
 
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -303,7 +306,7 @@ class ClearwaterRiverine:
         return
 
 
-    def wq_simulation(self, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1, save = False, 
+    def simulate_wq(self, input_mass_units = 'mg', input_volume_units = 'L', input_liter_conversion = 1, save = False, 
                         output_file_path = './clearwater-riverine-wq-model.zarr'):
         """
         Steps through each timestep in the output of a RAS2D model (mesh) 
@@ -327,7 +330,7 @@ class ClearwaterRiverine:
         print("Starting WQ Simulation...")
 
         # Convert Units
-        units = determine_units(self.mesh)
+        units = _determine_units(self.mesh)
 
         print(f" Assuming concentration input has units of {input_mass_units}/{input_volume_units}...")
         print("     If this is not true, please re-run the wq simulation with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
@@ -356,10 +359,10 @@ class ClearwaterRiverine:
             output[t+1] = b.vals
 
         print(' 100%')
-        self.mesh['pollutant_load'] = hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
+        self.mesh['pollutant_load'] = _hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
         temp_vol = self.mesh['volume'] + self.mesh['ghost_volumes_in']
         concentration = self.mesh['pollutant_load'] / temp_vol * conversion_factor * input_liter_conversion * self.mesh['dt']
-        self.mesh['concentration'] = hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
+        self.mesh['concentration'] = _hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
 
         # may need to move this if we want to plot things besides concentration
         self.max_value = int(self.mesh['concentration'].sel(nface=slice(0, self.mesh.attrs['nreal'])).max())
