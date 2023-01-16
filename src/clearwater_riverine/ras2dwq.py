@@ -262,7 +262,7 @@ class ClearwaterRiverine:
         def map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
-
+            units = self.mesh[variables.CONCENTRATION].Units
             ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
                                                                           width = 800,
                                                                           color='concentration',
@@ -271,6 +271,7 @@ class ClearwaterRiverine:
                                                                           clim = (0, mval),
                                                                           line_width = 0.1,
                                                                           tools = ['hover'],
+                                                                          clabel = f"Concentration ({units})"
                                                                        )
             return (ras_map * gv.tile_sources.CartoLight())
 
