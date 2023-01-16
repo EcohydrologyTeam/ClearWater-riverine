@@ -241,15 +241,7 @@ class ClearwaterRiverine:
             diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
 
         """
-        # mesh_data = MeshManager(diffusion_coefficient_input)
-        # ras_data = RASInput(hdf_fpath, mesh_data)
-        # reader = input.ObjectSerializer()
-        # reader.read_to_xarray(data, file_path)
-
-        # with h5py.File(hdf_fpath, 'r') as infile:
-        #     self.project_name = parse_project_name(infile)
-        #     self.mesh = populate_ugrid(infile, self.project_name, diffusion_coefficient_input)
-        #     self.boundary_data = populate_boundary_information(infile)
+        self.gdf = None
 
         # define model mesh
         self.mesh = model_mesh(diffusion_coefficient_input)
@@ -371,7 +363,7 @@ class ClearwaterRiverine:
             self.mesh.cwr.save_clearwater_xarray(output_file_path)
 
 
-    def prep_plot(self, crs: str):
+    def _prep_plot(self, crs: str):
         """
         Creates a geodataframe of polygons to represent each RAS cell. 
 
@@ -410,9 +402,16 @@ class ClearwaterRiverine:
         full_df = pd.concat(gdf_ls)
         # full_df.to_crs('EPSG:4326')
         self.gdf = full_df
-        return
 
-    def plot(self):
+
+    def _maximum_plotting_value(self, clim_max):
+        if clim_max != None:
+            mval = clim_max
+        else:
+            mval = self.max_value
+        return mval
+
+    def plot(self, crs: str = None, clim_max: float = None):
         """
         Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
 
@@ -426,9 +425,15 @@ class ClearwaterRiverine:
             Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
             Input parameter of info to plot?
         """
-        def map_generator(datetime, mval=self.max_value):
+        if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
+            self._prep_plot(crs)
+
+        mval = self._maximum_plotting_value(clim_max)
+
+        def map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
+
             ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
                                                                           width = 800,
                                                                           color='concentration',
@@ -443,7 +448,7 @@ class ClearwaterRiverine:
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
         return dmap.redim.values(datetime=self.gdf.datetime.unique())
 
-    def quick_plot(self):
+    def quick_plot(self, clim_max: float = None):
         """
         Creates a dynamic scatterplot of cell centroids colored by cell concentration.
 
@@ -457,7 +462,9 @@ class ClearwaterRiverine:
             Input parameter of info to plot?
         """
 
-        def quick_map_generator(datetime, mval=self.max_value):
+        mval = self._maximum_plotting_value(clim_max)
+
+        def quick_map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
             ds = self.mesh.sel(time=datetime)
             ind = np.where(ds['concentration'][0:self.mesh.attrs['nreal']] > 0)
