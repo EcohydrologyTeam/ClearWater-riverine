@@ -8,7 +8,6 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath('../../src/clearwater_riverine'))
-sys.path.insert(0, os.path.abspath('../../src/clearwater_riverine/ras2d_wq'))
 
 project = 'Clearwater Riverine'
 copyright = '2023, Sarah Jordan, Todd Steissberg, Jason Rutyna, Anthony Aufdenkampe, Craig Taylor'

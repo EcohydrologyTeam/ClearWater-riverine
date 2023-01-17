@@ -1,7 +1,7 @@
 ClearwaterRiverine
 ===================
 ..
-.. currentmodule:: clearwater_riverine.ras2dwq 
+.. currentmodule:: clearwater_riverine.transport
 .. autoclass:: ClearwaterRiverine
    :members:
    :undoc-members:

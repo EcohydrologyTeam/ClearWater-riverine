@@ -9,5 +9,4 @@ Sub-directories are for supporting files:
   - This sub-directory will be in the `.gitignore`, so that output files are not saved to the repo.
 
 ### Example Notebooks
-- [testing.ipynb](testing.ipynb): Uses the `ras2dwq.py` to set up a mesh and run the a very simple water quality model in a 9-cell "box".
-- [Ohio River.ipynb](Ohio River.ipynb): Provides an example of running a more complicated test case.
+- [Ohio River.ipynb](./Ohio%20River.ipynb): Provides an example of running the Clearwater Riverine model on the Ohio River. This notebook compares Clearwater Riverine constituent transport to results on the same system from the Environmental Fluid Dynamics Code (EFDC) model. 
