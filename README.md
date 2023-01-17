@@ -49,7 +49,7 @@ conda env create --file path/environment.yml --force
 
 #### 4. Add your Clearwater Riverine Path to Anaconda sites-packages
 
-To have access to the `clearwater_riverin` module in your Python environments,
+To have access to the `clearwater_riverine` module in your Python environments,
 it is necessary to have a path to your copy of HSPsquared in Anaconda's `sites-packages` directory (i.e. something like `$HOME/path/to/anaconda/lib/pythonX.X/site-packages` or `$HOME/path/to/anaconda/lib/site-packages` similar).
 
 The easiest way to do this is to use the [conda develop](https://docs.conda.io/projects/conda-build/en/latest/resources/commands/conda-develop.html) command in the console or terminal like this, replacing `/path/to/module/` with the full file pathway to the local cloned HSPsquared repository:

@@ -46,26 +46,23 @@ class ClearwaterRiverine:
     """ Creates Clearwater Riverine water quality model.
 
     Clearwater Riverine is a water quality model that calculates advection and diffusion of constituents
-        by leveraging hydrodynamic output from HEC-RAS 2D. 
+    by leveraging hydrodynamic output from HEC-RAS 2D. The Clearwater Riverine model mesh is an xarray
+    following UGRID conventions. 
+
+    Args:
+        ras_file_path (str):  Filepath to HEC-RAS output
+        diffusion_coefficient_input (float): User-defined diffusion coefficient for entire modeling domain. 
+        verbose (bool, optional): Boolean indicating whether or not to print model progress. 
 
     Attributes:
-        mesh (xr.Dataset): unstructured model mesh containing relevant HEC-RAS outputs, calculated parameters
+        mesh (xr.Dataset): Unstructured model mesh containing relevant HEC-RAS outputs, calculated parameters
             required for advection-diffusion calculations, and water quality ouptuts (e.g., concentration). 
             The unstructured mesh follows UGRID CF Conventions. 
-        boundary_data (pd.DataFrame): information on RAS model boundaries, extracted directly from RAS HDF output. 
-
-
-
+        boundary_data (pd.DataFrame): Information on RAS model boundaries, extracted directly from HEC-RAS 2D output. 
     """
 
     def __init__(self, ras_file_path: str, diffusion_coefficient_input: float, verbose: bool = False) -> None:
-        """ Initialize a Clearwater Riverine WQ model mesh by reading HDF output from a RAS2D model to an xarray.
-
-        Args:
-            ras_file_path (str):   Filepath to RAS2D HDF output
-            diffusion_coefficient_input (float):    User-defined diffusion coefficient for entire modeling domain. 
-            verbose (bool): Boolean indicating whether or not to print model progress. 
-        """
+        """ Initialize a Clearwater Riverine WQ model mesh by reading HDF output from a RAS2D model to an xarray."""
         self.gdf = None
 
         # define model mesh
@@ -76,39 +73,31 @@ class ClearwaterRiverine:
         if verbose: print("Calculating Required Parameters...")
         self.mesh = self.mesh.cwr.calculate_required_parameters()
 
-    def initial_conditions(self, fpath: str):
-        """
-        Define initial conditions for RAS2D model from CSV file. 
+    def initial_conditions(self, filepath: str):
+        """Define initial conditions for Clearwater Riverine model from a CSV file. 
 
         Args:
-            fpath (str):    Filepath to CSV containing initial conditions. The CSV should have two columns:
-                one called Cell_Index and one called Concentration, which denote the concentration
+            filepath (str): Filepath to a CSV containing initial conditions. The CSV should have two columns:
+                one called `Cell_Index` and one called `Concentration`. The file should the concentration
                 in each cell within the model domain at the first timestep. 
-
-        Notes:
-            Should we have the option to change what timestep gets initial conditions?
-                Would that be a time index or datetime or either?
-            Would there be use cases where a user would want to infuse conditions into the results that
-                aren't initial conditions?
-            Allow other file types?
-            Where / when should we deal with units and conversions?
-            Refactor IO to allow alternative use cases / file formats (OOP)
         """
-        init = pd.read_csv(fpath)
+        init = pd.read_csv(filepath)
         init['Cell_Index'] = init.Cell_Index.astype(int)
         self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
         self.input_array[0, [init['Cell_Index']]] =  init['Concentration']
         return 
 
-    def boundary_conditions(self, fpath: str):
-        """
-        Define boundary conditions for RAS2D water quality model from CSV file. 
+    def boundary_conditions(self, filepath: str):
+        """Define boundary conditions for Clearwater Riverine model from a CSV file. 
 
         Args:
-            fpath (str): Filepath to CSV containing boundary conditions. The CSV should have the following columns:
-                RAS2D_TS_Name (the timeseries name, as labeled in the RAS model), Datetime, Concentration 
+            filepath (str): Filepath to a CSV containing boundary conditions. The CSV should have the following columns:
+                `RAS2D_TS_Name` (the timeseries name, as labeled in the HEC-RAS model), `Datetime`, `Concentration`. 
+                This file should contain the concentration for all relevant boundary cells at every RAS timestep. 
+                If a timestep / boundary cell is not included in this CSV file, the concentration will be set to 0
+                in the Clearwater Riverine model.  
         """
-        bc_df = pd.read_csv(fpath, parse_dates=['Datetime'])
+        bc_df = pd.read_csv(filepath, parse_dates=['Datetime'])
         bc_df = bc_df[(bc_df.Datetime >= self.mesh.time.min().values) & (bc_df.Datetime <= self.mesh.time.max().values)]
         boundary_df = pd.merge(bc_df, self.boundary_data, left_on = 'RAS2D_TS_Name', right_on = 'Name', how='left')
         # Define the ghost cell associated with the Face Index
@@ -124,20 +113,22 @@ class ClearwaterRiverine:
 
     def simulate_wq(self, input_mass_units: str = 'mg', input_volume_units: str = 'L', input_liter_conversion: float = 1, save: bool = False, 
                         output_file_path: str = './clearwater-riverine-wq-model.zarr'):
-        """
-        Steps through each timestep in the output of a RAS2D model (mesh) 
-        and solves the total-load advection-diffusion transport equation 
-        using boundary and initial conditions.
+        """Runs water quality model. 
+
+        Steps through each timestep of the HEC-RAS 2D output and solves the total-load advection-diffusion transport equation 
+        using user-defined boundary and initial conditions. Users must use `initial_conditions()` and `boundary_conditions()` 
+        methods before calling `simulate_wq()` or all concentrations will be 0. 
 
         Args:
-            input_mass_units (str): User-defined mass units for concentration timeseries. Assumes mg if no value
+            input_mass_units (str, optional): User-defined mass units for concentration timeseries used in model set-up. Assumes mg if no value
                 is specified. 
-            input_volume_units (str): User-defined volume units for concentration timeseries. Assumes L if no value
+            input_volume_units (str, optional): User-defined volume units for concentration timeseries. Assumes L if no value
                 is specified.
-            input_liter_conversion (float): If concentration inputs are not in mass/L, supply the conversion factor to 
+            input_liter_conversion (float, optional): If concentration inputs are not in mass/L, supply the conversion factor to 
                 convert the volume unit to liters.
-            save (bool): Boolean indicating whether the file should be saved. Default is to not save the output.
-            output_file_path (str): Filepath where the output file should be stored. Default to save in current directory.
+            save (bool, optional): Boolean indicating whether the file should be saved. Default is to not save the output.
+            output_file_path (str, optional): Filepath where the output file should be stored. Default to save in current directory as 
+                `clearwater-riverine-wq.zarr`
  
         """
         print("Starting WQ Simulation...")
@@ -176,7 +167,7 @@ class ClearwaterRiverine:
         self.mesh[variables.POLLUTANT_LOAD] = _hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
         temp_vol = self.mesh[variables.VOLUME] + self.mesh[variables.GHOST_CELL_VOLUMES_IN]
         concentration = self.mesh[variables.POLLUTANT_LOAD] / temp_vol * conversion_factor * input_liter_conversion * self.mesh[variables.CHANGE_IN_TIME]
-        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/L'})
+        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
         # may need to move this if we want to plot things besides concentration
         self.max_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).max())
@@ -229,6 +220,12 @@ class ClearwaterRiverine:
         
         Uses the maximum concentration value in the model mesh if no user-defined  clim_max is specified,
         otherwise defines the maximum value as clim_max. 
+
+        Args:
+            clim_max (float): user defined maximum colorbar value or default (None)
+        
+        Returns:
+            mval (float): maximum plotting value, either based on user input or the maximum concentration value.
         """
         if clim_max != None:
             mval = clim_max
@@ -237,19 +234,15 @@ class ClearwaterRiverine:
         return mval
 
     def plot(self, crs: str = None, clim_max: float = None):
-        """
-        Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
+        """Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
+
+        The `plot()` method takes slightly  more time than the `quick_plot()` method in order to leverage the `geoviews` plotting library. 
+        The `plot()` method creates more detailed and aesthetic plots than the `quick_plot()` method. 
 
         Args:
-            crs (str): coordinate system of the RAS HDF output. 
-            clim_max (float): maximum value for color bar. 
-
-        Notes:
-            Play button
-            Move re-projection? This is really slow, but I think geoviews requires ESPG:4326 so necessary at some point. 
-            Option to save
-            Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
-            Input parameter of info to plot?
+            crs (str): coordinate system of the HEC-RAS 2D model. Only required the first time you call this method.  
+            clim_max (float, optional): maximum value for color bar. If not specifies, the default will be the 
+                maximum concentration value in the model domain over the entire simulation horizon. 
         """
         if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
             if crs == None:
@@ -279,18 +272,13 @@ class ClearwaterRiverine:
         return dmap.redim.values(datetime=self.gdf.datetime.unique())
 
     def quick_plot(self, clim_max: float = None):
-        """
-        Creates a dynamic scatterplot of cell centroids colored by cell concentration.
+        """Creates a dynamic scatterplot of cell centroids colored by cell concentration.
+
+        The `quick_plot()` method is meant to rapidly develop visualizations to explore results. 
+        Use the `plot()` method for more aesthetic plots. 
 
         Args:
-            clim_max (float): maximum value for color bar. 
-
-        Notes:
-            Play button
-            Move re-projection? This is really slow, but I think geoviews requires ESPG:4326 so necessary at some point. 
-            Option to save
-            Build in functionality to pass plotting arguments (clim, cmap, height, width, etc.)
-            Input parameter of info to plot?
+            clim_max (float, optional): maximum value for color bar. 
         """
 
         mval = self._maximum_plotting_value(clim_max)
