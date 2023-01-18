@@ -233,7 +233,7 @@ class ClearwaterRiverine:
             mval = self.max_value
         return mval
 
-    def plot(self, crs: str = None, clim_max: float = None):
+    def plot(self, crs: str = None, clim_max: float = None, time_index_range: tuple = (0, -1)):
         """Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
 
         The `plot()` method takes slightly  more time than the `quick_plot()` method in order to leverage the `geoviews` plotting library. 
@@ -243,6 +243,7 @@ class ClearwaterRiverine:
             crs (str): coordinate system of the HEC-RAS 2D model. Only required the first time you call this method.  
             clim_max (float, optional): maximum value for color bar. If not specifies, the default will be the 
                 maximum concentration value in the model domain over the entire simulation horizon. 
+            time_index_range (tuple, optional): minimum and maximum time index to plot.
         """
         if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
             if crs == None:
@@ -256,7 +257,7 @@ class ClearwaterRiverine:
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
             units = self.mesh[variables.CONCENTRATION].Units
-            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=600,
+            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=400,
                                                                           width = 800,
                                                                           color='concentration',
                                                                           colorbar = True,
@@ -269,7 +270,7 @@ class ClearwaterRiverine:
             return (ras_map * gv.tile_sources.CartoLight())
 
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
-        return dmap.redim.values(datetime=self.gdf.datetime.unique())
+        return dmap.redim.values(datetime=self.gdf.datetime.unique()[time_index_range[0]: time_index_range[1]])
 
     def quick_plot(self, clim_max: float = None):
         """Creates a dynamic scatterplot of cell centroids colored by cell concentration.

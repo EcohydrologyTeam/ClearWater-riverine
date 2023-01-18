@@ -52,4 +52,4 @@ ohio_river_model.plot(
 )
 ```
 Example output:
-![image](../imgs/ohio-river-example-1.PNG)
+![Alt Text](../gifs/ohio-polygons.gif)
