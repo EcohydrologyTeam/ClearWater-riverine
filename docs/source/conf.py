@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.abspath('../../src/clearwater_riverine'))
 
 project = 'Clearwater Riverine'
-copyright = '2023, Sarah Jordan, Todd Steissberg, Jason Rutyna, Anthony Aufdenkampe, Craig Taylor'
+copyright = '2023,Todd Steissberg, Sarah Jordan, Jason Rutyna, Anthony Aufdenkampe, Craig Taylor'
 author = 'Todd Steissberg, Sarah Jordan, Anthony Aufdenkampe, Jason Rutyna, Craig Taylor'
 release = '0.2.0'
 
