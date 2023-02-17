@@ -79,6 +79,12 @@ class ClearWaterXarray:
         calculator = WQVariableCalculator(self._obj)
         calculator.calculate(self._obj)
         return self._obj
+    
+    def _attempt_delete(self, key: str):
+        try:
+            del self._obj.attrs[key]
+        except:
+            pass
 
     def save_clearwater_xarray(self, output_file_path: str) -> None:
         """Save mesh
@@ -86,13 +92,14 @@ class ClearWaterXarray:
             output_file_path (str): name of file path to save clearwater output
         """
         # must delete certain attributes before saving 
-        del self._obj.attrs['face_area_elevation_info']
-        del self._obj.attrs['face_area_elevation_values']
-        del self._obj.attrs['face_normalunitvector_and_length']
-        del self._obj.attrs['face_cell_indexes_df']
-        del self._obj.attrs['face_volume_elevation_info']
-        del self._obj.attrs['face_volume_elevation_values']
-        del self._obj.attrs['boundary_data']
+        for key in ['face_area_elevation_info',
+                    'face_area_elevation_values',
+                    'face_normalunitvector_and_length',
+                    'face_cell_indexes_df',
+                    'face_volume_elevation_info',
+                    'face_volume_elevation_values',
+                    'boundary_data']:
+            self._attempt_delete(key)
 
         # write output
         mesh_data = ClearWaterRiverineOutput(output_file_path, self._obj)
