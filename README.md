@@ -1,5 +1,5 @@
 # ClearWater Riverine
-ClearWater Riverine is a library containing a water qulaity engine that computes the transport (advection and diffusion) of constituents in riverine systems, leveraging hydrodynamic output from HEC-RAS-2D models. ClearWater is developed by the Environmental Laboratory, U.S Army Engineer Research and Development Center (ERDC).
+ClearWater Riverine is a library containing a water quality engine that computes the transport (advection and diffusion) of constituents in riverine systems, leveraging hydrodynamic output from HEC-RAS-2D models. ClearWater is developed by the Environmental Laboratory, U.S Army Engineer Research and Development Center (ERDC).
 
 ## Repository Directories
 
