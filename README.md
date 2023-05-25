@@ -5,7 +5,7 @@ The current version of ClearWater-Riverine simulates generalized conservative co
 
 ## Example applications
 
-The following plot shows an animation of E. Coli transport in the Ohio River. A sudden inflow of E. Coli enters the Ohio River at Covington on the south shore of the river. The downstream flow and lateral spread of E. Coli over time is due to the transport and mixing processes (advection-diffusion) in the river. 
+The following plot shows an animation of E. Coli transport in the Ohio River in June, 2010. A sudden inflow of E. Coli enters the Ohio River at Covington on the south shore of the river. The downstream flow and lateral spread of E. Coli over time is due to the transport and mixing processes (advection-diffusion) in the river. 
 
 ![ClearWater-Riverine animation of E. Coli transport in the Ohio River](images/ClearWater-Riverine-and-EFDC-Ohio.gif)
 
