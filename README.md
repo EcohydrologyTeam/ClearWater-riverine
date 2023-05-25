@@ -1,5 +1,17 @@
-# ClearWater Riverine
-ClearWater Riverine is a library containing a water quality engine that computes the transport (advection and diffusion) of constituents in riverine systems, leveraging hydrodynamic output from HEC-RAS-2D models. ClearWater is developed by the Environmental Laboratory, U.S Army Engineer Research and Development Center (ERDC).
+# ClearWater-Riverine
+ClearWater-Riverine is a two-dimensional (2D) water quality model for complex river systems and floodplains. It is developed by the Environmental Laboratory, U.S Army Engineer Research and Development Center (ERDC). The intent of this model is to simulate the transport (advection and diffusion) of heat and water quality constituents in riverine systems by integrating it with ERDC's ClearWater (Corps Library for Environmental Analysis and Restoration of Watersheds modules. 
+
+The current version of ClearWater-Riverine simulates generalized conservative constituent transport. Ongoing development is extending these capabilities to simulate fundamental eutrophication processes such as the interactions between temperature, nutrients, algae, dissolved oxygen, organic matter, and sediment diagenesis. ClearWater-Riverine assumes vertical homogeneity. Therefore, it is best suited for evaluating riverine systems during conditions where vertical stratification does not contribute significantly to the water quality dynamics, but where the longitudinal and lateral changes of water quality are important.
+
+## Example applications
+
+The following plot shows an animation of E. Coli transport in the Ohio River. A sudden inflow of E. Coli enters the Ohio River at Covington on the south shore of the river. The downstream flow and lateral spread of E. Coli over time is due to the transport and mixing processes (advection-diffusion) in the river. 
+
+![ClearWater-Riverine animation of E. Coli transport in the Ohio River](ClearWater-Riverine-and-EFDC-Ohio.gif)
+
+ClearWater-Riverine performance was compared to an existing EFDC model of the Ohio River, and both models were verified with observed data. These comparisons verified that ClearWater-Riverine is accurately capaturing the transport processes in this system. A side-by-side comparison of the two models is shown below.
+
+![Comparison of ClearWater-Riverine and EFDC model performance for simulating E. Coli transport in the Ohio River](ClearWater-Riverine-Ohio.gif)
 
 ## Repository Directories
 
