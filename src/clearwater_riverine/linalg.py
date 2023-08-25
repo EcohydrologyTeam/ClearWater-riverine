@@ -153,7 +153,7 @@ class RHS:
         self.vals = np.zeros(len(mesh['nface']))
         seconds = mesh[variables.CHANGE_IN_TIME].values[t] 
         # SHOULD GHOST VOLUMES BE INCLUDED?
-        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] + mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1]
+        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
         self.vals[:] = vol / seconds * self.conc 
         print(vol[63].values, vol[64].values)
         print(self.vals[63], self.vals[64])
@@ -175,7 +175,7 @@ class RHS:
         """
         seconds = mesh[variables.CHANGE_IN_TIME].values[t] 
         solution[inp[t].nonzero()] = inp[t][inp[t].nonzero()] 
-        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] + mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1]
+        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
         self.vals[:] = solution * vol / seconds
         print(vol[63].values, vol[64].values)
         print(self.vals[63], self.vals[64])
