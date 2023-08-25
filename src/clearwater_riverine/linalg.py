@@ -75,7 +75,7 @@ class LHS:
         end = end + len(mesh['nface'])
         self.rows[start:end] = mesh['nface']
         self.cols[start:end] = mesh['nface']
-        self.coef[start:end] = mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1] / seconds 
+        self.coef[start:end] = mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1] / seconds
              
         ###### advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
@@ -153,8 +153,10 @@ class RHS:
         self.vals = np.zeros(len(mesh['nface']))
         seconds = mesh[variables.CHANGE_IN_TIME].values[t] 
         # SHOULD GHOST VOLUMES BE INCLUDED?
-        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t]
+        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] + mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1]
         self.vals[:] = vol / seconds * self.conc 
+        print(vol[63].values, vol[64].values)
+        print(self.vals[63], self.vals[64])
         # self.vals[:] = mesh['volume'][t] / seconds * self.conc 
 
     def update_values(self, solution: np.array, mesh: xr.Dataset, t: float, inp: np.array):
@@ -173,5 +175,7 @@ class RHS:
         """
         seconds = mesh[variables.CHANGE_IN_TIME].values[t] 
         solution[inp[t].nonzero()] = inp[t][inp[t].nonzero()] 
-        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t]
+        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] + mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1]
         self.vals[:] = solution * vol / seconds
+        print(vol[63].values, vol[64].values)
+        print(self.vals[63], self.vals[64])

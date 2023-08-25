@@ -131,6 +131,7 @@ class ClearwaterRiverine:
                 `clearwater-riverine-wq.zarr`
  
         """
+        print("This is a test 3.")
         print("Starting WQ Simulation...")
 
         # Convert Units
