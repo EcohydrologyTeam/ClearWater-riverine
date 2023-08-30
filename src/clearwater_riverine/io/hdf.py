@@ -176,7 +176,7 @@ class HDFReader:
                 self.infile[self.paths[variables.VOLUME]], 
                 ('time', 'nface')
             ) 
-            mesh[variables.VOLUME][:, mesh.attrs[variables.NUMBER_OF_REAL_CELLS]+1:] = 0 # revisit this
+            # mesh[variables.VOLUME][:, mesh.attrs[variables.NUMBER_OF_REAL_CELLS]+1:] = 0 # revisit this
         except KeyError: 
             mesh.attrs['volume_calculation_required'] = True
             mesh.attrs['face_volume_elevation_info'] = _hdf_to_dataframe(self.infile[self.paths['volume elevation info']])
