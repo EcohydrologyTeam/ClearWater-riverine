@@ -1,7 +1,7 @@
 name: clearwater_riverine
 channels:
   - conda-forge
-  - defaults
+  - nodefaults # Speeds solving env, by limiting the number of options
 
 dependencies:
   - python =3.10
@@ -19,8 +19,17 @@ dependencies:
   - bottleneck # speeds up NaN-skipping and rolling window aggregations by a large factor
   - fastparquet
 
-  # HoloViz, https://holoviz.org
-  - hvplot  # hvPlot installs most HoloViz libs
+  # Testing and static analysis
+  - pytest
+  - pytest-cov
+  - pyright
+
+  # Performance profiling
+  - snakeviz
+
+
+  # Visualization
+  - hvplot  # hvPlot installs most HoloViz libs, https://holoviz.org
   - geoviews
   - selenium # required for saving gif output
   - geckodriver # required for saving gif output 
@@ -31,8 +40,8 @@ dependencies:
   - ipympl  # jupyter-matplotlib, https://github.com/matplotlib/ipympl
   - ipywidgets  # Required for HoloViz interactivity
 
-# Dev tools: Language Server Protocol (LSP) (Optional), for:
-  # code navigation + hover suggestions + linters + autocompletion + rename
+  # Dev tools: Language Server Protocol (LSP) (Optional), for:
+    # code navigation + hover suggestions + linters + autocompletion + rename
   - python-lsp-server # LSP extension for Python (pylsp), including:
     # Rope for Completions and renaming
     # Pyflakes linter to detect various errors
@@ -46,7 +55,12 @@ dependencies:
   - pylsp-mypy # MyPy type checking for Python >=3.7.
   - jupyterlab-lsp # Provides both server extension and lab extension
 
-  # package management
+  # environment and package management
   - conda
   - conda-build
   - conda-libmamba-solver  # Faster env solver, https://conda.github.io/conda-libmamba-solver/
+  - mamba
+  # PIP install requirements only if it is not  possible with conda
+  # https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#using-pip-in-an-environment
+  - pip
+  - pip:
