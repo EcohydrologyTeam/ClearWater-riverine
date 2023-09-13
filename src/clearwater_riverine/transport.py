@@ -174,9 +174,9 @@ class ClearwaterRiverine:
 
         print(' 100%')
         self.mesh[variables.POLLUTANT_LOAD] = _hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
-        temp_vol = self.mesh[variables.VOLUME] + self.mesh[variables.GHOST_CELL_VOLUMES_IN] + self.mesh[variables.GHOST_CELL_VOLUMES_OUT]
-        concentration = self.mesh[variables.POLLUTANT_LOAD] / temp_vol * conversion_factor * input_liter_conversion * self.mesh[variables.CHANGE_IN_TIME]
-        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
+        # temp_vol = self.mesh[variables.VOLUME] + self.mesh[variables.GHOST_CELL_VOLUMES_IN] + self.mesh[variables.GHOST_CELL_VOLUMES_OUT]
+        # concentration = self.mesh[variables.POLLUTANT_LOAD] / temp_vol * conversion_factor * input_liter_conversion * self.mesh[variables.CHANGE_IN_TIME]
+        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentrations, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
         # add advection / diffusion mass flux
         self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
