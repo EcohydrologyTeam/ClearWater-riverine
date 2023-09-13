@@ -144,9 +144,15 @@ class ClearwaterRiverine:
         self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
 
         output = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+        advection_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
+        diffusion_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
+        total_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
+        concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+
         t = 0
         b = RHS(self.mesh, t, self.inp_converted)
-        output[0] = b.vals 
+        output[0] = b.vals
+        concentrations[0] = self.inp_converted[0]
 
         # loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
@@ -163,6 +169,8 @@ class ClearwaterRiverine:
             x = linalg.spsolve(A, b.vals)
             b.update_values(x, self.mesh, t+1, self.inp_converted)
             output[t+1] = b.vals
+            concentrations[t+1] = x
+            self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
 
         print(' 100%')
         self.mesh[variables.POLLUTANT_LOAD] = _hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
@@ -170,12 +178,30 @@ class ClearwaterRiverine:
         concentration = self.mesh[variables.POLLUTANT_LOAD] / temp_vol * conversion_factor * input_liter_conversion * self.mesh[variables.CHANGE_IN_TIME]
         self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
+        # add advection / diffusion mass flux
+        self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        self.mesh['mass_flux_diffusion'] = _hdf_to_xarray(diffusion_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        self.mesh['mass_flux_total'] = _hdf_to_xarray(total_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+
         # may need to move this if we want to plot things besides concentration
         self.max_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).max())
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_file_path)
 
+    def _mass_flux(self, output, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t):
+        negative_condition = self.mesh[variables.ADVECTION_COEFFICIENT][t] < 0
+        parent = output[t][self.mesh[variables.EDGES_FACE1]]
+        neighbor = output[t][self.mesh[variables.EDGES_FACE2]]
+
+        advection_mass_flux[t] = xr.where(
+            negative_condition,
+            self.mesh[variables.ADVECTION_COEFFICIENT][t] * parent,
+            self.mesh[variables.ADVECTION_COEFFICIENT][t] * neighbor
+        )
+
+        diffusion_mass_flux[t] = self.mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t] * (neighbor - parent)
+        total_mass_flux[t] = advection_mass_flux[t] + diffusion_mass_flux[t]
 
     def _prep_plot(self, crs: str):
         """ Creates a geodataframe of polygons to represent each RAS cell. 
