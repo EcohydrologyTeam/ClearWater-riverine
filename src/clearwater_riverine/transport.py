@@ -185,6 +185,7 @@ class ClearwaterRiverine:
 
         # may need to move this if we want to plot things besides concentration
         self.max_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).max())
+        self.min_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).min())
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_file_path)
@@ -260,7 +261,25 @@ class ClearwaterRiverine:
             mval = self.max_value
         return mval
 
-    def plot(self, crs: str = None, clim_max: float = None, time_index_range: tuple = (0, -1)):
+    def _minimum_plotting_value(self, clim_min) -> float:
+        """ Calculate the maximum value for color bar. 
+        
+        Uses the maximum concentration value in the model mesh if no user-defined  clim_max is specified,
+        otherwise defines the maximum value as clim_max. 
+
+        Args:
+            clim_min (float): user defined minimum colorbar value or default (None)
+        
+        Returns:
+            mval (float): minimum plotting value, either based on user input or the minimum concentration value.
+        """
+        if clim_min != None:
+            mval = clim_min
+        else:
+            mval = self.min_value
+        return mval
+
+    def plot(self, crs: str = None, clim: tuple = (None, None), time_index_range: tuple = (0, -1)):
         """Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
 
         The `plot()` method takes slightly  more time than the `quick_plot()` method in order to leverage the `geoviews` plotting library. 
@@ -278,7 +297,8 @@ class ClearwaterRiverine:
             else:
                 self._prep_plot(crs)
 
-        mval = self._maximum_plotting_value(clim_max)
+        mval = self._maximum_plotting_value(clim[1])
+        mn_val = self._minimum_plotting_value(clim[0])
 
         def map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
@@ -289,7 +309,7 @@ class ClearwaterRiverine:
                                                                           color='concentration',
                                                                           colorbar = True,
                                                                           cmap = 'OrRd', 
-                                                                          clim = (0, mval),
+                                                                          clim = (mn_val, mval),
                                                                           line_width = 0.1,
                                                                           tools = ['hover'],
                                                                           clabel = f"Concentration ({units})"
