@@ -179,3 +179,7 @@ examples/data/formatted_dser_header.txt
 examples/data/formatted_qser_data.txt
 examples/data/formatted_qser_data_B.txt
 examples/data/formatted_qser_header.txt
+
+#local Visual Studio files
+/.vs
+.vscode/settings.json
