@@ -11,6 +11,8 @@ ClearWater Riverine is a library containing a water quality engine that computes
 
 **[tests](tests)** will contain clearwater_riverine tests once they are developed. 
 
+# Getting Started
+
 ## Installation
 
 Clearwater Riverine is designed to run with **Python 3.10**. 
@@ -61,9 +63,18 @@ conda-develop /path/to/module/
 You should now be able to run the examples and create your own Jupyter Notebooks!
 
 
-## Getting Started
+## Examples
 
 We recommend viewing or interactively running our [Ohio River](examples/Ohio%20River.ipynb) Jupyter Notebook.
 
 We recommend using [JupyterLab](https://jupyterlab.readthedocs.io/en/stable/) to run our tutorial [Juptyer Notebooks](https://jupyter.org/index.html) in the [example](examples) folder, due to many additional built-in features and extensions. The following JupyterLab [extensions](https://jupyterlab.readthedocs.io/en/stable/user/extensions.html) are particularly useful:
 - [lckr-jupyterlab-variableinspector](https://github.com/lckr/jupyterlab-variableInspector)
+
+# Contributing
+
+
+# Acknowlgements
+
+This library is developed by ERDC-EL through funding from the ECOMOD project.
+Dr. Todd E. Steissberg (ERDC-EL) developed the vision for this library as an example of how to couple at water transport model with a water quality reaction model :
+
