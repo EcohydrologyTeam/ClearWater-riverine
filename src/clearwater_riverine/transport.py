@@ -304,7 +304,7 @@ class ClearwaterRiverine:
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
             units = self.mesh[variables.CONCENTRATION].Units
-            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=400,
+            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration', 'cell']).opts(height=400,
                                                                           width = 800,
                                                                           color='concentration',
                                                                           colorbar = True,
@@ -319,7 +319,7 @@ class ClearwaterRiverine:
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
         return dmap.redim.values(datetime=self.gdf.datetime.unique()[time_index_range[0]: time_index_range[1]])
 
-    def quick_plot(self, clim_max: float = None):
+    def quick_plot(self, clim: tuple = (None,None)):
         """Creates a dynamic scatterplot of cell centroids colored by cell concentration.
 
         The `quick_plot()` method is meant to rapidly develop visualizations to explore results. 
@@ -329,7 +329,8 @@ class ClearwaterRiverine:
             clim_max (float, optional): maximum value for color bar. 
         """
 
-        mval = self._maximum_plotting_value(clim_max)
+        mval = self._maximum_plotting_value(clim[1])
+        mn_val = self._minimum_plotting_value(clim[0])
 
         def quick_map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
@@ -343,8 +344,8 @@ class ClearwaterRiverine:
             p1 = hv.Scatter(nodes, vdims=['x', 'y', 'concentration', 'nface']).opts(width = 1000,
                                                                                     height = 500,
                                                                                     color = 'concentration',
-                                                                                    cmap = 'plasma', 
-                                                                                    clim = (0, mval),
+                                                                                    cmap = 'OrRd', 
+                                                                                    clim = (mn_val, mval),
                                                                                     tools = ['hover'], 
                                                                                     colorbar = True
                                                                                     )
