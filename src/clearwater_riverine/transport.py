@@ -163,9 +163,11 @@ class ClearwaterRiverine:
             if t == int(3 * len(self.mesh['time']) / 4):
                 print(' 75%')
             # lhs = LHS(self.mesh, t)
-            lhs = LHS()
+            lhs = LHS(self.mesh)
             lhs.update_values(self.mesh, t)
             A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(self.mesh['nface']),len(self.mesh['nface'])))
+            print(A)
+            print(b.vals)
             x = linalg.spsolve(A, b.vals)
             b.update_values(x, self.mesh, t+1, self.inp_converted)
             output[t+1] = b.vals

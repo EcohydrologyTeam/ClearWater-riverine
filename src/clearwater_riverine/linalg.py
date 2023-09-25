@@ -5,15 +5,19 @@ from clearwater_riverine import variables
 
 # matrix solver 
 class LHS:
-    """ Initialize Sparse Matrix used to solve transport equation. 
+    def __init__(self, mesh: xr.Dataset):
+        """ Initialize Sparse Matrix used to solve transport equation. 
 
-    Rather than looping through every single cell at every timestep, we can instead set up a sparse 
-    matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
-    We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load 
-    concentrations. This discretization produces a linear system of equations that can be represented by 
-    a sparse-matrix problem. 
+        Rather than looping through every single cell at every timestep, we can instead set up a sparse 
+        matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
+        We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load 
+        concentrations. This discretization produces a linear system of equations that can be represented by 
+        a sparse-matrix problem. 
 
-    """
+        """
+        self.internal_edges = np.where((mesh[variables.EDGES_FACE1] <= mesh.nreal) & (mesh[variables.EDGES_FACE2] <= mesh.nreal))[0]
+        self.internal_edge_count = len(self.internal_edges)
+        self.nreal_count = mesh.nreal + 1 # 0 indexed
                 
     def update_values(self, mesh: xr.Dataset, t: float):
         """ Updates values in the LHS matrix based on the timestep. 
@@ -42,12 +46,12 @@ class LHS:
         """
         # define edges where flow is flowing in versus out and find all empty cells
         # at the t+1 timestep
-        flow_out_indices = np.where(mesh[variables.ADVECTION_COEFFICIENT][t+1] > 0)[0]
-        flow_in_indices = np.where(mesh[variables.ADVECTION_COEFFICIENT][t+1] < 0)[0]
-        empty_cells = np.where(mesh[variables.VOLUME][t+1] == 0)[0]
+        flow_out_indices = np.where(mesh[variables.ADVECTION_COEFFICIENT][t+1] > 0)[0][0:self.internal_edge_count]
+        flow_in_indices = np.where(mesh[variables.ADVECTION_COEFFICIENT][t+1] < 0)[0][0:self.internal_edge_count]
+        empty_cells = np.where(mesh[variables.VOLUME][t+1] == 0)[0][0:self.nreal_count]
 
         # initialize arrays that will define the sparse matrix 
-        len_val = len(mesh['nedge']) * 2 + len(mesh['nface']) * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells)
+        len_val = self.internal_edge_count * 2 + self.nreal_count * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells)
         self.rows = np.zeros(len_val)
         self.cols = np.zeros(len_val)
         self.coef = np.zeros(len_val)
@@ -61,21 +65,20 @@ class LHS:
 
         ###### diagonal terms - load and sum of diffusion coefficients associated with each cell
         start = end
-        end = end + len(mesh['nface'])
-        self.rows[start:end] = mesh['nface']
-        self.cols[start:end] = mesh['nface']
+        end = end + self.nreal_count
+        self.rows[start:end] = mesh['nface'][0:self.nreal_count]
+        self.cols[start:end] = mesh['nface'][0:self.nreal_count]
         seconds = mesh[variables.CHANGE_IN_TIME].values[t] # / np.timedelta64(1, 's'))
-        self.coef[start:end] = mesh[variables.VOLUME][t+1] / seconds + mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM][t+1] 
+        self.coef[start:end] = mesh[variables.VOLUME][t+1][0:self.nreal_count] / seconds + mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM][t+1][0:self.nreal_count]
 
-        # add ghost cell volumes to diagonals: based on flow across face into ghost cell
-        # note: these values are 0 for cell that is not a ghost cell
-        # note: also 0 for any ghost cell that is not RECEIVING flow 
-
-        start = end
-        end = end + len(mesh['nface'])
-        self.rows[start:end] = mesh['nface']
-        self.cols[start:end] = mesh['nface']
-        self.coef[start:end] = mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1] / seconds
+        # # add ghost cell volumes to diagonals: based on flow across face into ghost cell
+        # # note: these values are 0 for cell that is not a ghost cell
+        # # note: also 0 for any ghost cell that is not RECEIVING flow 
+        # start = end
+        # end = end + self.nreal_count
+        # self.rows[start:end] = mesh['nface']
+        # self.cols[start:end] = mesh['nface']
+        # self.coef[start:end] = mesh[variables.GHOST_CELL_VOLUMES_OUT][t+1] / seconds
              
         ###### advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
@@ -118,17 +121,17 @@ class LHS:
         ###### off-diagonal terms - diffusion
         # update indices
         start = end
-        end = end + len(mesh['nedge'])
-        self.rows[start:end] = mesh['edges_face1']
-        self.cols[start:end] = mesh['edges_face2']
-        self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1]
+        end = end + self.internal_edge_count
+        self.rows[start:end] = mesh['edges_face1'][self.internal_edges]
+        self.cols[start:end] = mesh['edges_face2'][self.internal_edges]
+        self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.internal_edges]
 
         # update indices and repeat 
         start = end
         end = end + len(mesh['nedge'])
-        self.rows[start:end] = mesh['edges_face2']
-        self.cols[start:end] = mesh['edges_face1']
-        self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1] 
+        self.rows[start:end] = mesh['edges_face2'][self.internal_edges]
+        self.cols[start:end] = mesh['edges_face1'][self.internal_edges]
+        self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.internal_edges]
 
 class RHS:
     def __init__(self, mesh: xr.Dataset, t: int, inp: np.array):
