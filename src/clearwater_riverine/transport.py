@@ -166,6 +166,8 @@ class ClearwaterRiverine:
             # lhs = LHS(self.mesh, t)
             lhs = LHS(self.mesh)
             lhs.update_values(self.mesh, t)
+            print(lhs.rows, lhs.cols)
+            print(lhs.coef)
             A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
             print(A)
             print(b.vals)

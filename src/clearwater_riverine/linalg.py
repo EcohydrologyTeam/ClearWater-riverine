@@ -129,10 +129,10 @@ class LHS:
 
         # update indices and repeat 
         start = end
-        end = end + len(mesh['nedge'])
+        end = end + self.internal_edge_count
         self.rows[start:end] = mesh['edges_face2'][self.internal_edges]
         self.cols[start:end] = mesh['edges_face1'][self.internal_edges]
-        self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.internal_edges]
+        self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.internal_edges]    
 
 class RHS:
     def __init__(self, mesh: xr.Dataset, t: int, inp: np.array):
@@ -179,9 +179,11 @@ class RHS:
                                         in each cell at each timestep [boundary conditions]
         """
         # seconds = self._calculate_change_in_time(mesh, t)
-        solution[inp[t].nonzero()] = inp[t][inp[t].nonzero()] 
+        solver = np.zeros(len(inp))
+        solver[0:self.nreal_count] = solution
+        solver[inp[t].nonzero()] = inp[t][inp[t].nonzero()] 
         # vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] # + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
-        self.vals[:] = self._calculate_rhs(mesh, t, solution)
+        self.vals[:] = self._calculate_rhs(mesh, t, solver)
 
     def _calculate_change_in_time(self, mesh, t):
         return mesh[variables.CHANGE_IN_TIME].values[t]
