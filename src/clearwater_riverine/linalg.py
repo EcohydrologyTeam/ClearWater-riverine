@@ -131,13 +131,13 @@ class LHS:
         self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1] 
 
 class RHS:
-    def __init__(self, mesh: xr.Dataset, t: float, inp: np.array):
+    def __init__(self, mesh: xr.Dataset, t: int, inp: np.array):
         """
         Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions. 
 
         Args:
             mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
-            t (float):           Timestep
+            t (int):             Timestep
             inp (np.array):      Array of shape (time x nface) with user-defined inputs of concentrations
                                     in each cell at each timestep. 
 
@@ -149,15 +149,16 @@ class RHS:
                 - Alternatives?
         """
         self.conc = np.zeros(len(mesh['nface']))
-        self.conc = inp[t] 
-        self.vals = np.zeros(len(mesh['nface']))
-        seconds = mesh[variables.CHANGE_IN_TIME].values[t] 
-        # SHOULD GHOST VOLUMES BE INCLUDED?
-        vol = mesh[variables.VOLUME][t]  + mesh[variables.GHOST_CELL_VOLUMES_IN][t] # + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
-        self.vals[:] = vol / seconds * self.conc 
-        # self.vals[:] = mesh['volume'][t] / seconds * self.conc 
+        self.conc = inp[t][0:mesh.attrs.nreal] 
+        self.vals = np.zeros(mesh.attrs.nreal)
+        self.ghost_cells = np.where(mesh[variables.EDGES_FACE2] > mesh.attrs.nreal)[0]
 
-    def update_values(self, solution: np.array, mesh: xr.Dataset, t: float, inp: np.array):
+        # seconds = mesh[variables.CHANGE_IN_TIME].values[t]
+        # # SHOULD GHOST VOLUMES BE INCLUDED?
+        # vol = mesh[variables.VOLUME][t][0:mesh.attrs.nreal] # + mesh[variables.GHOST_CELL_VOLUMES_IN][t] # + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
+        self.vals[:] = self._calculate_rhs(self, mesh, t, self.conc)
+
+    def update_values(self, solution: np.array, mesh: xr.Dataset, t: int, inp: np.array):
         """ 
         Update right hand side data based on the solution from the previous timestep
             solution: solution from solving the sparse matrix 
@@ -167,11 +168,102 @@ class RHS:
         Args:
             solution (np.array):    Solution of concentrations at timestep t from solving sparse matrix. 
             mesh (xr.Dataset):      UGRID-complaint xarray Dataset with all data required for the transport equation.
-            t (float):              Timestep
+            t (int):                Timestep
             inp (np.array):         Array of shape (time x nface) with user-defined inputs of concentrations
                                         in each cell at each timestep [boundary conditions]
         """
-        seconds = mesh[variables.CHANGE_IN_TIME].values[t] 
+        # seconds = self._calculate_change_in_time(mesh, t)
         solution[inp[t].nonzero()] = inp[t][inp[t].nonzero()] 
-        vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] # + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
-        self.vals[:] = solution * vol / seconds
+        # vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] # + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
+        self.vals[:] = self._calculate_rhs(self, mesh, t, solution)
+
+    def _calculate_change_in_time(self, mesh, t):
+        return mesh[variables.CHANGE_IN_TIME].values[t]
+    
+    def _calculate_volume(self, mesh, t):
+        return mesh[variables.VOLUME][t][0:mesh.attrs.nreal]
+    
+    def _calculate_load(self, mesh, t, concentrations):
+        volume = self._calculate_volume(mesh, t)
+        delta_time = self._calculate_change_in_time(mesh, t)
+        return volume * concentrations / delta_time
+    
+    def _calculate_ghost_cell_values(self, mesh, t):
+        ghost_cells_in = np.zeros(mesh.attrs.nreal)
+        ghost_cells_out = np.zeros(mesh.attrs.nreal)
+        ghost_cells_in[:] = self._ghost_cell(mesh, t, flowing_in=True)[0:mesh.attrs.nreal]
+        ghost_cells_out[:] = self._ghost_cell(mesh, t, flowing_in=False)[0:mesh.attrs.nreal]
+        return ghost_cells_in, ghost_cells_out
+    
+    def _calculate_rhs(self, mesh, t, concentrations):
+        load = self._calculate_load(mesh, t, concentrations)
+        ghost_cells_in, ghost_cells_out = self._calculate_ghost_cell_values(self, mesh, t)
+        return load + ghost_cells_in + ghost_cells_out
+
+
+    def _transport_mechanisms(self, flowing_in):
+        if flowing_in:
+            advection = True
+            diffusion = True
+            condition = np.less
+        else:
+            advection = False
+            diffusion = True
+            condition = np.greater
+        return advection, diffusion, condition
+    
+    def _define_arrays(self, mesh, advection, diffusion):
+        advection_edge = None
+        advection_face = None
+        diffusion_edge = None
+        diffusion_face = None
+
+        if advection:
+            advection_edge = np.zeros(len(mesh.nedge))
+            advection_face = np.zeros(len(mesh.nface))
+        if diffusion:
+            diffusion_edge = np.zeros(len(mesh.nedge))
+            diffusion_face = np.zeros(len(mesh.nface))
+        return advection_edge, advection_face, diffusion_edge, diffusion_face
+    
+    def _edge_to_face(self, edge_array: np.array, face_array: np.array, mesh_array: xr.DataArray, index_list: list, internal_cell_index):
+        edge_array[:] = abs(mesh_array[index_list])
+        face_array[np.array(internal_cell_index)] = edge_array
+        return face_array
+
+    def _ghost_cell(self, mesh: xr.Dataset, t, flowing_in: bool, inp):
+        advection, diffusion, condition = self._transport_mechanisms(flowing_in)
+        advection_edge, advection_face, diffusion_edge, diffusion_face = self._define_arrays(advection, diffusion)
+
+        velocity_indices = np.where(condition(mesh[variables.EDGE_VELOCITY][t], 0))[0]
+        index_list = np.intersect(velocity_indices, self.ghost_cells)
+        internal_cell_index = mesh[variables.EDGES_FACE1][velocity_indices]
+        external_cell_index = mesh[variables.EDGES_FACE2][velocity_indices]
+
+        concentratiton_multipliers = np.zeros(mesh.attrs.nface)
+        concentratiton_multipliers[internal_cell_index] = inp[t][external_cell_index] 
+
+        if len(index_list) != 0:
+            if advection:
+                advection_face[:] = self._edge_to_face(
+                    advection_edge,
+                    advection_face,
+                    mesh[variables.ADVECTION_COEFFICIENT][t],
+                    index_list,
+                    internal_cell_index
+                    )
+            if diffusion:
+                diffusion_face[:] = self._edge_to_face(
+                    diffusion_edge,
+                    diffusion_face,
+                    mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t],
+                    index_list,
+                    internal_cell_index
+                    )
+                
+        if flowing_in:
+            add_to_rhs = advection_face + diffusion_face
+        else:
+            add_to_rhs = diffusion_face
+        
+        return add_to_rhs * concentratiton_multipliers
