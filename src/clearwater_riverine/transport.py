@@ -143,7 +143,7 @@ class ClearwaterRiverine:
         conversion_factor = CONVERSIONS[units]['Liters'] 
         self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
 
-        output = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+        output = np.zeros((len(self.mesh.time), self.mesh.nreal + 1))
         advection_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
         diffusion_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
         total_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
@@ -153,6 +153,7 @@ class ClearwaterRiverine:
         b = RHS(self.mesh, t, self.inp_converted)
         output[0] = b.vals
         concentrations[0] = self.inp_converted[0]
+        print(b.vals)
 
         # loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
