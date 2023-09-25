@@ -166,10 +166,11 @@ class ClearwaterRiverine:
             # lhs = LHS(self.mesh, t)
             lhs = LHS(self.mesh)
             lhs.update_values(self.mesh, t)
-            A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(self.mesh['nface']),len(self.mesh['nface'])))
+            A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
             print(A)
             print(b.vals)
             x = linalg.spsolve(A, b.vals)
+            print(x)
             b.update_values(x, self.mesh, t+1, self.inp_converted)
             output[t+1] = b.vals
             concentrations[t+1] = x

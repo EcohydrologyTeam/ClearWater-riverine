@@ -46,8 +46,9 @@ class LHS:
         """
         # define edges where flow is flowing in versus out and find all empty cells
         # at the t+1 timestep
-        flow_out_indices = np.where(mesh[variables.ADVECTION_COEFFICIENT][t+1] > 0)[0][0:self.internal_edge_count]
-        flow_in_indices = np.where(mesh[variables.ADVECTION_COEFFICIENT][t+1] < 0)[0][0:self.internal_edge_count]
+        flow_out_indices = np.where((mesh[variables.ADVECTION_COEFFICIENT][t+1] > 0))[0]
+        flow_out_indices_internal = np.where((mesh[variables.ADVECTION_COEFFICIENT][t+1] > 0) & (np.isin(mesh.nedge, self.internal_edges)))[0]
+        flow_in_indices = np.where((mesh[variables.ADVECTION_COEFFICIENT][t+1] < 0) & (np.isin(mesh.nedge, self.internal_edges)))[0]
         empty_cells = np.where(mesh[variables.VOLUME][t+1] == 0)[0][0:self.nreal_count]
 
         # initialize arrays that will define the sparse matrix 
@@ -94,10 +95,10 @@ class LHS:
 
             # subtract from corresponding neighbor cell (off-diagonal)
             start = end
-            end = end + len(flow_out_indices)
-            self.rows[start:end] = mesh['edge_face_connectivity'].T[1][flow_out_indices]
-            self.cols[start:end] = mesh['edge_face_connectivity'].T[0][flow_out_indices]
-            self.coef[start:end] = mesh[variables.ADVECTION_COEFFICIENT][t+1][flow_out_indices] * -1  
+            end = end + len(flow_out_indices_internal)
+            self.rows[start:end] = mesh['edge_face_connectivity'].T[1][flow_out_indices_internal]
+            self.cols[start:end] = mesh['edge_face_connectivity'].T[0][flow_out_indices_internal]
+            self.coef[start:end] = mesh[variables.ADVECTION_COEFFICIENT][t+1][flow_out_indices_internal] * -1  
 
         if len(flow_in_indices) > 0:
             # update indices
