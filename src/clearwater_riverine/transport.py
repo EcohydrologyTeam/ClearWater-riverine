@@ -131,7 +131,6 @@ class ClearwaterRiverine:
                 `clearwater-riverine-wq.zarr`
  
         """
-        print("This is a test 3.")
         print("Starting WQ Simulation...")
 
         # Convert Units
@@ -149,37 +148,33 @@ class ClearwaterRiverine:
         total_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
         concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
 
-        t = 0
-        b = RHS(self.mesh, t, self.inp_converted)
-        output[0] = b.vals
+        b = RHS(self.mesh, self.inp_converted)
+        lhs = LHS(self.mesh)
         concentrations[0] = self.inp_converted[0]
-        print(b.vals)
+        x = concentrations[0][0:self.mesh.nreal + 1]
 
         # loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
-            if t == int(len(self.mesh['time']) / 4):
-                print(' 25%')
-            elif t == int(len(self.mesh['time']) / 2):
-                print(' 50%')
-            if t == int(3 * len(self.mesh['time']) / 4):
-                print(' 75%')
-            # lhs = LHS(self.mesh, t)
-            lhs = LHS(self.mesh)
+            self._timer(t)
+            # concentrations[t+1][0:self.mesh.nreal+1] = x
+            b.update_values(x, self.mesh, t)
             lhs.update_values(self.mesh, t)
-            print(lhs.rows, lhs.cols)
-            print(lhs.coef)
             A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
-            print(A)
-            print(b.vals)
+            # print(t)
+            # print(A)
+            # print(b.vals)
             x = linalg.spsolve(A, b.vals)
-            print(x)
-            b.update_values(x, self.mesh, t+1, self.inp_converted)
-            output[t+1] = b.vals
-            concentrations[t+1] = x
+            # output[t+1] = b.vals
+            # concentrations[t+1][0:self.mesh.nreal+1] = x
+            # print(x)
+            # print("-------")
+            # b.update_values(x, self.mesh, t+1, self.inp_converted)
+            # output[t+1] = b.vals
+            concentrations[t+1][0:self.mesh.nreal+1] = x
             self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
 
         print(' 100%')
-        self.mesh[variables.POLLUTANT_LOAD] = _hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
+        # self.mesh[variables.POLLUTANT_LOAD] = _hdf_to_xarray(concentrations, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
         # temp_vol = self.mesh[variables.VOLUME] + self.mesh[variables.GHOST_CELL_VOLUMES_IN] + self.mesh[variables.GHOST_CELL_VOLUMES_OUT]
         # concentration = self.mesh[variables.POLLUTANT_LOAD] / temp_vol * conversion_factor * input_liter_conversion * self.mesh[variables.CHANGE_IN_TIME]
         self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentrations, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
@@ -195,6 +190,14 @@ class ClearwaterRiverine:
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_file_path)
+    
+    def _timer(self, t):
+        if t == int(len(self.mesh['time']) / 4):
+            print(' 25%')
+        elif t == int(len(self.mesh['time']) / 2):
+            print(' 50%')
+        if t == int(3 * len(self.mesh['time']) / 4):
+            print(' 75%')
 
     def _mass_flux(self, output, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t):
         negative_condition = self.mesh[variables.ADVECTION_COEFFICIENT][t] < 0
