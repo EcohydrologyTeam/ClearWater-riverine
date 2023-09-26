@@ -156,28 +156,15 @@ class ClearwaterRiverine:
         # loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
             self._timer(t)
-            # concentrations[t+1][0:self.mesh.nreal+1] = x
             b.update_values(x, self.mesh, t)
             lhs.update_values(self.mesh, t)
-            A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
-            # print(t)
-            # print(A)
-            # print(b.vals)
+            A = csr_matrix((lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
             x = linalg.spsolve(A, b.vals)
-            # output[t+1] = b.vals
-            # concentrations[t+1][0:self.mesh.nreal+1] = x
-            # print(x)
-            # print("-------")
-            # b.update_values(x, self.mesh, t+1, self.inp_converted)
-            # output[t+1] = b.vals
             concentrations[t+1][0:self.mesh.nreal+1] = x
             concentrations[t+1][self.inp_converted[t].nonzero()] = self.inp_converted[t][self.inp_converted[t].nonzero()] 
             self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
 
         print(' 100%')
-        # self.mesh[variables.POLLUTANT_LOAD] = _hdf_to_xarray(concentrations, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
-        # temp_vol = self.mesh[variables.VOLUME] + self.mesh[variables.GHOST_CELL_VOLUMES_IN] + self.mesh[variables.GHOST_CELL_VOLUMES_OUT]
-        # concentration = self.mesh[variables.POLLUTANT_LOAD] / temp_vol * conversion_factor * input_liter_conversion * self.mesh[variables.CHANGE_IN_TIME]
         self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentrations, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
         # add advection / diffusion mass flux
