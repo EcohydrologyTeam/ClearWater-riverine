@@ -176,7 +176,7 @@ class RHS:
                                         in each cell at each timestep [boundary conditions]
         """
         # seconds = self._calculate_change_in_time(mesh, t)
-        solver = np.zeros(len(self.inp))
+        solver = np.zeros(len(self.inp[t])) 
         solver[0:self.nreal_count] = solution
         solver[self.inp[t].nonzero()] = self.inp[t][self.inp[t].nonzero()] 
         # vol = mesh[variables.VOLUME][t] + mesh[variables.GHOST_CELL_VOLUMES_IN][t] # + mesh[variables.GHOST_CELL_VOLUMES_OUT][t]
@@ -246,8 +246,8 @@ class RHS:
 
         velocity_indices = np.where(condition(mesh[variables.EDGE_VELOCITY][t], 0))[0]
         index_list = np.intersect1d(velocity_indices, self.ghost_cells)
-        internal_cell_index = mesh[variables.EDGES_FACE1][velocity_indices]
-        external_cell_index = mesh[variables.EDGES_FACE2][velocity_indices]
+        internal_cell_index = mesh[variables.EDGES_FACE1][index_list]
+        external_cell_index = mesh[variables.EDGES_FACE2][index_list]
 
         concentration_multipliers = np.zeros(len(mesh.nface))
         concentration_multipliers[internal_cell_index] = self.inp[t][external_cell_index] 
