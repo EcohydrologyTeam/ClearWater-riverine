@@ -45,6 +45,54 @@ def _mass_bal_global(simulation) -> pd.DataFrame:
     #Construct dataframe to be returned
     d = {'Mass_start':mass_start_sum_val_np, 'Mass_end':mass_end_sum_val_np}
     df = pd.DataFrame(data=d)
+    
+    #Loop to find total mass in/out from all boundary conditions
+    bndryData = simulation.boundary_data
+    bcLineIDs = bndryData.groupby(by='Name').mean(numeric_only=True)
+    bcLineIDs_sorted = bcLineIDs.sort_values(by=['BC Line ID']).reset_index()
+    bcTotalMassInOutAll = [0]
+    bcTotalMassInAll = [0]
+    bcTotalMassOutAll = [0]
+    for index, row in bcLineIDs_sorted.iterrows():
+        #Total Mass from boundary condition
+        bc_name = row['Name']
+        bc_id = row['BC Line ID']
+        bndryData_n = bndryData.loc[bndryData['BC Line ID'] == bc_id]
+        bndryData_n_Face_df = bndryData_n[['Face Index']]
+        bndryData_n_Face_arr = bndryData_n_Face_df.to_numpy()
+        bndryData_n_Face_arrF = bndryData_n_Face_arr.flatten()
+        bc_edgeMass_xda = simulation.mesh.mass_flux_total.sel(nedge=bndryData_n_Face_arrF)
+        bc_totalMass_xda = bc_edgeMass_xda.sum()
+        bc_totalMass_xda_val = bc_totalMass_xda.values
+        bc_totalMass_xda_val_np = np.array([bc_totalMass_xda_val])
+        df[bc_name] = bc_totalMass_xda_val_np
+        bcTotalMassInOutAll = bcTotalMassInOutAll + bc_totalMass_xda_val_np
+        
+        #Mass into domain form boundary condition
+        bc_edgeMass_xda_in = bc_edgeMass_xda.where(bc_edgeMass_xda<=0, other=0)
+        bc_totalMass_xda_in = bc_edgeMass_xda_in.sum()
+        bc_totalMass_xda_val_in = bc_totalMass_xda_in.values
+        bc_totalMass_xda_val_np_in = np.array([bc_totalMass_xda_val_in])
+        bc_name_in = bc_name + '_in'
+        df[bc_name_in] = bc_totalMass_xda_val_np_in
+        bcTotalMassInAll = bcTotalMassInAll + bc_totalMass_xda_val_np_in
+        
+        #Mass out of domain form boundary condition
+        bc_edgeMass_xda_out = bc_edgeMass_xda.where(bc_edgeMass_xda>=0, other=0)
+        bc_totalMass_xda_out = bc_edgeMass_xda_out.sum()
+        bc_totalMass_xda_val_out = bc_totalMass_xda_out.values
+        bc_totalMass_xda_val_np_out = np.array([bc_totalMass_xda_val_out])
+        bc_name_out = bc_name + '_out'
+        df[bc_name_out] = bc_totalMass_xda_val_np_out
+        bcTotalMassOutAll = bcTotalMassOutAll + bc_totalMass_xda_val_np_out
+         
+    df['bcTotalMassInOutAll'] = bcTotalMassInOutAll
+    df['bcTotalMassInAll'] = bcTotalMassInAll
+    df['bcTotalMassOutAll'] = bcTotalMassOutAll
+    mass_end_calc = mass_start_sum_val_np + -1*bcTotalMassInAll + -1*bcTotalMassOutAll 
+    df['mass_end_calc'] = mass_end_calc
+    df['error'] = mass_end_calc - mass_end_sum_val_np
+    df['prct_error'] = ((mass_end_calc - mass_end_sum_val_np) / bcTotalMassInAll) * 100
     return df
 
 
