@@ -142,39 +142,64 @@ class ClearwaterRiverine:
         conversion_factor = CONVERSIONS[units]['Liters'] 
         self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
 
-        output = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
-        t = 0
-        b = RHS(self.mesh, t, self.inp_converted)
-        output[0] = b.vals 
+        output = np.zeros((len(self.mesh.time), self.mesh.nreal + 1))
+        advection_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
+        diffusion_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
+        total_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
+        concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+
+        b = RHS(self.mesh, self.inp_converted)
+        lhs = LHS(self.mesh)
+        concentrations[0] = self.inp_converted[0]
+        x = concentrations[0][0:self.mesh.nreal + 1]
 
         # loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
-            if t == int(len(self.mesh['time']) / 4):
-                print(' 25%')
-            elif t == int(len(self.mesh['time']) / 2):
-                print(' 50%')
-            if t == int(3 * len(self.mesh['time']) / 4):
-                print(' 75%')
-            # lhs = LHS(self.mesh, t)
-            lhs = LHS()
+            self._timer(t)
+            b.update_values(x, self.mesh, t)
             lhs.update_values(self.mesh, t)
-            A = csr_matrix( (lhs.coef,(lhs.rows, lhs.cols)), shape=(len(self.mesh['nface']),len(self.mesh['nface'])))
+            A = csr_matrix((lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
             x = linalg.spsolve(A, b.vals)
-            b.update_values(x, self.mesh, t+1, self.inp_converted)
-            output[t+1] = b.vals
+            concentrations[t+1][0:self.mesh.nreal+1] = x
+            concentrations[t+1][self.inp_converted[t].nonzero()] = self.inp_converted[t][self.inp_converted[t].nonzero()] 
+            self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
 
         print(' 100%')
-        self.mesh[variables.POLLUTANT_LOAD] = _hdf_to_xarray(output, dims=('time', 'nface'), attrs={'Units': f'{input_mass_units}/s'})  
-        temp_vol = self.mesh[variables.VOLUME] + self.mesh[variables.GHOST_CELL_VOLUMES_IN]
-        concentration = self.mesh[variables.POLLUTANT_LOAD] / temp_vol * conversion_factor * input_liter_conversion * self.mesh[variables.CHANGE_IN_TIME]
-        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentration, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
+        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentrations, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
+
+        # add advection / diffusion mass flux
+        self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        self.mesh['mass_flux_diffusion'] = _hdf_to_xarray(diffusion_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        self.mesh['mass_flux_total'] = _hdf_to_xarray(total_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
 
         # may need to move this if we want to plot things besides concentration
         self.max_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).max())
+        self.min_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).min())
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_file_path)
+    
+    def _timer(self, t):
+        if t == int(len(self.mesh['time']) / 4):
+            print(' 25%')
+        elif t == int(len(self.mesh['time']) / 2):
+            print(' 50%')
+        if t == int(3 * len(self.mesh['time']) / 4):
+            print(' 75%')
 
+    def _mass_flux(self, output, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t):
+        negative_condition = self.mesh[variables.ADVECTION_COEFFICIENT][t] < 0
+        parent = output[t][self.mesh[variables.EDGES_FACE1]]
+        neighbor = output[t][self.mesh[variables.EDGES_FACE2]]
+
+        advection_mass_flux[t] = xr.where(
+            negative_condition,
+            self.mesh[variables.ADVECTION_COEFFICIENT][t] * parent,
+            self.mesh[variables.ADVECTION_COEFFICIENT][t] * neighbor
+        )
+
+        diffusion_mass_flux[t] = self.mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t] * (neighbor - parent)
+        total_mass_flux[t] = advection_mass_flux[t] + diffusion_mass_flux[t]
 
     def _prep_plot(self, crs: str):
         """ Creates a geodataframe of polygons to represent each RAS cell. 
@@ -233,7 +258,25 @@ class ClearwaterRiverine:
             mval = self.max_value
         return mval
 
-    def plot(self, crs: str = None, clim_max: float = None, time_index_range: tuple = (0, -1)):
+    def _minimum_plotting_value(self, clim_min) -> float:
+        """ Calculate the maximum value for color bar. 
+        
+        Uses the maximum concentration value in the model mesh if no user-defined  clim_max is specified,
+        otherwise defines the maximum value as clim_max. 
+
+        Args:
+            clim_min (float): user defined minimum colorbar value or default (None)
+        
+        Returns:
+            mval (float): minimum plotting value, either based on user input or the minimum concentration value.
+        """
+        if clim_min != None:
+            mval = clim_min
+        else:
+            mval = self.min_value
+        return mval
+
+    def plot(self, crs: str = None, clim: tuple = (None, None), time_index_range: tuple = (0, -1)):
         """Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
 
         The `plot()` method takes slightly  more time than the `quick_plot()` method in order to leverage the `geoviews` plotting library. 
@@ -251,18 +294,19 @@ class ClearwaterRiverine:
             else:
                 self._prep_plot(crs)
 
-        mval = self._maximum_plotting_value(clim_max)
+        mval = self._maximum_plotting_value(clim[1])
+        mn_val = self._minimum_plotting_value(clim[0])
 
         def map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
             units = self.mesh[variables.CONCENTRATION].Units
-            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration']).opts(height=400,
+            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration', 'cell']).opts(height=400,
                                                                           width = 800,
                                                                           color='concentration',
                                                                           colorbar = True,
                                                                           cmap = 'OrRd', 
-                                                                          clim = (0, mval),
+                                                                          clim = (mn_val, mval),
                                                                           line_width = 0.1,
                                                                           tools = ['hover'],
                                                                           clabel = f"Concentration ({units})"
@@ -272,7 +316,7 @@ class ClearwaterRiverine:
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
         return dmap.redim.values(datetime=self.gdf.datetime.unique()[time_index_range[0]: time_index_range[1]])
 
-    def quick_plot(self, clim_max: float = None):
+    def quick_plot(self, clim: tuple = (None,None)):
         """Creates a dynamic scatterplot of cell centroids colored by cell concentration.
 
         The `quick_plot()` method is meant to rapidly develop visualizations to explore results. 
@@ -282,7 +326,8 @@ class ClearwaterRiverine:
             clim_max (float, optional): maximum value for color bar. 
         """
 
-        mval = self._maximum_plotting_value(clim_max)
+        mval = self._maximum_plotting_value(clim[1])
+        mn_val = self._minimum_plotting_value(clim[0])
 
         def quick_map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
@@ -296,8 +341,8 @@ class ClearwaterRiverine:
             p1 = hv.Scatter(nodes, vdims=['x', 'y', 'concentration', 'nface']).opts(width = 1000,
                                                                                     height = 500,
                                                                                     color = 'concentration',
-                                                                                    cmap = 'plasma', 
-                                                                                    clim = (0, mval),
+                                                                                    cmap = 'OrRd', 
+                                                                                    clim = (mn_val, mval),
                                                                                     tools = ['hover'], 
                                                                                     colorbar = True
                                                                                     )
