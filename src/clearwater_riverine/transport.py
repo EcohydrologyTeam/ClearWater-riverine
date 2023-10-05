@@ -10,7 +10,7 @@ hv.extension("bokeh")
 
 from clearwater_riverine.mesh import model_mesh
 from clearwater_riverine import variables
-from clearwater_riverine.utilities import _determine_units
+from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
 from clearwater_riverine.io.hdf import _hdf_to_xarray
 
@@ -111,8 +111,12 @@ class ClearwaterRiverine:
         return
 
 
-    def simulate_wq(self, input_mass_units: str = 'mg', input_volume_units: str = 'L', input_liter_conversion: float = 1, save: bool = False, 
-                        output_file_path: str = './clearwater-riverine-wq-model.zarr'):
+    def simulate_wq(self,
+        input_mass_units: str = 'mg',
+        input_volume_units: str = 'L',
+        input_liter_conversion: float = 1,
+        save: bool = False, 
+        output_file_path: str = './clearwater-riverine-wq-model.zarr'):
         """Runs water quality model. 
 
         Steps through each timestep of the HEC-RAS 2D output and solves the total-load advection-diffusion transport equation 
@@ -134,13 +138,9 @@ class ClearwaterRiverine:
         print("Starting WQ Simulation...")
 
         # Convert Units
-        units = _determine_units(self.mesh)
-
-        print(f" Assuming concentration input has units of {input_mass_units}/{input_volume_units}...")
-        print("     If this is not true, please re-run the wq simulation with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
-
-        conversion_factor = CONVERSIONS[units]['Liters'] 
-        self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
+        unit_converter = UnitConverter(self.mesh, input_mass_units, input_volume_units, input_liter_conversion)
+        self.inp_converted = unit_converter._convert_units(self.input_array, convert_to=True)
+        # self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
 
         output = np.zeros((len(self.mesh.time), self.mesh.nreal + 1))
         advection_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
@@ -165,7 +165,8 @@ class ClearwaterRiverine:
             self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
 
         print(' 100%')
-        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentrations, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
+        concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
+        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentrations_converted, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
         # add advection / diffusion mass flux
         self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
