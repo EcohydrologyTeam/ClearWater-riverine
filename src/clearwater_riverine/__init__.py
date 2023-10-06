@@ -1,5 +1,5 @@
 # package version
-__version__ = '0.1.0'
+__version__ = '0.4.0'
 
 # populate package namespace
 from clearwater_riverine import variables
