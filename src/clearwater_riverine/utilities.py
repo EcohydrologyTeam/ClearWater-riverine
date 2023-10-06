@@ -28,15 +28,13 @@ UNIT_DETAILS = {'Metric': {'Length': 'm',
                 }
 
 CONVERSIONS = {'Metric': {'Liters': 0.001},
-               'Imperial': {'Liters': 0.0353147},
-               'Unknown': {'Liters': 0.001},
-               }
+            'Imperial': {'Liters': 0.0353147},
+            'Unknown': {'Liters': 0.001},
+            }
 
-def _determine_units(mesh: xr.Dataset) -> str:
+
+def _determine_units(mesh) -> str:
     """ Determines units of RAS output file. 
-
-    Args:
-        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
 
     Returns:
         units (str):         Either 'Metric' or 'Imperial'
@@ -51,6 +49,71 @@ def _determine_units(mesh: xr.Dataset) -> str:
         warnings.warn(f'Unknown units ({u}). Generic units will be stored in xarray.')
         units = 'Unknown'
     return units
+
+
+
+class UnitConverter:
+    """Handles unit conversions for concentration."""
+    def __init__(self,
+        mesh: xr.Dataset,
+        input_mass_units: str,
+        input_volume_units: str,
+        input_liter_conversion: float
+    ):
+        """Determine the units and print unit assumptions for user.
+
+        Args:
+            input_mass_units (str): User-defined mass units for concentration timeseries used in model set-up. Assumes mg if no value
+                is specified. 
+            input_volume_units (str): User-defined volume units for concentration timeseries. Assumes L if no value
+                is specified.
+            input_liter_conversion (float): If concentration inputs are not in mass/L, supply the conversion factor to 
+                convert the volume unit to liters.
+        """
+        self.mesh = mesh
+        self.input_mass_units = input_mass_units
+        self.input_volume_units = input_volume_units
+        self.input_liter_conversion = input_liter_conversion
+        self.units = _determine_units(mesh)
+        self._print_assumptions()
+    
+    def _print_assumptions(self):
+        print(f" Assuming concentration input has units of {self.input_mass_units}/{self.input_volume_units}...")
+        print("     If this is not true, please re-run the wq simulation with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
+
+    def _conversion_factor(self):
+        """Determine conversion factor. If the input volume units are the same
+            as the model units, then there is no conversion necessary. 
+            If the input_volume_units are liters, then we know the conversion factor,
+            stored in a dictionary. If any other unit, the user must define the conversion factor.
+        """
+        if self.input_volume_units == UNIT_DETAILS[self.units]['Volume']:
+            self.conversion_factor = 1 
+        elif self.input_volume_units == 'L':
+            self.conversion_factor = CONVERSIONS[self.units]['Liters']
+        else:
+            self.conversion_factor = self.input_liter_conversion * CONVERSIONS[self.units]['Liters']
+    
+    def _convert_units(
+        self,
+        input_array: np.ndarray,
+        convert_to: bool = True
+    ) -> np.ndarray:
+        """Converts an array from input units to model units or vice versa
+        
+        Args:
+            input_array (np.ndarray): array to be converted
+            convert_to (bool): True if converting from input units to model units, 
+                otherwise False 
+        Returns:
+            np.ndarray: converted array
+        """
+        self._conversion_factor()
+        if convert_to:
+            return input_array * self.conversion_factor
+        else:
+            return input_array / self.conversion_factor
+
 
 @numba.njit
 def _linear_interpolate(x0: float, x1: float, y0: float, y1: float, xi: float):
