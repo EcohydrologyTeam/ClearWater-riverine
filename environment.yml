@@ -4,7 +4,7 @@ channels:
   - nodefaults # Speeds solving env, by limiting the number of options
 
 dependencies:
-  - python =3.10
+  - python >=3.11
   - scipy # installs numpy, pandas and most pyData libraries
   - geopandas
   - spatialpandas
@@ -18,6 +18,7 @@ dependencies:
   - numcodecs # buffer compression and transformation codecs for use by zarr
   - bottleneck # speeds up NaN-skipping and rolling window aggregations by a large factor
   - fastparquet
+  - git
 
   # Testing and static analysis
   - pytest
@@ -64,3 +65,4 @@ dependencies:
   # https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#using-pip-in-an-environment
   - pip
   - pip:
+      - git+https://github.com/EcohydrologyTeam/ClearWater-modules-python.git@main
