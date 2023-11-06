@@ -191,6 +191,7 @@ class ClearwaterRiverine:
             lhs.update_values(self.mesh, t)
             A = csr_matrix((lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
             x = linalg.spsolve(A, b.vals)
+            # reactions would go here
             concentrations[t+1][0:self.mesh.nreal+1] = x
             concentrations[t+1][self.inp_converted[t].nonzero()] = self.inp_converted[t][self.inp_converted[t].nonzero()] 
             self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
