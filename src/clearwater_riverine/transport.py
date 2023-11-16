@@ -7,6 +7,7 @@ import geoviews as gv
 import geopandas as gpd
 from shapely.geometry import Polygon
 hv.extension("bokeh")
+from typing import Optional
 
 from clearwater_riverine.mesh import model_mesh
 from clearwater_riverine import variables
@@ -141,6 +142,42 @@ class ClearwaterRiverine:
         # Assign to appropriate position in array
         self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
 
+    def initialize(self):
+        """Initializes model
+        """
+        self.time_step = 0
+        self.concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(
+            self.concentrations,
+            dims = ('time', 'nface'),
+            attrs={'Units': 'tbd'})
+        self.b = RHS(self.mesh, self.input_array)
+        self.lhs = LHS(self.mesh)
+        self.concentrations[0] = self.input_array[0]
+        self.mesh[variables.CONCENTRATION][self.time_step][:] = self.concentrations[0]
+    
+    def update(
+        self,
+        update_concentration: Optional[dict[str, xr.DataArray]] = None,
+    ):
+        """Update a single timestep."""
+        if update_concentration:
+            for var_name, value in update_concentration.items():
+                self.mesh['concentration'][self.time_step][0: self.mesh.nreal+1] = update_concentration[var_name].values[0:self.mesh.nreal + 1]
+                x = update_concentration[var_name].values[0:self.mesh.nreal + 1]
+        else:
+            x = self.concentrations[self.time_step][0:self.mesh.nreal + 1]
+        self.b.update_values(x, self.mesh, self.time_step)
+        self.lhs.update_values(self.mesh, self.time_step)
+        A = csr_matrix(
+            (self.lhs.coef, (self.lhs.rows, self.lhs.cols)),
+            shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
+        )
+        x = linalg.spsolve(A, self.b.vals)
+        self.time_step += 1
+        self.concentrations[self.time_step][0:self.mesh.nreal+1] = x
+        self.concentrations[self.time_step][self.input_array[self.time_step].nonzero()] = self.input_array[self.time_step][self.input_array[self.time_step].nonzero()] 
+        self.mesh['concentration'][self.time_step][:] = self.concentrations[self.time_step]
 
     def simulate_wq(self,
         input_mass_units: str = 'mg',
