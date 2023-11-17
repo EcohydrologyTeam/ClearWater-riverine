@@ -292,16 +292,17 @@ class ClearwaterRiverine:
             p1 = Polygon(list(zip(xs.values, ys.values)))
             polygon_list.append(p1)
 
-        poly_gdf = gpd.GeoDataFrame({'geometry': polygon_list},
-                                    crs = crs)
+        poly_gdf = gpd.GeoDataFrame({
+            'geometry': polygon_list},
+            crs = crs)
         poly_gdf = poly_gdf.to_crs('EPSG:4326')
         
         gdf_ls = []
         for t in range(len(self.mesh.time)):
             temp_gdf = gpd.GeoDataFrame({'cell': self.mesh.nface[0:nreal_index],
                                         'datetime': pd.to_datetime(self.mesh.time[t].values),
-                                        'concentration': self.mesh.concentration[t][0:nreal_index],
-                                        'volume': self.mesh.volume[t][0:nreal_index],
+                                        'concentration': self.mesh.concentration.isel(time=t, nface=slice(0,nreal_index)),
+                                        'volume': self.mesh.volume.isel(time=t, nface=slice(0,nreal_index)),
                                         'cell': self.mesh.nface[0:nreal_index],
                                         'geometry': poly_gdf['geometry']}, 
                                         crs = 'EPSG:4326')
