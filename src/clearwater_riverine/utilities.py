@@ -488,6 +488,7 @@ class WQVariableCalculator:
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
         else:
+            print(' Calculating Advection Coefficient...')
             mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
                 mesh[variables.FLOW_ACROSS_FACE] * np.sign(abs(mesh[variables.EDGE_VELOCITY])),
                 dims = ('time', 'nedge'),
@@ -499,11 +500,14 @@ class WQVariableCalculator:
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']})
         
+        print(' Calculating distances to cell centroids')
         mesh[variables.FACE_TO_FACE_DISTANCE] = xr.DataArray(
             _calc_distances_cell_centroids(mesh),
             dims = ('nedge'),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Length']}
         )
+
+        print(' Calculating coefficient to diffusion term')
         mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
             _calc_coeff_to_diffusion_term(mesh),
             dims = ("time", "nedge"),

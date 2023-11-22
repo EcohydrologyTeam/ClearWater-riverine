@@ -161,30 +161,50 @@ class ClearwaterRiverine:
         update_concentration: Optional[dict[str, xr.DataArray]] = None,
     ):
         """Update a single timestep."""
+        # Allow users to override concentration
         if update_concentration:
             for var_name, value in update_concentration.items():
                 self.mesh['concentration'][self.time_step][0: self.mesh.nreal+1] = update_concentration[var_name].values[0:self.mesh.nreal + 1]
                 x = update_concentration[var_name].values[0:self.mesh.nreal + 1]
         else:
             x = self.concentrations[self.time_step][0:self.mesh.nreal + 1]
-        self.b.update_values(x, self.mesh, self.time_step)
-        self.lhs.update_values(self.mesh, self.time_step)
+        
+        # Update the right hand side of the matrix 
+        self.b.update_values(
+            x,
+            self.mesh,
+            self.time_step
+        )
+
+        # Update the left hand side of the matrix 
+        self.lhs.update_values(
+            self.mesh,
+            self.time_step
+        )
+
+        # Define compressed sparse row matrix
         A = csr_matrix(
             (self.lhs.coef, (self.lhs.rows, self.lhs.cols)),
             shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
         )
+
+        # Solve
         x = linalg.spsolve(A, self.b.vals)
+
+        # Update timestep and save data
         self.time_step += 1
         self.concentrations[self.time_step][0:self.mesh.nreal+1] = x
         self.concentrations[self.time_step][self.input_array[self.time_step].nonzero()] = self.input_array[self.time_step][self.input_array[self.time_step].nonzero()] 
         self.mesh['concentration'][self.time_step][:] = self.concentrations[self.time_step]
 
-    def simulate_wq(self,
+    def simulate_wq(
+        self,
         input_mass_units: str = 'mg',
         input_volume_units: str = 'L',
         input_liter_conversion: float = 1,
         save: bool = False, 
-        output_file_path: str = './clearwater-riverine-wq-model.zarr'):
+        output_file_path: str = './clearwater-riverine-wq-model.zarr'
+    ):
         """Runs water quality model. 
 
         Steps through each timestep of the HEC-RAS 2D output and solves the total-load advection-diffusion transport equation 
