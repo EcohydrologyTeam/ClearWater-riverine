@@ -313,22 +313,44 @@ class ClearwaterRiverine:
             polygon_list.append(p1)
 
         poly_gdf = gpd.GeoDataFrame({
+            'nface': self.mesh.nface[0:nreal_index],
             'geometry': polygon_list},
             crs = crs)
         poly_gdf = poly_gdf.to_crs('EPSG:4326')
         
-        gdf_ls = []
-        for t in range(len(self.mesh.time)):
-            temp_gdf = gpd.GeoDataFrame({'cell': self.mesh.nface[0:nreal_index],
-                                        'datetime': pd.to_datetime(self.mesh.time[t].values),
-                                        'concentration': self.mesh.concentration.isel(time=t, nface=slice(0,nreal_index)),
-                                        'volume': self.mesh.volume.isel(time=t, nface=slice(0,nreal_index)),
-                                        'cell': self.mesh.nface[0:nreal_index],
-                                        'geometry': poly_gdf['geometry']}, 
-                                        crs = 'EPSG:4326')
-            gdf_ls.append(temp_gdf)
-        full_df = pd.concat(gdf_ls)
-        self.gdf = full_df
+        # gdf_ls = []
+
+        # for t in range(len(self.mesh.time)):
+        #     temp_gdf = gpd.GeoDataFrame({'cell': self.mesh.nface[0:nreal_index],
+        #                                 'datetime': pd.to_datetime(self.mesh.time[t].values),
+        #                                 'concentration': self.mesh.concentration.isel(time=t, nface=slice(0,nreal_index)),
+        #                                 'volume': self.mesh.volume.isel(time=t, nface=slice(0,nreal_index)),
+        #                                 'cell': self.mesh.nface[0:nreal_index],
+        #                                 'geometry': poly_gdf['geometry']}, 
+        #                                 crs = 'EPSG:4326')
+        #     gdf_ls.append(temp_gdf)
+
+        df_from_array = self.mesh['concentration'].isel(
+            nface=slice(0,nreal_index)
+            ).to_dataframe()
+        df_from_array.reset_index(inplace=True)
+        self.df_merged = gpd.GeoDataFrame(
+            pd.merge(
+                df_from_array,
+                poly_gdf,
+                on='nface',
+                how='left'
+            )
+        )
+        self.df_merged.rename(
+            columns={
+                'nface':'cell',
+                'time': 'datetime'
+            },
+            inplace=True
+        )
+
+        self.gdf = self.df_merged
 
 
     def _maximum_plotting_value(self, clim_max) -> float:
@@ -392,16 +414,19 @@ class ClearwaterRiverine:
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
             units = self.mesh[variables.CONCENTRATION].Units
-            ras_map = gv.Polygons(ras_sub_df, vdims=['concentration', 'cell']).opts(height=400,
-                                                                          width = 800,
-                                                                          color='concentration',
-                                                                          colorbar = True,
-                                                                          cmap = 'OrRd', 
-                                                                          clim = (mn_val, mval),
-                                                                          line_width = 0.1,
-                                                                          tools = ['hover'],
-                                                                          clabel = f"Concentration ({units})"
-                                                                       )
+            ras_map = gv.Polygons(
+                ras_sub_df,
+                vdims=['concentration', 'cell']).opts(
+                    height = 400,
+                    width = 800,
+                    color='concentration',
+                    colorbar = True,
+                    cmap = 'OrRd',
+                    clim = (mn_val, mval),
+                    line_width = 0.1,
+                    tools = ['hover'],
+                    clabel = f"Concentration ({units})"
+            )
             return (ras_map * gv.tile_sources.CartoLight())
 
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
