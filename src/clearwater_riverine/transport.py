@@ -73,6 +73,8 @@ class ClearwaterRiverine:
         self.boundary_data = self.mesh.attrs['boundary_data']
         if verbose: print("Calculating Required Parameters...")
         self.mesh = self.mesh.cwr.calculate_required_parameters()
+        self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+
 
     def initial_conditions(self, filepath: str):
         """Define initial conditions for Clearwater Riverine model from a CSV file. 
@@ -84,7 +86,6 @@ class ClearwaterRiverine:
         """
         init = pd.read_csv(filepath)
         init['Cell_Index'] = init.Cell_Index.astype(int)
-        self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
         self.input_array[0, [init['Cell_Index']]] =  init['Concentration']
         return 
 
@@ -142,19 +143,51 @@ class ClearwaterRiverine:
         # Assign to appropriate position in array
         self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
 
-    def initialize(self):
-        """Initializes model
+    def initialize(
+        self,
+        initial_condition_path: Optional[str] = None,
+        boundary_condition_path: Optional[str] = None,
+        units: Optional[str] = None,
+    ):
+        """Initializes model, developed to be BMI-adjacent.
+
+        Args:
+            initial_conditon_path: Filepath to a CSV containing initial conditions. 
+                The CSV should have two columns: one called `Cell_Index` and one called
+                `Concentration`. The file should the concentration in each cell within 
+                the modeldomain at the first timestep. If not provided, no initial conditions
+                will be set up as part of the initialize call.
+            boundary_condition_path: Filepath to a CSV containing boundary conditions. 
+                The CSV should have the following columns: `RAS2D_TS_Name` (the timeseries
+                name, as labeled in the HEC-RAS model), `Datetime`, `Concentration`. 
+                This file should contain the concentration for all relevant boundary cells
+                at every RAS timestep. If a timestep / boundary cell is not included in this
+                CSV file, the concentration will be set to 0 in the Clearwater Riverine model.
+                If not provide,d no boundary condtiions will be set up as part of the initialize
+                call. 
+            units: the units of the concentration timeseries. If not provided, defaults to
+                'Unknown.'
         """
+        # Set initial and boundary conditions if provided
+        if initial_condition_path:
+            self.initial_conditions(initial_condition_path)
+        if boundary_condition_path:
+            self.boundary_conditions(boundary_condition_path)
+
+        if not units:
+            units = 'unknown'
+
         self.time_step = 0
         self.concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
+        self.concentrations[0] = self.input_array[0]
         self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(
             self.concentrations,
             dims = ('time', 'nface'),
-            attrs={'Units': 'tbd'})
+            attrs={'Units': f'{units}'})
+        self.mesh[variables.CONCENTRATION][self.time_step][:] = self.concentrations[0]
+
         self.b = RHS(self.mesh, self.input_array)
         self.lhs = LHS(self.mesh)
-        self.concentrations[0] = self.input_array[0]
-        self.mesh[variables.CONCENTRATION][self.time_step][:] = self.concentrations[0]
     
     def update(
         self,
@@ -243,6 +276,7 @@ class ClearwaterRiverine:
 
         # loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
+            self.time_step = t
             self._timer(t)
             b.update_values(x, self.mesh, t)
             lhs.update_values(self.mesh, t)
@@ -301,8 +335,8 @@ class ClearwaterRiverine:
             Could we parse the CRS from the PRJ file?
         """
 
-        nreal_index = self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] + 1
-        real_face_node_connectivity = self.mesh.face_nodes[0:nreal_index]
+        self.nreal_index = self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] + 1
+        real_face_node_connectivity = self.mesh.face_nodes[0:self.nreal_index]
 
         # Turn real mesh cells into polygons
         polygon_list = []
@@ -313,10 +347,11 @@ class ClearwaterRiverine:
             polygon_list.append(p1)
 
         poly_gdf = gpd.GeoDataFrame({
-            'nface': self.mesh.nface[0:nreal_index],
+            'nface': self.mesh.nface[0:self.nreal_index],
             'geometry': polygon_list},
             crs = crs)
-        poly_gdf = poly_gdf.to_crs('EPSG:4326')
+        self.poly_gdf = poly_gdf.to_crs('EPSG:4326')
+        self._update_gdf()
         
         # gdf_ls = []
 
@@ -329,15 +364,21 @@ class ClearwaterRiverine:
         #                                 'geometry': poly_gdf['geometry']}, 
         #                                 crs = 'EPSG:4326')
         #     gdf_ls.append(temp_gdf)
+        
+    def _update_gdf(self):
+        """Update gdf values."""
+        print('set plotting timestep equal to timestep')
+        self.plotting_time_step = self.time_step
+        print(self.plotting_time_step, self.time_step)
 
         df_from_array = self.mesh['concentration'].isel(
-            nface=slice(0,nreal_index)
+            nface=slice(0,self.nreal_index)
             ).to_dataframe()
         df_from_array.reset_index(inplace=True)
         self.df_merged = gpd.GeoDataFrame(
             pd.merge(
                 df_from_array,
-                poly_gdf,
+                self.poly_gdf,
                 on='nface',
                 how='left'
             )
@@ -349,7 +390,6 @@ class ClearwaterRiverine:
             },
             inplace=True
         )
-
         self.gdf = self.df_merged
 
 
@@ -401,11 +441,16 @@ class ClearwaterRiverine:
                 maximum concentration value in the model domain over the entire simulation horizon. 
             time_index_range (tuple, optional): minimum and maximum time index to plot.
         """
+
         if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
             if crs == None:
                 raise ValueError("This is your first time running the plot function. You must specify a crs!")
             else:
                 self._prep_plot(crs)
+        
+        if self.plotting_time_step != self.time_step:
+            print('updating GDF')
+            self._update_gdf()
 
         mval = self._maximum_plotting_value(clim[1])
         mn_val = self._minimum_plotting_value(clim[0])
