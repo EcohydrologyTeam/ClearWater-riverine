@@ -509,6 +509,7 @@ class WQVariableCalculator:
             dims = ("time", "nedge"),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
         )
+        print(' Calculating sum coefficient to diffusion term...')
         mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM] = xr.DataArray(
             _calc_sum_coeff_to_diffusion_term(mesh),
             dims=('time', 'nface'),
@@ -519,14 +520,3 @@ class WQVariableCalculator:
         dt = dt / np.timedelta64(1, 's')
         dt = np.insert(dt, len(dt), np.nan)
         mesh[variables.CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
-
-        # ghost cell volumes
-        ghost_volumes_in, ghost_volumes_out = _calc_ghost_cell_volumes(mesh)
-        mesh[variables.GHOST_CELL_VOLUMES_IN] = xr.DataArray(
-            ghost_volumes_in,
-            dims=('time', 'nface'),
-            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Volume']})
-        mesh[variables.GHOST_CELL_VOLUMES_OUT] = xr.DataArray(
-            ghost_volumes_out,
-            dims=('time', 'nface'),
-            attrs={'Units':UNIT_DETAILS[mesh.attrs['units']]['Volume']})

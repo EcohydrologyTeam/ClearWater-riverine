@@ -97,18 +97,49 @@ class ClearwaterRiverine:
                 If a timestep / boundary cell is not included in this CSV file, the concentration will be set to 0
                 in the Clearwater Riverine model.  
         """
-        bc_df = pd.read_csv(filepath, parse_dates=['Datetime'])
-        bc_df = bc_df[(bc_df.Datetime >= self.mesh.time.min().values) & (bc_df.Datetime <= self.mesh.time.max().values)]
-        boundary_df = pd.merge(bc_df, self.boundary_data, left_on = 'RAS2D_TS_Name', right_on = 'Name', how='left')
-        # Define the ghost cell associated with the Face Index
+        # Read in boundary condition data from user
+        bc_df = pd.read_csv(
+            filepath,
+            parse_dates=['Datetime']
+        )
+
+        xarray_time_index = pd.DatetimeIndex(
+            self.mesh.time.values
+        )
+        model_dataframe = pd.DataFrame({
+            'Datetime': xarray_time_index,
+            'Time Index': range(len(xarray_time_index))
+        })
+
+        result_df = pd.DataFrame()
+        for boundary, group_df in bc_df.groupby('RAS2D_TS_Name'):
+            # Merge with model timestep
+            merged_group = pd.merge_asof(
+                model_dataframe,
+                group_df,
+                on='Datetime'
+            )
+            # Interpolate
+            merged_group['Concentration'] = merged_group['Concentration'].interpolate(method='linear')
+            # Append to dataframe
+            result_df = pd.concat(
+                [result_df, merged_group], 
+                ignore_index=True
+            )
+        
+        # Merge with boundary data
+        boundary_df = pd.merge(
+            result_df,
+            self.boundary_data,
+            left_on = 'RAS2D_TS_Name',
+            right_on = 'Name',
+            how='left'
+        )
         boundary_df['Ghost Cell'] = self.mesh.edges_face2[boundary_df['Face Index'].to_list()]
         boundary_df['Domain Cell'] = self.mesh.edges_face1[boundary_df['Face Index'].to_list()]
-        # Find time index
-        boundary_df.reset_index(inplace=True)
-        boundary_df['Time Index'] = [np.where(self.mesh.time == i)[0][0] for i in boundary_df.Datetime]
-        # Put values into input array
+
+        # Assign to appropriate position in array
         self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
-        return
 
 
     def simulate_wq(self,
