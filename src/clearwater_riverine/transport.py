@@ -11,6 +11,12 @@ from typing import Optional
 
 from clearwater_riverine.mesh import model_mesh
 from clearwater_riverine import variables
+from clearwater_riverine.variables import (
+    ADVECTION_COEFFICIENT,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+    EDGES_FACE1,
+    EDGES_FACE2
+)
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
 from clearwater_riverine.io.hdf import _hdf_to_xarray
@@ -311,19 +317,27 @@ class ClearwaterRiverine:
         if t == int(3 * len(self.mesh['time']) / 4):
             print(' 75%')
 
-    def _mass_flux(self, output, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t):
-        negative_condition = self.mesh[variables.ADVECTION_COEFFICIENT][t] < 0
-        parent = output[t][self.mesh[variables.EDGES_FACE1]]
-        neighbor = output[t][self.mesh[variables.EDGES_FACE2]]
+    def _mass_flux(self,
+        output: np.ndarray,
+        advection_mass_flux: np.ndarray,
+        diffusion_mass_flux: np.ndarray,
+        total_mass_flux: np.ndarray,
+        t: int,
+    ):
+        """Calculates mass flux across cell boundaries."""
+        negative_condition = self.mesh[variables.ADVECTION_COEFFICIENT].isel(time=t) < 0
+        parent_concentration = output[t][self.mesh[EDGES_FACE1]]
+        neighbor_concentration = output[t][self.mesh[EDGES_FACE2]]
 
         advection_mass_flux[t] = xr.where(
             negative_condition,
-            self.mesh[variables.ADVECTION_COEFFICIENT][t] * parent,
-            self.mesh[variables.ADVECTION_COEFFICIENT][t] * neighbor
+            self.mesh[variables.ADVECTION_COEFFICIENT].isel(time=t) * neighbor_concentration,
+            self.mesh[variables.ADVECTION_COEFFICIENT].isel(time=t) * parent_concentration,
         )
 
-        diffusion_mass_flux[t] = self.mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t] * (neighbor - parent)
+        diffusion_mass_flux[t] = self.mesh[COEFFICIENT_TO_DIFFUSION_TERM][t] * (neighbor_concentration - parent_concentration)
         total_mass_flux[t] = advection_mass_flux[t] + diffusion_mass_flux[t]
+
 
     def _prep_plot(self, crs: str):
         """ Creates a geodataframe of polygons to represent each RAS cell. 
