@@ -370,16 +370,6 @@ def _calc_sum_coeff_to_diffusion_term(
 
     return sum_diffusion_array
 
-# def _calc_sum_coeff_to_diffusion_term_speed(mesh: xr.Dataset) -> np.array:
-    """"""
-
-# def bincount_2d(array: np.ndarray):
-#     max_value = np.max(array) + 1
-#     counts = np.apply_along_axis(
-#         lambda x: np.bincount(x,minlength=max_val), axis=1, arr=array)
-#     )
-#     return counts
-
 def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
     """
     In RAS2D output, all ghost cells (boundary cells) have a volume of 0. 
@@ -517,7 +507,6 @@ class WQVariableCalculator:
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
         else:
-            print(' Calculating Advection Coefficient...')
             mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
                 mesh[variables.FLOW_ACROSS_FACE] * np.sign(abs(mesh[variables.EDGE_VELOCITY])),
                 dims = ('time', 'nedge'),
@@ -529,20 +518,17 @@ class WQVariableCalculator:
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']})
         
-        print(' Calculating distances to cell centroids')
         mesh[variables.FACE_TO_FACE_DISTANCE] = xr.DataArray(
             _calc_distances_cell_centroids(mesh),
             dims = ('nedge'),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Length']}
         )
 
-        print(' Calculating coefficient to diffusion term')
         mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
             _calc_coeff_to_diffusion_term(mesh),
             dims = ("time", "nedge"),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
         )
-        print(' Calculating sum coefficient to diffusion term...')
         mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM] = xr.DataArray(
             _calc_sum_coeff_to_diffusion_term(mesh),
             dims=('time', 'nface'),

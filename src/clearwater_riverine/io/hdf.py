@@ -96,11 +96,14 @@ class HDFReader:
         )
         # time
         time_stamps_binary = self.infile[self.paths['binary_time_stamps']][()]
-        time_stamps = [x.decode("utf8") for x in time_stamps_binary]
-        xr_time_stamps = [datetime.datetime.strptime(x, '%d%b%Y %H:%M:%S') for x in time_stamps]
+
+        # pandas is working faster than numpy for binary conversion
+        time_stamps = pd.Series(time_stamps_binary).str.decode('utf8')
+        xr_time_stamps = pd.to_datetime(time_stamps, format='%d%b%Y %H:%M:%S')
+
         mesh = mesh.assign_coords(
             time=xr.DataArray(
-                data=[datetime.datetime.strptime(x, '%d%b%Y %H:%M:%S') for x in time_stamps],
+                data=xr_time_stamps,
                 dims=('time',),
             )
         )
