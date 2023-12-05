@@ -124,7 +124,7 @@ class LHS:
         self.rows[start:end] = mesh['edges_face2'][self.internal_edges]
         self.cols[start:end] = mesh['edges_face1'][self.internal_edges]
         self.coef[start:end] = -1 * mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.internal_edges]    
-
+    
 class RHS:
     def __init__(self, mesh: xr.Dataset, inp: np.array):
         """
