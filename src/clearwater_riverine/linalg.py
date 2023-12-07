@@ -2,6 +2,10 @@ import numpy as np
 import xarray as xr
 
 from clearwater_riverine import variables
+from clearwater_riverine.utilities import (
+    _scdt,
+    _scdt2
+)
 
 # matrix solver 
 class LHS:
@@ -70,7 +74,14 @@ class LHS:
         self.rows[start:end] = mesh['nface'][0:self.nreal_count]
         self.cols[start:end] = mesh['nface'][0:self.nreal_count]
         seconds = mesh[variables.CHANGE_IN_TIME].values[t] # / np.timedelta64(1, 's'))
-        self.coef[start:end] = mesh[variables.VOLUME][t+1][0:self.nreal_count] / seconds + mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM][t+1][0:self.nreal_count]
+        # sum_coefficients_to_diffusion = _scdt(mesh, t+1)
+        sum_coefficients_to_diffusion = _scdt2(mesh, t+1)
+        self.coef[start:end] = mesh[variables.VOLUME][t+1][0:self.nreal_count] / seconds + sum_coefficients_to_diffusion[0:self.nreal_count]
+        
+        # diagonal terms - sum of diffusion coefficients associated with each cell
+        start = end
+        end = end + self.nreal_count
+        self.rows[start:end] = mesh[]
              
         ###### Advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0

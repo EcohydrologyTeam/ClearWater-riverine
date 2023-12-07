@@ -6,6 +6,10 @@ import numpy as np
 import xarray as xr 
 
 from clearwater_riverine import variables
+from clearwater_riverine.variables import (
+    EDGES_FACE1,
+    EDGES_FACE2,
+)
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -320,6 +324,46 @@ def _sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np
     sum_array[0:len(nodal_values)] = nodal_values
     return sum_array
 
+def _scdt(
+    mesh,
+    t
+):
+"""Trial using _sum_vals in the matrix (each timestep), not all at once."""
+    f1_sums = np.zeros(len(mesh['nface'])) 
+    f2_sums = np.zeros(len(mesh['nface']))
+
+    f1_sums = _sum_vals(mesh, mesh[EDGES_FACE1], t, f1_sums)
+    f2_sums = _sum_vals(mesh, mesh[EDGES_FACE2], t, f2_sums)
+
+    sum_diffusion_array = f1_sums + f2_sums
+    return sum_diffusion_array
+
+def _scdt2(
+    mesh: xr.Dataset,
+    t: int
+) -> np.ndarray:
+"""Trial using _add_at in the matrix (each timestep), not all at once."""
+
+    # initialize array
+    face1_sums = np.zeros(len(mesh['nface']))
+    face2_sums = np.zeros(len(mesh['nface']))
+
+    np.add.at(
+        face1_sums,
+        mesh.edges_face1.values,
+        mesh.coeff_to_diffusion.isel(time=t).values
+    )
+
+    np.add.at(
+        face2_sums,
+        mesh.edges_face2.values,
+        mesh.coeff_to_diffusion.isel(time=t).values
+    )
+
+    sum_diffusion_array = face1_sums + face2_sums
+
+    return sum_diffusion_array
+
 def _sum_values_by_indices(
     indices: np.ndarray,
     weights: np.ndarray,
@@ -530,7 +574,8 @@ class WQVariableCalculator:
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
         )
         mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM] = xr.DataArray(
-            _calc_sum_coeff_to_diffusion_term(mesh),
+            np.zeros((len(mesh['time']), len(mesh['nface']))),
+            # _calc_sum_coeff_to_diffusion_term(mesh),
             dims=('time', 'nface'),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
         )
