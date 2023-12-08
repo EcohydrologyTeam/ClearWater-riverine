@@ -328,7 +328,7 @@ def _scdt(
     mesh,
     t
 ):
-"""Trial using _sum_vals in the matrix (each timestep), not all at once."""
+    """Trial using _sum_vals in the matrix (each timestep), not all at once."""
     f1_sums = np.zeros(len(mesh['nface'])) 
     f2_sums = np.zeros(len(mesh['nface']))
 
@@ -342,7 +342,7 @@ def _scdt2(
     mesh: xr.Dataset,
     t: int
 ) -> np.ndarray:
-"""Trial using _add_at in the matrix (each timestep), not all at once."""
+    """Trial using _add_at in the matrix (each timestep), not all at once."""
 
     # initialize array
     face1_sums = np.zeros(len(mesh['nface']))

@@ -7,6 +7,8 @@ FACE_Y = 'face_y'
 EDGE_NODES = 'edge_nodes'
 FACE_NODES = 'face_nodes'
 EDGE_FACE_CONNECTIVITY = 'edge_face_connectivity'
+FACES = 'nface'
+
 # Available Variables
 EDGES_FACE1 = 'edges_face1'
 EDGES_FACE2 = 'edges_face2'

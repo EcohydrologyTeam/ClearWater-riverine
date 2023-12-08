@@ -2,6 +2,12 @@ import numpy as np
 import xarray as xr
 
 from clearwater_riverine import variables
+from clearwater_riverine.variables import(
+    FACES,
+    EDGES_FACE1,
+    EDGES_FACE2,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+)
 from clearwater_riverine.utilities import (
     _scdt,
     _scdt2
@@ -21,6 +27,8 @@ class LHS:
         """
         self.internal_edges = np.where((mesh[variables.EDGES_FACE1] <= mesh.nreal) & (mesh[variables.EDGES_FACE2] <= mesh.nreal))[0]
         self.internal_edge_count = len(self.internal_edges)
+        self.real_edges_face1 = np.where(mesh[EDGES_FACE1] <= mesh.nreal)[0]
+        self.real_edges_face2 = np.where(mesh[EDGES_FACE2] <= mesh.nreal)[0]
         self.nreal_count = mesh.nreal + 1
                 
     def update_values(self, mesh: xr.Dataset, t: float):
@@ -56,7 +64,9 @@ class LHS:
         empty_cells = np.where(mesh[variables.VOLUME][t+1] == 0)[0][0:self.nreal_count]
 
         # initialize arrays that will define the sparse matrix 
-        len_val = self.internal_edge_count * 2 + self.nreal_count * 2 + len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells)
+        len_val = self.internal_edge_count * 2 + self.nreal_count * 2 + \
+            len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells) + \
+                len(self.real_edges_face1) + len(self.real_edges_face2)
         self.rows = np.zeros(len_val)
         self.cols = np.zeros(len_val)
         self.coef = np.zeros(len_val)
@@ -71,18 +81,27 @@ class LHS:
         ###### diagonal terms - load and sum of diffusion coefficients associated with each cell
         start = end
         end = end + self.nreal_count
-        self.rows[start:end] = mesh['nface'][0:self.nreal_count]
-        self.cols[start:end] = mesh['nface'][0:self.nreal_count]
+        self.rows[start:end] = mesh[FACES][0:self.nreal_count]
+        self.cols[start:end] = mesh[FACES][0:self.nreal_count]
         seconds = mesh[variables.CHANGE_IN_TIME].values[t] # / np.timedelta64(1, 's'))
         # sum_coefficients_to_diffusion = _scdt(mesh, t+1)
-        sum_coefficients_to_diffusion = _scdt2(mesh, t+1)
-        self.coef[start:end] = mesh[variables.VOLUME][t+1][0:self.nreal_count] / seconds + sum_coefficients_to_diffusion[0:self.nreal_count]
-        
+        # sum_coefficients_to_diffusion = _scdt2(mesh, t+1)
+        self.coef[start:end] = mesh[variables.VOLUME][t+1][0:self.nreal_count] / seconds # + sum_coefficients_to_diffusion[0:self.nreal_count]
+
         # diagonal terms - sum of diffusion coefficients associated with each cell
         start = end
-        end = end + self.nreal_count
-        self.rows[start:end] = mesh[]
-             
+        end = end + len(self.real_edges_face1)
+
+        self.rows[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
+        self.cols[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
+        self.coef[start:end] = mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.real_edges_face1]
+
+        start = end
+        end = end + len(self.real_edges_face2)
+        self.rows[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
+        self.cols[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
+        self.coef[start:end] = mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.real_edges_face2]
+
         ###### Advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
         if len(flow_out_indices) > 0:
