@@ -6,6 +6,10 @@ import numpy as np
 import xarray as xr 
 
 from clearwater_riverine import variables
+from clearwater_riverine.variables import (
+    EDGES_FACE1,
+    EDGES_FACE2,
+)
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -320,7 +324,24 @@ def _sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np
     sum_array[0:len(nodal_values)] = nodal_values
     return sum_array
 
-def _calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
+def _sum_values_by_indices(
+    indices: np.ndarray,
+    weights: np.ndarray,
+    max_index: int
+) -> np.ndarray:
+    """Sums weights based on indices into new array."""
+    result = np.zeros((weights.shape[0], max_index + 1))
+    np.add.at(
+        result,
+        (slice(None), indices),
+        weights,
+    )
+
+    return result
+
+def _calc_sum_coeff_to_diffusion_term(
+    mesh: xr.Dataset
+) -> np.array:
     """Calculates the sum of all coefficients to diffusion terms. 
 
     Sums all coefficient to the diffusion term values associated with each individual cell
@@ -335,20 +356,22 @@ def _calc_sum_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
                                 associated with each cell. 
     """
     # initialize array
-    sum_diffusion_array = np.zeros((len(mesh['time']), len(mesh['nface'])))
-    for t in range(len(mesh['time'])):
-        # initialize arrays
-        f1_sums = np.zeros(len(mesh['nface'])) 
-        f2_sums = np.zeros(len(mesh['nface']))
+    maximum_index_value = mesh.nface.values.max()
 
-        # calculate sums for all values
-        f1_sums = _sum_vals(mesh, mesh['edges_face1'], t, f1_sums)
-        f2_sums = _sum_vals(mesh, mesh['edges_face2'], t, f2_sums)
+    face1_sums = _sum_values_by_indices(
+        mesh.edges_face1.values,
+        mesh.coeff_to_diffusion.values,
+        maximum_index_value
+    )
 
-        # add f1_sums and f2_sums together to get total 
-        # need to do this because sometimes a cell is the first cell in a pair defining an edge
-        # and sometimes a cell is the second cell in a pair defining an edge
-        sum_diffusion_array[t] = f1_sums + f2_sums
+    face2_sums = _sum_values_by_indices(
+        mesh.edges_face2.values,
+        mesh.coeff_to_diffusion.values,
+        maximum_index_value
+    )
+
+    sum_diffusion_array = face1_sums + face2_sums
+
     return sum_diffusion_array
 
 def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
@@ -488,7 +511,6 @@ class WQVariableCalculator:
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
         else:
-            print(' Calculating Advection Coefficient...')
             mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
                 mesh[variables.FLOW_ACROSS_FACE] * np.sign(abs(mesh[variables.EDGE_VELOCITY])),
                 dims = ('time', 'nedge'),
@@ -500,25 +522,18 @@ class WQVariableCalculator:
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']})
         
-        print(' Calculating distances to cell centroids')
         mesh[variables.FACE_TO_FACE_DISTANCE] = xr.DataArray(
             _calc_distances_cell_centroids(mesh),
             dims = ('nedge'),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Length']}
         )
 
-        print(' Calculating coefficient to diffusion term')
         mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
             _calc_coeff_to_diffusion_term(mesh),
             dims = ("time", "nedge"),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
         )
-        print(' Calculating sum coefficient to diffusion term...')
-        mesh[variables.SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM] = xr.DataArray(
-            _calc_sum_coeff_to_diffusion_term(mesh),
-            dims=('time', 'nface'),
-            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
-        )
+
         # dt
         dt = np.ediff1d(mesh['time'])
         dt = dt / np.timedelta64(1, 's')
