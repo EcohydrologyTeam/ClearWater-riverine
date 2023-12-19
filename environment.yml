@@ -9,6 +9,7 @@ dependencies:
   - geopandas
   - spatialpandas
   - xarray
+  - pooch # for xarray tutorial dataset
   - cf_xarray  # Interprets CF Convention attributes for Xarray objects
   - h5py
   - hdf5plugin  # HDF5 compression filters for h5py
