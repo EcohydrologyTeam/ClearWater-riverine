@@ -301,7 +301,6 @@ def _calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
         mesh (xr.Dataset):   Mesh created by the populate_ugrid function
 
     """
-    print("this is a test about the calculation of the coefficient to diffusion term")
     mesh[COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
         np.zeros((len(mesh['time']), len(mesh['nedge']))),
         dims = ('time', 'nedge'),
