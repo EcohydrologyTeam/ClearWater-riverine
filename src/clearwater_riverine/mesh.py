@@ -73,7 +73,7 @@ class ClearWaterXarray:
         reader.read_to_xarray(ras_data, file_path)
         self._obj = ras_data.mesh
         return self._obj
-
+    
     def calculate_required_parameters(self) -> xr.Dataset:
         """Calculate additional values required for advection-diffusion transport equation"""
         calculator = WQVariableCalculator(self._obj)

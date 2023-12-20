@@ -7,8 +7,22 @@ import xarray as xr
 
 from clearwater_riverine import variables
 from clearwater_riverine.variables import (
+    ADVECTION_COEFFICIENT,
+    CHANGE_IN_TIME,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+    DIFFUSION_COEFFICIENT,
     EDGES_FACE1,
     EDGES_FACE2,
+    EDGE_VELOCITY,
+    EDGE_VERTICAL_AREA,
+    FACE_SURFACE_AREA,
+    FACE_TO_FACE_DISTANCE,
+    FACE_X,
+    FACE_Y,
+    FACES,
+    FLOW_ACROSS_FACE,
+    VOLUME,
+    WATER_SURFACE_ELEVATION,
 )
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -257,7 +271,6 @@ def _compute_face_areas(
 
     return face_areas
 
-
 def _calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
     """ Calculate the distance between cell centroids
 
@@ -268,15 +281,16 @@ def _calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
         dist_data (np.array):   Array of distances between all cell centroids 
     """
     # Get northings and eastings of relevant faces 
-    x1_coords = mesh['face_x'][mesh['edges_face1']]
-    y1_coords = mesh['face_y'][mesh['edges_face1']]
-    x2_coords = mesh['face_x'][mesh['edges_face2']]
-    y2_coords = mesh['face_y'][mesh['edges_face2']]
+    x1_coords = mesh[FACE_X][mesh[EDGES_FACE1]]
+    y1_coords = mesh[FACE_Y][mesh[EDGES_FACE1]]
+    x2_coords = mesh[FACE_X][mesh[EDGES_FACE2]]
+    y2_coords = mesh[FACE_Y][mesh[EDGES_FACE2]]
 
     # calculate distance 
     dist_data = np.sqrt((x1_coords - x2_coords)**2 + (y1_coords - y2_coords)**2)
     return dist_data
 
+# @profile
 def _calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     """ Calculate the coefficient to the diffusion term. 
 
@@ -286,23 +300,17 @@ def _calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
     Args:
         mesh (xr.Dataset):   Mesh created by the populate_ugrid function
 
-    Returns:
-        diffusion_array (np.array):     Array of diffusion coefficients associated with each edge
-
     """
-    # diffusion coefficient: ignore diffusion between cells in the mesh and ghost cells
-    diffusion_coefficient = np.zeros(len(mesh['nedge']))
+    print("this is a test about the calculation of the coefficient to diffusion term")
+    mesh[COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
+        np.zeros((len(mesh['time']), len(mesh['nedge']))),
+        dims = ('time', 'nedge'),
+        attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
+        )
 
-    # identify ghost cells: 
-    # ghost cells are only in the second element of a pair or cell indices that denote an edge together
-    f2_ghost = np.where(mesh['edges_face2'] <= mesh.attrs['nreal'])
+    mesh[COEFFICIENT_TO_DIFFUSION_TERM] = mesh[EDGE_VERTICAL_AREA] * \
+        mesh.attrs[DIFFUSION_COEFFICIENT] / mesh[FACE_TO_FACE_DISTANCE]
 
-    # set diffusion coefficients where NOT pseusdo cell 
-    diffusion_coefficient[np.array(f2_ghost)] = mesh.attrs['diffusion_coefficient']
-
-    # diffusion_array =  mesh['edge_vertical_area'] * diffusion_coefficient / mesh['face_to_face_dist']
-    diffusion_array =  mesh['edge_vertical_area'] * mesh.attrs['diffusion_coefficient'] / mesh['face_to_face_dist']
-    return diffusion_array
 
 def _sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.array) -> np.array:
     """ Sums values associated with a given cell. 
@@ -430,9 +438,9 @@ def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
 
     # ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
     seconds = mesh['dt']
-    ghost_flux_in_vols = np.sign(ghost_vels_in) * mesh['face_flow'] * seconds
+    ghost_flux_in_vols = np.sign(ghost_vels_in) * mesh[FLOW_ACROSS_FACE] * seconds
 
-    ghost_vols_in = np.zeros((len(mesh['time']), len(mesh['nface'])))
+    ghost_vols_in = np.zeros((len(mesh['time']), len(mesh[FACES])))
     for t in range(1, len(mesh['time'])):
         indices = np.where(ghost_flux_in_vols[t] > 0)[0]
         cell_ind = mesh['edges_face2'][indices]
@@ -467,14 +475,14 @@ class WQVariableCalculator:
                 For best results, please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.
                 """)
             cell_volumes = _compute_cell_volumes(
-                mesh[variables.WATER_SURFACE_ELEVATION].values,
-                mesh[variables.FACE_SURFACE_AREA].values,
+                mesh[WATER_SURFACE_ELEVATION].values,
+                mesh[FACE_SURFACE_AREA].values,
                 mesh.attrs['face_area_elevation_info']['Starting Index'].values,
                 mesh.attrs['face_area_elevation_info']['Count'].values,
                 mesh.attrs['face_area_elevation_values']['Elevation'].values,
                 mesh.attrs['face_area_elevation_values']['Volume'].values,
             )
-            mesh[variables.VOLUME] = xr.DataArray(
+            mesh[VOLUME] = xr.DataArray(
                 cell_volumes,
                 dims =  ('time', 'ncell'),
                 attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Volume']}
@@ -488,7 +496,7 @@ class WQVariableCalculator:
                 """)
             # should we be using 0 or 1 ?
             face_areas = _compute_face_areas(
-                mesh[variables.WATER_SURFACE_ELEVATION].values,
+                mesh[WATER_SURFACE_ELEVATION].values,
                 mesh.attrs['face_normalunitvector_and_length']['Face Length'].values,
                 mesh.attrs['face_cell_indexes_df']['Cell 0'].values,
                 mesh.attrs['face_area_elevation_values']['Starting Index'].values,
@@ -496,46 +504,44 @@ class WQVariableCalculator:
                 mesh.attrs['face_area_elevation_values']['Z'].values,
                 mesh.attrs['face_area_elevation_values']['Area'].values,
             )
-            mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
+            mesh[EDGE_VERTICAL_AREA] = xr.DataArray(
                 face_areas,
                 dims =  ('time', 'nedge'),
                 attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']}
             )
-            advection_coefficient = mesh[variables.EDGE_VERTICAL_AREA] * mesh[variables.EDGE_VELOCITY] 
-            mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
-                advection_coefficient,
+            # advection_coefficient = mesh[EDGE_VERTICAL_AREA] * mesh[EDGE_VELOCITY] 
+            mesh[ADVECTION_COEFFICIENT] = xr.DataArray(
+                mesh[EDGE_VERTICAL_AREA] * mesh[EDGE_VELOCITY],
                 dims = ('time', 'nedge'),
                 attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
-            mesh[variables.FLOW_ACROSS_FACE] = xr.DataArray(
-                abs(advection_coefficient),
+            
+            mesh[FLOW_ACROSS_FACE] = xr.DataArray(
+                abs(mesh[ADVECTION_COEFFICIENT]),
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
         else:
-            mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
-                mesh[variables.FLOW_ACROSS_FACE] * np.sign(abs(mesh[variables.EDGE_VELOCITY])),
+            mesh[ADVECTION_COEFFICIENT] = xr.DataArray(
+                mesh[FLOW_ACROSS_FACE] * np.sign(abs(mesh[EDGE_VELOCITY])), # remove this
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
             
-            vertical_area = mesh['advection_coeff'] / mesh['edge_velocity']
-            mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
-                vertical_area.fillna(0),
+            # vertical_area = mesh['advection_coeff'] / mesh['edge_velocity']
+            mesh[EDGE_VERTICAL_AREA] = xr.DataArray(
+                (mesh[ADVECTION_COEFFICIENT] / mesh[EDGE_VELOCITY]).fillna(0),
+                # vertical_area.fillna(0),
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']})
         
-        mesh[variables.FACE_TO_FACE_DISTANCE] = xr.DataArray(
+        mesh[FACE_TO_FACE_DISTANCE] = xr.DataArray(
             _calc_distances_cell_centroids(mesh),
             dims = ('nedge'),
             attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Length']}
         )
 
-        mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
-            _calc_coeff_to_diffusion_term(mesh),
-            dims = ("time", "nedge"),
-            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
-        )
+        _calc_coeff_to_diffusion_term(mesh)
 
         # dt
         dt = np.ediff1d(mesh['time'])
         dt = dt / np.timedelta64(1, 's')
         dt = np.insert(dt, len(dt), np.nan)
-        mesh[variables.CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
+        mesh[CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
