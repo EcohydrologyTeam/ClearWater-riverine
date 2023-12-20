@@ -411,7 +411,7 @@ def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
             ghost_vels[t][index_list] = mesh['edge_velocity'][t][index_list]
 
     # calculate volume
-    ghost_flux_vols = ghost_vels * mesh['edge_vertical_area'] * mesh['dt']
+    ghost_flux_vols = ghost_vels * mesh[EDGE_VERTICAL_AREA] * mesh['dt']
 
     # transfer values (acssociated with EDGES) to corresponding CELLS (FACES)
     ghost_vols_out = np.zeros((len(mesh['time']), len(mesh['nface'])))
@@ -435,9 +435,8 @@ def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
         if len(index_list) != 0:
             ghost_vels_in[t][index_list] = mesh['edge_velocity'][t][index_list]
 
-    # ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
     seconds = mesh['dt']
-    ghost_flux_in_vols = np.sign(ghost_vels_in) * mesh[FLOW_ACROSS_FACE] * seconds
+    ghost_flux_in_vols = np.sign(ghost_vels_in) * mesh[ADVECTION_COEFFICIENT] * seconds
 
     ghost_vols_in = np.zeros((len(mesh['time']), len(mesh[FACES])))
     for t in range(1, len(mesh['time'])):
@@ -508,7 +507,7 @@ class WQVariableCalculator:
                 dims =  ('time', 'nedge'),
                 attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']}
             )
-            # advection_coefficient = mesh[EDGE_VERTICAL_AREA] * mesh[EDGE_VELOCITY] 
+    
             mesh[ADVECTION_COEFFICIENT] = xr.DataArray(
                 mesh[EDGE_VERTICAL_AREA] * mesh[EDGE_VELOCITY],
                 dims = ('time', 'nedge'),
@@ -520,11 +519,11 @@ class WQVariableCalculator:
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
         else:
             mesh[ADVECTION_COEFFICIENT] = xr.DataArray(
-                mesh[FLOW_ACROSS_FACE] * np.sign(abs(mesh[EDGE_VELOCITY])), # remove this
+                mesh[FLOW_ACROSS_FACE] * np.sign(abs(mesh[EDGE_VELOCITY])), # 0 if value velocity is 0. makes matrix solveable.
                 dims = ('time', 'nedge'),
                 attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
             
-            # vertical_area = mesh['advection_coeff'] / mesh['edge_velocity']
+            
             mesh[EDGE_VERTICAL_AREA] = xr.DataArray(
                 (mesh[ADVECTION_COEFFICIENT] / mesh[EDGE_VELOCITY]).fillna(0),
                 # vertical_area.fillna(0),
@@ -544,3 +543,10 @@ class WQVariableCalculator:
         dt = dt / np.timedelta64(1, 's')
         dt = np.insert(dt, len(dt), np.nan)
         mesh[CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
+
+        variables_to_remove = [
+            EDGE_VERTICAL_AREA,
+            WATER_SURFACE_ELEVATION,
+            FACE_SURFACE_AREA,
+        ]
+        mesh = mesh.drop(variables_to_remove)

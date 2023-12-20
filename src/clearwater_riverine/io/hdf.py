@@ -7,25 +7,45 @@ import numpy as np
 import pandas as pd
 import datetime
 
-from clearwater_riverine import variables
+from clearwater_riverine.variables import (
+    ADVECTION_COEFFICIENT,
+    EDGES_FACE1,
+    EDGES_FACE2,
+    EDGE_LENGTH,
+    EDGE_VELOCITY,
+    EDGE_NODES,
+    EDGE_FACE_CONNECTIVITY,
+    FACE_NODES,
+    FACE_SURFACE_AREA,
+    FACE_X,
+    FACE_Y,
+    FLOW_ACROSS_FACE,
+    NODE_X,
+    NODE_Y, 
+    NUMBER_OF_REAL_CELLS,
+    TIME,
+    VOLUME,
+    WATER_SURFACE_ELEVATION,
+
+)
 
 def _hdf_internal_paths(project_name):
     """ Define HDF paths to relevant data"""
     hdf_paths = {
-        variables.NODE_X: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
-        variables.NODE_Y: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
-        variables.TIME: 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
-        variables.FACE_NODES: f'Geometry/2D Flow Areas/{project_name}/Cells FacePoint Indexes',
-        variables.EDGE_NODES: f'Geometry/2D Flow Areas/{project_name}/Faces FacePoint Indexes',
-        variables.EDGE_FACE_CONNECTIVITY: f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes',
-        variables.FACE_X: f'Geometry/2D Flow Areas/{project_name}/Cells Center Coordinate', 
-        variables.FACE_Y: f'Geometry/2D Flow Areas/{project_name}/Cells Center Coordinate',
-        variables.FACE_SURFACE_AREA: f'Geometry/2D Flow Areas/{project_name}/Cells Surface Area',
-        variables.EDGE_VELOCITY: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Velocity',
-        variables.EDGE_LENGTH: f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length',
-        variables.WATER_SURFACE_ELEVATION: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Water Surface',
-        variables.FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow',
-        variables.VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume',
+        NODE_X: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
+        NODE_Y: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
+        TIME: 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
+        FACE_NODES: f'Geometry/2D Flow Areas/{project_name}/Cells FacePoint Indexes',
+        EDGE_NODES: f'Geometry/2D Flow Areas/{project_name}/Faces FacePoint Indexes',
+        EDGE_FACE_CONNECTIVITY: f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes',
+        FACE_X: f'Geometry/2D Flow Areas/{project_name}/Cells Center Coordinate', 
+        FACE_Y: f'Geometry/2D Flow Areas/{project_name}/Cells Center Coordinate',
+        FACE_SURFACE_AREA: f'Geometry/2D Flow Areas/{project_name}/Cells Surface Area',
+        EDGE_VELOCITY: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Velocity',
+        EDGE_LENGTH: f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length',
+        WATER_SURFACE_ELEVATION: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Water Surface',
+        FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow',
+        VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume',
         'project_name': 'Geometry/2D Flow Areas/Attributes',
         'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
         'volume elevation info': f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info',
@@ -83,14 +103,14 @@ class HDFReader:
         # x-coordinates
         mesh = mesh.assign_coords(
             node_x=xr.DataArray(
-            data = self.infile[self.paths[variables.NODE_X]][()].T[0],
+            data = self.infile[self.paths[NODE_X]][()].T[0],
             dims=('node',),
             )   
         )
         # y-coordinates
         mesh = mesh.assign_coords(
             node_y=xr.DataArray(
-                data=self.infile[self.paths[variables.NODE_X]][()].T[1],
+                data=self.infile[self.paths[NODE_X]][()].T[1],
                 dims=('node',),
             )
         )
@@ -111,11 +131,11 @@ class HDFReader:
 
     def define_topology(self, mesh: xr.Dataset):
         """Define mesh topology """
-        mesh[variables.FACE_NODES] = xr.DataArray(
+        mesh[FACE_NODES] = xr.DataArray(
             data=self.infile[f'Geometry/2D Flow Areas/{self.project_name}/Cells FacePoint Indexes'][()],
             coords={
-                "face_x": ('nface', self.infile[self.paths[variables.FACE_X]][()].T[0]),
-                "face_y": ('nface', self.infile[self.paths[variables.FACE_Y]][()].T[1]),
+                "face_x": ('nface', self.infile[self.paths[FACE_X]][()].T[0]),
+                "face_y": ('nface', self.infile[self.paths[FACE_Y]][()].T[1]),
             },
             dims=('nface', 'nmax_face'),
             attrs={
@@ -124,16 +144,16 @@ class HDFReader:
                 'start_index': 0, 
                 '_FillValue': -1
         })
-        mesh[variables.EDGE_NODES] = xr.DataArray(
-            data=self.infile[self.paths[variables.EDGE_NODES]][()],
+        mesh[EDGE_NODES] = xr.DataArray(
+            data=self.infile[self.paths[EDGE_NODES]][()],
             dims=("nedge", '2'),
             attrs={
                 'cf_role': 'edge_node_connectivity',
                 'long_name': 'Vertex nodes of mesh edges',
                 'start_index': 0
             })
-        mesh[variables.EDGE_FACE_CONNECTIVITY] = xr.DataArray(
-            data=self.infile[self.paths[variables.EDGE_FACE_CONNECTIVITY]][()],
+        mesh[EDGE_FACE_CONNECTIVITY] = xr.DataArray(
+            data=self.infile[self.paths[EDGE_FACE_CONNECTIVITY]][()],
             dims=("nedge", '2'),
             attrs={
                 'cf_role': 'edge_face_connectivity',
@@ -143,50 +163,50 @@ class HDFReader:
 
     def define_hydrodynamics(self, mesh: xr.Dataset):
         """Populates hydrodynamic data in UGRID-compliant xarray."""
-        mesh[variables.EDGES_FACE1] = _hdf_to_xarray(
+        mesh[EDGES_FACE1] = _hdf_to_xarray(
             mesh['edge_face_connectivity'].T[0],
             ('nedge'),
             attrs={'Units':''}
         )  
-        mesh[variables.EDGES_FACE2] = _hdf_to_xarray(
+        mesh[EDGES_FACE2] = _hdf_to_xarray(
             mesh['edge_face_connectivity'].T[1], 
             ('nedge'),
             attrs={'Units':''}
         )
         
-        nreal = mesh[variables.EDGE_FACE_CONNECTIVITY].T[0].values.max()
-        mesh.attrs[variables.NUMBER_OF_REAL_CELLS] = nreal
+        nreal = mesh[EDGE_FACE_CONNECTIVITY].T[0].values.max()
+        mesh.attrs[NUMBER_OF_REAL_CELLS] = nreal
         
-        mesh[variables.FACE_SURFACE_AREA] = _hdf_to_xarray(
-            self.infile[self.paths[variables.FACE_SURFACE_AREA]],
+        mesh[FACE_SURFACE_AREA] = _hdf_to_xarray(
+            self.infile[self.paths[FACE_SURFACE_AREA]],
             ("nface")
         )
-        mesh[variables.EDGE_VELOCITY] = _hdf_to_xarray(
-            self.infile[self.paths[variables.EDGE_VELOCITY]], 
+        mesh[EDGE_VELOCITY] = _hdf_to_xarray(
+            self.infile[self.paths[EDGE_VELOCITY]], 
             ('time', 'nedge'), 
         )
-        mesh[variables.EDGE_LENGTH] = _hdf_to_xarray(
-            self.infile[self.paths[variables.EDGE_LENGTH]][:,2],
+        mesh[EDGE_LENGTH] = _hdf_to_xarray(
+            self.infile[self.paths[EDGE_LENGTH]][:,2],
             ('nedge'), 
             attrs={'Units': 'ft'}
         )
-        mesh[variables.WATER_SURFACE_ELEVATION] = _hdf_to_xarray(
-            self.infile[self.paths[variables.WATER_SURFACE_ELEVATION]], 
+        mesh[WATER_SURFACE_ELEVATION] = _hdf_to_xarray(
+            self.infile[self.paths[WATER_SURFACE_ELEVATION]], 
             (['time', 'nface'])
         )
         try:
-            mesh[variables.VOLUME] = _hdf_to_xarray(
-                self.infile[self.paths[variables.VOLUME]], 
+            mesh[VOLUME] = _hdf_to_xarray(
+                self.infile[self.paths[VOLUME]], 
                 ('time', 'nface')
             ) 
-            # mesh[variables.VOLUME][:, mesh.attrs[variables.NUMBER_OF_REAL_CELLS]+1:] = 0 # revisit this
+
         except KeyError: 
             mesh.attrs['volume_calculation_required'] = True
             mesh.attrs['face_volume_elevation_info'] = _hdf_to_dataframe(self.infile[self.paths['volume elevation info']])
             mesh.attrs['face_volume_elevation_values'] = _hdf_to_dataframe(self.infile[self.paths['volume_elevation_values']])
         try:
-            mesh[variables.FLOW_ACROSS_FACE] = _hdf_to_xarray(
-                self.infile[self.paths[variables.FLOW_ACROSS_FACE]],
+            mesh[FLOW_ACROSS_FACE] = _hdf_to_xarray(
+                self.infile[self.paths[FLOW_ACROSS_FACE]],
                 ('time', 'nedge')
             )
         except:
@@ -194,7 +214,7 @@ class HDFReader:
             mesh.attrs['face_area_elevation_info'] = _hdf_to_dataframe(self.infile[self.paths['area_elevation_info']])
             mesh.attrs['face_area_elevation_values'] = _hdf_to_dataframe(self.infile[self.paths['area_elevation_values']])
             mesh.attrs['face_normalunitvector_and_length'] = _hdf_to_dataframe(self.infile[self.paths['normalunitvector_length']])
-            mesh.attrs['face_cell_indexes_df'] = _hdf_to_dataframe(self.infile[self.paths[variables.EDGE_FACE_CONNECTIVITY]])
+            mesh.attrs['face_cell_indexes_df'] = _hdf_to_dataframe(self.infile[self.paths[EDGE_FACE_CONNECTIVITY]])
         
 
     
