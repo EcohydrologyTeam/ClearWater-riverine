@@ -381,9 +381,7 @@ class ClearwaterRiverine:
         
     def _update_gdf(self):
         """Update gdf values."""
-        print('set plotting timestep equal to timestep')
         self.plotting_time_step = self.time_step
-        print(self.plotting_time_step, self.time_step)
 
         df_from_array = self.mesh['concentration'].isel(
             nface=slice(0,self.nreal_index)
