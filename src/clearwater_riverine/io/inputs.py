@@ -1,5 +1,10 @@
 from pathlib import Path
-from typing import Type, Union
+from typing import (
+    Type,
+    Union,
+    Optional,
+    Tuple
+)
 import errno
 import os
 
@@ -28,11 +33,16 @@ class RASInput:
         self.file_path = file_path
         if Path(self.file_path).is_file() == False:
             raise FileNotFoundError(
-                errno.ENOENT, os.strerror(errno.ENOENT), file_path
+                errno.ENOENT,
+                os.strerror(errno.ENOENT),
+                file_path
             )
         self.mesh = mesh
     
-    def read_to_xarray(self, reader: Type[HDFReader]) -> None:
+    def read_to_xarray(
+        self,
+        reader: Type[HDFReader],
+    ) -> None:
         """Reads RAS output using appropriate reader
         Args:
             reader (HDFReader): reader class. Currently only supports reading HDF files.
@@ -47,13 +57,21 @@ class RASInput:
 
 class RASReader:
     """Identify the concrete implementation of the RAS Reader"""
-    def read_to_xarray(self, readable: Type[RASInput], file_path: str):
+    def read_to_xarray(
+        self,
+        readable: Type[RASInput],
+        file_path: str,
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
+    ) -> None:
         """Use the RAS filepath to identify the correct reader from the reading_factory
         Args:
             readable (RASInput): abstract interface implemented on any file we weant to read
             file_path (str):  Filepath to RAS output file
         """
-        reader = reading_factory.get_reader(file_path)
+        reader = reading_factory.get_reader(
+            file_path,
+            datetime_range=datetime_range,
+        )
         readable.read_to_xarray(reader)
         return readable
 
@@ -63,7 +81,11 @@ class RASInputFactory:
         file_path (str): RAS output file path
         extension (str): Extension of RAS file path
     """           
-    def get_reader(self, file_path: str) -> Type[HDFReader]:
+    def get_reader(
+        self,
+        file_path: str,
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
+) -> Type[HDFReader]:
         """ Retrieve the correct reader from the reading factory
         Args:
             file_path (str): RAS output file path
@@ -74,7 +96,10 @@ class RASInputFactory:
         self.file_path = file_path
         self.extension = Path(self.file_path).suffix
         if self.extension == '.hdf':
-            return HDFReader(self.file_path)
+            return HDFReader(
+                self.file_path,
+                datetime_range=datetime_range
+            )
         else:
             raise ValueError("File type is not accepted.")
 

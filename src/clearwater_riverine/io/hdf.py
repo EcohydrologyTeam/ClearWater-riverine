@@ -1,4 +1,9 @@
-from typing import Dict, Any
+from typing import (
+    Dict,
+    Any,
+    Tuple,
+    Optional,
+)
 
 import h5py
 import xarray as xr
@@ -56,11 +61,20 @@ def _parse_attributes(dataset) -> Dict[str, Any]:
             attrs[key] = value
     return attrs
 
-def _hdf_to_xarray(dataset, dims, attrs=None) -> xr.DataArray:
+def _hdf_to_xarray(
+    dataset,
+    dims,
+    attrs=None,
+    time_constraint: Optional[Tuple[int, int]] = None,
+) -> xr.DataArray:
     """Read n-dimensional HDF5 dataset and return it as an xarray.DataArray"""
     if attrs == None:
         attrs = _parse_attributes(dataset)
-    data_array = xr.DataArray(dataset[()], dims = dims, attrs = attrs)
+    if isinstance(time_constraint, Tuple):
+        data_to_read = dataset[()][time_constraint[0]: time_constraint[1]]
+    else:
+        data_to_read = dataset[()]
+    data_array = xr.DataArray(data_to_read, dims = dims, attrs = attrs)
     return data_array
 
 def _hdf_to_dataframe(dataset) -> pd.DataFrame:
@@ -71,12 +85,55 @@ def _hdf_to_dataframe(dataset) -> pd.DataFrame:
 
 class HDFReader:
     """ Reads RAS hydrodynamic data required for WQ calculations in Clearwater Riverine Model from HDF file"""
-    def __init__(self, file_path: str) -> None:
+    def __init__(
+        self,
+        file_path: str,
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
+    ) -> None:
         """Opens HDF file and reads information required to set-up model mesh"""
         self.file_path = file_path
         self.infile = h5py.File(file_path, 'r')
         self.project_name = self.infile['Geometry/2D Flow Areas/Attributes'][()][0][0].decode('UTF-8')
         self.paths = _hdf_internal_paths(self.project_name)
+        self.datetime_range = datetime_range
+
+    def _parse_dates(self):
+        """Date handling."""
+        # time
+        time_stamps_binary = self.infile[self.paths['binary_time_stamps']][()]
+
+        # pandas is working faster than numpy for binary conversion
+        time_stamps = pd.Series(time_stamps_binary).str.decode('utf8')
+        xr_time_stamps = pd.to_datetime(time_stamps, format='%d%b%Y %H:%M:%S')
+
+        if isinstance(self.datetime_range, int):
+            self.datetime_range_indices: Tuple[int, int] = self.datetime_range
+            xr_time_stamps = xr_time_stamps[
+                self.datetime_range[0]:
+                self.datetime_range[1]
+                ]
+        elif isinstance(self.datetime_range, str):
+            start_date, end_date = map(
+                lambda x: pd.to_datetime(x, format='%d%b%Y %H:%M:%S'),
+                self.datetime_range
+            )
+            subset_dates = xr_time_stamps[
+                (xr_time_stamps >= start_date) & (xr_time_stamps <= end_date)
+            ]
+            subset_indices = subset_dates.index.intersection(xr_time_stamps.index)
+            self.datetime_range_indices: Tuple[int, int] = (
+                subset_indices[0],
+                subset_indices[-1]
+            )
+        else:
+            self.datetime_range_indices = (0, -1)
+
+        xr_time_stamps = xr_time_stamps[
+                self.datetime_range_indices[0]:
+                self.datetime_range_indices[1]
+                ]
+        
+        return xr_time_stamps
     
     def define_coordinates(self, mesh: xr.Dataset):
         """Populate Coordinates and Dimensions"""
@@ -94,12 +151,8 @@ class HDFReader:
                 dims=('node',),
             )
         )
-        # time
-        time_stamps_binary = self.infile[self.paths['binary_time_stamps']][()]
 
-        # pandas is working faster than numpy for binary conversion
-        time_stamps = pd.Series(time_stamps_binary).str.decode('utf8')
-        xr_time_stamps = pd.to_datetime(time_stamps, format='%d%b%Y %H:%M:%S')
+        xr_time_stamps = self._parse_dates()
 
         mesh = mesh.assign_coords(
             time=xr.DataArray(
@@ -162,8 +215,10 @@ class HDFReader:
             ("nface")
         )
         mesh[variables.EDGE_VELOCITY] = _hdf_to_xarray(
-            self.infile[self.paths[variables.EDGE_VELOCITY]], 
-            ('time', 'nedge'), 
+            self.infile[self.paths[variables.EDGE_VELOCITY]],
+            ('time', 'nedge'),
+            time_constraint=self.datetime_range_indices,
+
         )
         mesh[variables.EDGE_LENGTH] = _hdf_to_xarray(
             self.infile[self.paths[variables.EDGE_LENGTH]][:,2],
@@ -171,13 +226,15 @@ class HDFReader:
             attrs={'Units': 'ft'}
         )
         mesh[variables.WATER_SURFACE_ELEVATION] = _hdf_to_xarray(
-            self.infile[self.paths[variables.WATER_SURFACE_ELEVATION]], 
-            (['time', 'nface'])
+            self.infile[self.paths[variables.WATER_SURFACE_ELEVATION]],
+            (['time', 'nface']),
+            time_constraint=self.datetime_range_indices
         )
         try:
             mesh[variables.VOLUME] = _hdf_to_xarray(
-                self.infile[self.paths[variables.VOLUME]], 
-                ('time', 'nface')
+                self.infile[self.paths[variables.VOLUME]],
+                ('time', 'nface'),
+                time_constraint=self.datetime_range_indices
             ) 
             # mesh[variables.VOLUME][:, mesh.attrs[variables.NUMBER_OF_REAL_CELLS]+1:] = 0 # revisit this
         except KeyError: 
@@ -187,7 +244,8 @@ class HDFReader:
         try:
             mesh[variables.FLOW_ACROSS_FACE] = _hdf_to_xarray(
                 self.infile[self.paths[variables.FLOW_ACROSS_FACE]],
-                ('time', 'nedge')
+                ('time', 'nedge'),
+                time_constraint=self.datetime_range_indices
             )
         except:
             mesh.attrs['face_area_calculation_required'] = True

@@ -1,4 +1,8 @@
 import sys
+from typing import (
+    Optional,
+    Tuple,
+)
 
 import xarray as xr
 import pandas as pd
@@ -63,7 +67,11 @@ class ClearWaterXarray:
         self._obj.attrs['boundary_data'] = pd.DataFrame()
         self._obj.attrs['units'] = "Unknown"
 
-    def read_ras(self, file_path: str) -> xr.Dataset:
+    def read_ras(
+        self,
+        file_path: str,
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
+    ) -> xr.Dataset:
         """Read information in RAS output file to the mesh
         Args:
             file_path (str): RAS output filepath
