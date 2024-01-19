@@ -65,12 +65,12 @@ def _hdf_to_xarray(
     dataset,
     dims,
     attrs=None,
-    time_constraint: Optional[Tuple[int, int]] = None,
+    time_constraint: Optional[Tuple] = (None, None),
 ) -> xr.DataArray:
     """Read n-dimensional HDF5 dataset and return it as an xarray.DataArray"""
     if attrs == None:
         attrs = _parse_attributes(dataset)
-    if isinstance(time_constraint, Tuple):
+    if time_constraint != (None, None):
         data_to_read = dataset[()][time_constraint[0]: time_constraint[1]]
     else:
         data_to_read = dataset[()]
@@ -126,7 +126,7 @@ class HDFReader:
                 subset_indices[-1]
             )
         else:
-            self.datetime_range_indices = (0, -1)
+            self.datetime_range_indices = (None, None)
 
         xr_time_stamps = xr_time_stamps[
                 self.datetime_range_indices[0]:
