@@ -78,7 +78,11 @@ class ClearWaterXarray:
         """
         ras_data = RASInput(file_path, self._obj)
         reader = RASReader()
-        reader.read_to_xarray(ras_data, file_path)
+        reader.read_to_xarray(
+            ras_data,
+            file_path,
+            datetime_range=datetime_range
+        )
         self._obj = ras_data.mesh
         return self._obj
 

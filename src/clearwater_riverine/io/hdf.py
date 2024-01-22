@@ -106,15 +106,16 @@ class HDFReader:
         time_stamps = pd.Series(time_stamps_binary).str.decode('utf8')
         xr_time_stamps = pd.to_datetime(time_stamps, format='%d%b%Y %H:%M:%S')
 
-        if isinstance(self.datetime_range, int):
-            self.datetime_range_indices: Tuple[int, int] = self.datetime_range
-            xr_time_stamps = xr_time_stamps[
-                self.datetime_range[0]:
-                self.datetime_range[1]
-                ]
-        elif isinstance(self.datetime_range, str):
+        if self.datetime_range is None:
+            self.datetime_range_indices = (None, None)
+        elif isinstance(self.datetime_range[0], int):
+            self.datetime_range_indices: Tuple[int, int] = (
+                self.datetime_range[0],
+                self.datetime_range[1] + 1
+                )
+        elif isinstance(self.datetime_range[0], str):
             start_date, end_date = map(
-                lambda x: pd.to_datetime(x, format='%d%b%Y %H:%M:%S'),
+                lambda x: pd.to_datetime(x, format='%m-%d-%Y %H:%M:%S'),
                 self.datetime_range
             )
             subset_dates = xr_time_stamps[
@@ -123,15 +124,18 @@ class HDFReader:
             subset_indices = subset_dates.index.intersection(xr_time_stamps.index)
             self.datetime_range_indices: Tuple[int, int] = (
                 subset_indices[0],
-                subset_indices[-1]
+                subset_indices[-1] + 1
             )
         else:
-            self.datetime_range_indices = (None, None)
-
-        xr_time_stamps = xr_time_stamps[
-                self.datetime_range_indices[0]:
-                self.datetime_range_indices[1]
-                ]
+            raise TypeError(
+                "Invalid type of datetime_range, must be tuple of strings or ints"
+            )
+        
+        if self.datetime_range_indices != (None, None):
+            xr_time_stamps = xr_time_stamps[
+                    self.datetime_range_indices[0]:
+                    self.datetime_range_indices[1]
+                    ]
         
         return xr_time_stamps
     

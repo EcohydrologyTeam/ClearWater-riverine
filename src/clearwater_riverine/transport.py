@@ -77,7 +77,7 @@ class ClearwaterRiverine:
         ras_file_path: str,
         diffusion_coefficient_input: float,
         verbose: Optional[bool] = False,
-        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
     ) -> None:
         """ Initialize a Clearwater Riverine WQ model mesh by reading HDF output from a RAS2D model to an xarray."""
         self.gdf = None
@@ -87,7 +87,7 @@ class ClearwaterRiverine:
         if verbose: print("Populating Model Mesh...")
         self.mesh = self.mesh.cwr.read_ras(
             ras_file_path,
-            datetime_range
+            datetime_range=datetime_range
         )
         self.boundary_data = self.mesh.attrs['boundary_data']
 
@@ -475,7 +475,6 @@ class ClearwaterRiverine:
                 self._prep_plot(crs)
         
         if self.plotting_time_step != self.time_step:
-            print('updating GDF')
             self._update_gdf()
 
         mval = self._maximum_plotting_value(clim[1])

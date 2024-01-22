@@ -186,3 +186,4 @@ examples/data/formatted_qser_header.txt
 #local Visual Studio files
 /.vs
 .vscode/settings.json
+.vscode/launch.json
