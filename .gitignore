@@ -144,6 +144,7 @@ dmypy.json
 
 # Data files too big to commit
 examples/data/*.hdf
+examples/data/ohio_river/OhioRiver_m.p22.hdf
 
 # Temporary files created by examples
 examples/data_temp/
