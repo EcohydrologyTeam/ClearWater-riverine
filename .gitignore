@@ -181,7 +181,7 @@ examples/data/formatted_qser_data_B.txt
 examples/data/formatted_qser_header.txt
 
 # HEC-RAS hdf5 files
-*.hdf
+# *.hdf
 
 #local Visual Studio files
 /.vs
