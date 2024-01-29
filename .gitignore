@@ -142,6 +142,9 @@ dmypy.json
 *alias
 *.webloc
 
+# FreeFileSync
+*.sync.ffs_db
+
 # Data files too big to commit
 examples/data/*.hdf
 examples/data/ohio_river/OhioRiver_m.p22.hdf
