@@ -7,7 +7,11 @@ import geoviews as gv
 import geopandas as gpd
 from shapely.geometry import Polygon
 hv.extension("bokeh")
-from typing import Optional
+from typing import (
+    Literal,
+    Optional,
+    Tuple,
+)
 
 from clearwater_riverine.mesh import model_mesh
 from clearwater_riverine import variables
@@ -68,15 +72,25 @@ class ClearwaterRiverine:
         boundary_data (pd.DataFrame): Information on RAS model boundaries, extracted directly from HEC-RAS 2D output. 
     """
 
-    def __init__(self, ras_file_path: str, diffusion_coefficient_input: float, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        ras_file_path: str,
+        diffusion_coefficient_input: float,
+        verbose: Optional[bool] = False,
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
+    ) -> None:
         """ Initialize a Clearwater Riverine WQ model mesh by reading HDF output from a RAS2D model to an xarray."""
         self.gdf = None
 
         # define model mesh
         self.mesh = model_mesh(diffusion_coefficient_input)
         if verbose: print("Populating Model Mesh...")
-        self.mesh = self.mesh.cwr.read_ras(ras_file_path)
+        self.mesh = self.mesh.cwr.read_ras(
+            ras_file_path,
+            datetime_range=datetime_range
+        )
         self.boundary_data = self.mesh.attrs['boundary_data']
+
         if verbose: print("Calculating Required Parameters...")
         self.mesh = self.mesh.cwr.calculate_required_parameters()
         self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
@@ -461,7 +475,6 @@ class ClearwaterRiverine:
                 self._prep_plot(crs)
         
         if self.plotting_time_step != self.time_step:
-            print('updating GDF')
             self._update_gdf()
 
         mval = self._maximum_plotting_value(clim[1])
