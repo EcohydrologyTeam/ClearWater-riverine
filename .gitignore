@@ -142,48 +142,18 @@ dmypy.json
 *alias
 *.webloc
 
+# FreeFileSync
+*.sync.ffs_db
 
-# Data files too big to save
-examples/data/OhioRiver_m.p04
-examples/data/OhioRiver_m.p04.hdf
-examples/data/OhioRiver_m.p07.hdf
-examples/Read_EFDC/20110125_2007Baseline_1992/DYECON.bin
-examples/Read_EFDC/20110125_2007Baseline_1992/20110125_2007Baseline_1992_EFDC.mdb
-examples/Read_EFDC/20110125_2007Baseline_1992/CEval_1992_1001.csv
-examples/Read_EFDC/20110125_2007Baseline_1992/CEval_1992_1004.csv
-examples/Read_EFDC/20110125_2007Baseline_1992/CEval_1992_1007.csv
-examples/Read_EFDC/20110125_2007Baseline_1992/CEval_1992_1010.csv
-examples/Read_EFDC/20110125_2007Baseline_1992/CEval_1992_1017.csv
-examples/Read_EFDC/20110125_2007Baseline_1992/CEval_1992_1018.csv
-examples/Read_EFDC/20110125_2007Baseline_1992/GRIDMASK.bin
-examples/Read_EFDC/20110125_2007Baseline_1992/EFDC_Jun09_IVF-sse3.exe
+# Data files too big to commit
+examples/data/*.hdf
+examples/data/ohio_river/OhioRiver_m.p22.hdf
 
 # Temporary files created by examples
 examples/data_temp/
-OhioRiver_m.p07.hdf
-examples/data/OhioRiver_m.p10.hdf
-examples/data/ohio_river.parquet/part.0.parquet
-examples/data/shapefiles/EFDC.dbf
-examples/data/shapefiles/EFDC.prj
-examples/data/shapefiles/EFDC.sbn
-examples/data/shapefiles/EFDC.sbx
-examples/data/shapefiles/EFDC.shp
-examples/data/shapefiles/EFDC.shx
-examples/data/OhioRiver_m.p12.hdf
-examples/data/ohio_river-2010.parquet/part.0.parquet
-examples/data/OhioRiver_m.p18.hdf
-examples/data/EFDC_to_RAS_PointSource_links.txt
-examples/data/formatted_dser_data.txt
-examples/data/formatted_dser_data_B.txt
-examples/data/formatted_dser_header.txt
-examples/data/formatted_qser_data.txt
-examples/data/formatted_qser_data_B.txt
-examples/data/formatted_qser_header.txt
-
-# HEC-RAS hdf5 files
-*.hdf
 
 #local Visual Studio files
 /.vs
 .vscode/settings.json
 .vscode/launch.json
+
