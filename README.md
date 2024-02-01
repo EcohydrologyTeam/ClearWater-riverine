@@ -31,40 +31,57 @@ Clearwater Riverine is designed to run with **Python 3.10**.
 
 Follow these steps to install.
 
-#### 1. Install the Anaconda Python Distribution
+#### 1. Install Miniconda or Anaconda Distribution
 
-We recommend installing the [latest release](https://docs.anaconda.com/anaconda/reference/release-notes/) of [**Anaconda Individual Edition**](https://www.anaconda.com/distribution). Follow their [installation](https://docs.anaconda.com/anaconda/install/) documentation.
+We recommend installing the light-weight [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) that includes Python, the [conda](https://conda.io/docs/) environment and package management system, and their dependencies.
 
-#### 2. Clone or Download this Clearwater-riverine repository
+NOTE: Follow conda defaults to install in your local user director. DO NOT install for all users, to avoid substantial headaches with permissions.
+
+If you have already installed the [**Anaconda Distribution**](https://www.anaconda.com/download), you can use it to complete the next steps, but you may need to [update to the latest version](https://docs.anaconda.com/free/anaconda/install/update-version/).
+
+#### 2. Clone or Download this `Clearwater-riverine` repository
 
 From this Github site, click on the green "Code" dropdown button near the upper right. Select to either Open in GitHub Desktop (i.e. git clone) or "Download ZIP". We recommend using GitHub Desktop, to most easily receive updates.
 
-Place your copy of the Clearwater-riverine folder in any convenient location on your computer.
+Place your copy of this repo folder in any convenient location on your computer.
 
 #### 3. Create a Conda Environment for Clearwater Riverine Modeling 
 
-We have provided an [`environment.yml`](environment.yml) file, which lists all primary dependencies, to help. Create a `clearwater_riverine` environment either with the **Import** button on [Anaconda Navigator's Environments tab](https://docs.anaconda.com/anaconda/navigator/overview/#environments-tab), or use this [Conda](https://conda.io/docs/) command in your terminal or console,  replacing `path/environment.yml` with the full file pathway to the `environment.yml` file in the local cloned repository.
+We recommend creating a custom virtual environment with the [Conda](https://conda.io/docs/) package, dependency, and environment management for any language (i.e. easily install C++ packages such as GDAL).
+
+We provide an [`environment.yml`](environment.yml) file that specifies for [Conda](https://conda.io/docs/) how to create a virtual environment that contains the same software dependencies that we've used in development and testing.
+
+Create a `ClearWater-modules` environment using this [conda](https://conda.io/docs/) command in your terminal or Anaconda Prompt console. If necessary, replace `environment.yml` with the full file pathway to the `environment.yml` file in the local cloned repository.
 
 ```shell
-conda env create --file path/environment.yml
+conda env create --file environment.yml
 ```
-To update your environment, either use Anaconda Navigator, or run the following command:
+
+Alternatively, use the faster [`libmamba` solver](https://conda.github.io/conda-libmamba-solver/getting-started/) with:
 
 ```shell
-conda env update --file path/environment.yml --prune
+conda env create -f environment.yml --solver=libmamba
 ```
 
-or
+Activate the environment using the instructions printed by conda after the environment is created successfully.
+
+To update your environment to the latest versions of dependencies and/or add additional dependencies to your environment (by first editting [`environment.yml`](environment.yml)), run the following command:
 
 ```shell
-conda env create --file path/environment.yml --force
+conda env update -f environment.yml --solver=libmamba --prune
 ```
 
+or to recreate from scratch:
 
-#### 4. Add your Clearwater Riverine Path to Anaconda sites-packages
+```shell
+conda env create -f environment.yml --solver=libmamba --force
+```
 
-To have access to the `clearwater_riverine` module in your Python environments,
-it is necessary to have a path to your copy of Clearwater Riverine in Anaconda's `sites-packages` directory (i.e. something like `$HOME/path/to/anaconda/lib/pythonX.X/site-packages` or `$HOME/path/to/anaconda/lib/site-packages` similar).
+For additional information on managing conda environments, see [Conda's User Guide on Managing Environments](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html).
+
+#### 4. Add your `ClearWater-riverine` Path to Miniconda/Anaconda sites-packages
+
+To have access to the `clearwater_riverine` module in your Python environments, it is necessary to have a path to your copy of Clearwater Riverine in Anaconda's `sites-packages` directory (i.e. something like `$HOME/path/to/anaconda/lib/pythonX.X/site-packages` or `$HOME/path/to/anaconda/lib/site-packages` similar).
 
 The easiest way to do this is to use the [conda develop](https://docs.conda.io/projects/conda-build/en/latest/resources/commands/conda-develop.html) command in the console or terminal like this, replacing `/path/to/module/` with the full file pathway to the local cloned Clearwater-riverine repository:
 
