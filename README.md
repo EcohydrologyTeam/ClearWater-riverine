@@ -83,10 +83,10 @@ For additional information on managing conda environments, see [Conda's User Gui
 
 To have access to the `clearwater_riverine` module in your Python environments, it is necessary to have a path to your copy of Clearwater Riverine in Anaconda's `sites-packages` directory (i.e. something like `$HOME/path/to/anaconda/lib/pythonX.X/site-packages` or `$HOME/path/to/anaconda/lib/site-packages` similar).
 
-The easiest way to do this is to use the [conda develop](https://docs.conda.io/projects/conda-build/en/latest/resources/commands/conda-develop.html) command in the console or terminal like this, replacing `/path/to/module/` with the full file pathway to the local cloned Clearwater-riverine repository:
+The easiest way to do this is to use the [`conda develop`](https://docs.conda.io/projects/conda-build/en/latest/resources/commands/conda-develop.html) command in the console or terminal like this, replacing '/path/to/module/src' with the full file pathway to the local cloned Clearwater-riverine repository:
 
 ```console
-conda-develop /path/to/module/
+conda develop '/path/to/module/src'
 ```
 
 You should now be able to run the examples and create your own Jupyter Notebooks!
