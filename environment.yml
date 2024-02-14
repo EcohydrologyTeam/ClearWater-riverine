@@ -5,7 +5,7 @@ channels:
 
 dependencies:
   # Main package dependencies
-  - python >= 3.11
+  - python = 3.11
   - scipy # installs numpy, pandas and most pyData libraries
   - numba
   - dask
@@ -45,7 +45,8 @@ dependencies:
   - jupyterlab
   - nodejs  # required for many extensions
   - ipympl  # jupyter-matplotlib, https://github.com/matplotlib/ipympl
-  - ipywidgets  # Required for HoloViz interactivity
+  - ipywidgets  # Interactive HTML widgets for Jupyter
+  - jupyter_bokeh # Renders Holviz / Bokeh objects in Jupyter
 
   # Dev tools: Language Server Protocol (LSP) (Optional), for:
     # code navigation + hover suggestions + linters + autocompletion + rename
