@@ -39,7 +39,8 @@ dependencies:
   - hvplot  # hvPlot installs most HoloViz libs, https://holoviz.org
   - geoviews
   - selenium # required for saving gif output
-  - geckodriver # required for saving gif output 
+  - geckodriver # required for saving gif output
+  - param 
 
   # Interactivity via Jupyter Notebooks
   - jupyterlab
