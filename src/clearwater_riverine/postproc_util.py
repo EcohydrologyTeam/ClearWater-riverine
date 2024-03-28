@@ -37,7 +37,7 @@ def _mass_bal_global(simulation) -> pd.DataFrame:
     mass_start_sum_val_np = np.array([mass_start_sum_val])
 
     #Find Mass at the end of simulation
-    t_max_index = len(simulation.mesh.time) - 2
+    t_max_index = len(simulation.mesh.time) - 1
     vol_end = simulation.mesh.volume[t_max_index][0:nreal_index]
     conc_end = simulation.mesh.concentration[t_max_index][0:nreal_index]
     mass_end = vol_end * conc_end
@@ -172,7 +172,7 @@ def _mass_bal_global_100_Ans(simulation) -> pd.DataFrame:
     mass_start_sum_val_np = np.array([mass_start_sum_val])
 
     #Find Mass at the end of simulation
-    t_max_index = len(simulation.mesh.time) - 2
+    t_max_index = len(simulation.mesh.time) - 1
     vol_end = simulation.mesh.volume[t_max_index][0:nreal_index]
     conc_end = simulation.mesh.concentration[t_max_index][0:nreal_index]
     conc_end_100 = conc_end.copy(deep=True)

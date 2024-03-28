@@ -306,6 +306,8 @@ class ClearwaterRiverine:
             concentrations[t+1][0:self.mesh.nreal+1] = x
             concentrations[t+1][self.inp_converted[t].nonzero()] = self.inp_converted[t][self.inp_converted[t].nonzero()] 
             self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
+        
+        self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t+1)
 
         print(' 100%')
         concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
