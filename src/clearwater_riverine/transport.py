@@ -306,6 +306,8 @@ class ClearwaterRiverine:
             concentrations[t+1][0:self.mesh.nreal+1] = x
             concentrations[t+1][self.inp_converted[t].nonzero()] = self.inp_converted[t][self.inp_converted[t].nonzero()] 
             self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
+        
+        # self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t+1)
 
         print(' 100%')
         concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
@@ -340,8 +342,8 @@ class ClearwaterRiverine:
     ):
         """Calculates mass flux across cell boundaries."""
         negative_condition = self.mesh[variables.ADVECTION_COEFFICIENT].isel(time=t) < 0
-        parent_concentration = output[t][self.mesh[EDGES_FACE1]]
-        neighbor_concentration = output[t][self.mesh[EDGES_FACE2]]
+        parent_concentration = output[t+1][self.mesh[EDGES_FACE1]]
+        neighbor_concentration = output[t+1][self.mesh[EDGES_FACE2]]
 
         advection_mass_flux[t] = xr.where(
             negative_condition,

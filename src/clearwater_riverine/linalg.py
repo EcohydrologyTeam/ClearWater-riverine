@@ -58,10 +58,10 @@ class LHS:
         """
         # define edges where flow is flowing in versus out and find all empty cells
         # at the t+1 timestep
-        flow_out_indices = np.where((mesh[ADVECTION_COEFFICIENT][t+1] > 0))[0]
-        flow_out_indices_internal = np.where((mesh[ADVECTION_COEFFICIENT][t+1] > 0) & \
+        flow_out_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] > 0))[0]
+        flow_out_indices_internal = np.where((mesh[ADVECTION_COEFFICIENT][t] > 0) & \
                                              (np.isin(mesh.nedge, self.internal_edges)))[0]
-        flow_in_indices = np.where((mesh[ADVECTION_COEFFICIENT][t+1] < 0) & \
+        flow_in_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] < 0) & \
                                    (np.isin(mesh.nedge, self.internal_edges)))[0]
         empty_cells = np.where(mesh[VOLUME][t+1] == 0)[0][0:self.nreal_count]
 
@@ -94,13 +94,13 @@ class LHS:
 
         self.rows[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
         self.cols[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
-        self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.real_edges_face1]
+        self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.real_edges_face1]
 
         start = end
         end = end + len(self.real_edges_face2)
         self.rows[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
         self.cols[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
-        self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.real_edges_face2]
+        self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.real_edges_face2]
 
         ###### Advection
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
@@ -112,14 +112,14 @@ class LHS:
             # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
             self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t+1][flow_out_indices]  
+            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices]  
 
             # subtract from corresponding neighbor cell (off-diagonal)
             start = end
             end = end + len(flow_out_indices_internal)
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_out_indices_internal]
             self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices_internal]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t+1][flow_out_indices_internal] * -1  
+            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices_internal] * -1  
 
         if len(flow_in_indices) > 0:
             # update indices
@@ -130,7 +130,7 @@ class LHS:
             ## so the coefficient will be off-diagonal 
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_in_indices]
             self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t+1][flow_in_indices] 
+            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices] 
 
             ## update indices 
             start = end
@@ -138,7 +138,7 @@ class LHS:
             ## do the opposite on the corresponding diagonal 
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
             self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t+1][flow_in_indices]  * -1 
+            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices]  * -1 
         
         ###### off-diagonal terms - diffusion
         # update indices
@@ -146,14 +146,14 @@ class LHS:
         end = end + self.internal_edge_count
         self.rows[start:end] = mesh[EDGES_FACE1][self.internal_edges]
         self.cols[start:end] = mesh[EDGES_FACE2][self.internal_edges]
-        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.internal_edges]
+        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]
 
         # update indices and repeat 
         start = end
         end = end + self.internal_edge_count
         self.rows[start:end] = mesh[EDGES_FACE2][self.internal_edges]
         self.cols[start:end] = mesh[EDGES_FACE1][self.internal_edges]
-        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t+1][self.internal_edges]    
+        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]    
     
 class RHS:
     def __init__(self, mesh: xr.Dataset, inp: np.array):
