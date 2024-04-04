@@ -19,7 +19,10 @@ from clearwater_riverine.variables import (
     ADVECTION_COEFFICIENT,
     COEFFICIENT_TO_DIFFUSION_TERM,
     EDGES_FACE1,
-    EDGES_FACE2
+    EDGES_FACE2,
+    CHANGE_IN_TIME,
+    NUMBER_OF_REAL_CELLS,
+    CONCENTRATION
 )
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
@@ -200,11 +203,11 @@ class ClearwaterRiverine:
         self.time_step = 0
         self.concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
         self.concentrations[0] = self.input_array[0]
-        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(
+        self.mesh[CONCENTRATION] = _hdf_to_xarray(
             self.concentrations,
             dims = ('time', 'nface'),
             attrs={'Units': f'{units}'})
-        self.mesh[variables.CONCENTRATION][self.time_step][:] = self.concentrations[0]
+        self.mesh[CONCENTRATION][self.time_step][:] = self.concentrations[0]
 
         self.b = RHS(self.mesh, self.input_array)
         self.lhs = LHS(self.mesh)
@@ -311,7 +314,7 @@ class ClearwaterRiverine:
 
         print(' 100%')
         concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
-        self.mesh[variables.CONCENTRATION] = _hdf_to_xarray(concentrations_converted, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
+        self.mesh[CONCENTRATION] = _hdf_to_xarray(concentrations_converted, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
         # add advection / diffusion mass flux
         self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
@@ -319,8 +322,8 @@ class ClearwaterRiverine:
         self.mesh['mass_flux_total'] = _hdf_to_xarray(total_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
 
         # may need to move this if we want to plot things besides concentration
-        self.max_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).max())
-        self.min_value = int(self.mesh[variables.CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS])).min())
+        self.max_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
+        self.min_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_file_path)
@@ -341,17 +344,21 @@ class ClearwaterRiverine:
         t: int,
     ):
         """Calculates mass flux across cell boundaries."""
-        negative_condition = self.mesh[variables.ADVECTION_COEFFICIENT].isel(time=t) < 0
+        negative_condition = self.mesh[ADVECTION_COEFFICIENT].isel(time=t) < 0
         parent_concentration = output[t+1][self.mesh[EDGES_FACE1]]
         neighbor_concentration = output[t+1][self.mesh[EDGES_FACE2]]
+        delta_time = self.mesh[CHANGE_IN_TIME].isel(time=t)
 
         advection_mass_flux[t] = xr.where(
             negative_condition,
-            self.mesh[variables.ADVECTION_COEFFICIENT].isel(time=t) * neighbor_concentration,
-            self.mesh[variables.ADVECTION_COEFFICIENT].isel(time=t) * parent_concentration,
-        )
+            self.mesh[ADVECTION_COEFFICIENT].isel(time=t) * neighbor_concentration,
+            self.mesh[ADVECTION_COEFFICIENT].isel(time=t) * parent_concentration,
+        ) * delta_time
 
-        diffusion_mass_flux[t] = self.mesh[COEFFICIENT_TO_DIFFUSION_TERM][t] * (neighbor_concentration - parent_concentration)
+        diffusion_mass_flux[t] = self.mesh[COEFFICIENT_TO_DIFFUSION_TERM][t] * \
+              (neighbor_concentration - parent_concentration) * \
+              delta_time
+
         total_mass_flux[t] = advection_mass_flux[t] + diffusion_mass_flux[t]
 
 
@@ -365,7 +372,7 @@ class ClearwaterRiverine:
             Could we parse the CRS from the PRJ file?
         """
 
-        self.nreal_index = self.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] + 1
+        self.nreal_index = self.mesh.attrs[NUMBER_OF_REAL_CELLS] + 1
         real_face_node_connectivity = self.mesh.face_nodes[0:self.nreal_index]
 
         # Turn real mesh cells into polygons
@@ -485,7 +492,7 @@ class ClearwaterRiverine:
         def map_generator(datetime, mval=mval):
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
-            units = self.mesh[variables.CONCENTRATION].Units
+            units = self.mesh[CONCENTRATION].Units
             ras_map = gv.Polygons(
                 ras_sub_df,
                 vdims=['concentration', 'cell']).opts(
