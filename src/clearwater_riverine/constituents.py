@@ -44,8 +44,7 @@ class Constituent:
 
         # set up RHS matrix
         self.b = RHS(
-            mesh,
-
+            mesh=mesh,
         )
 
 

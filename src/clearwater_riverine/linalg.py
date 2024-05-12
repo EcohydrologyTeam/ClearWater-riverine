@@ -156,21 +156,24 @@ class LHS:
         self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]    
     
 class RHS:
-    def __init__(self, mesh: xr.Dataset, inp: np.array):
+    def __init__(self, mesh: xr.Dataset):
         """
         Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions. 
 
         Args:
             mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
-            inp (np.array):      Array of shape (time x nface) with user-defined inputs of concentrations
-                                    in each cell at each timestep. 
         """
         self.nreal_count = mesh.nreal + 1 # 0 indexed
-        self.inp = inp
         self.vals = np.zeros(self.nreal_count)
         self.ghost_cells = np.where(mesh[EDGES_FACE2] > mesh.nreal)[0]
 
-    def update_values(self, solution: np.array, mesh: xr.Dataset, t: int):
+    def update_values(
+        self,
+        solution: np.array,
+        mesh: xr.Dataset,
+        t: int,
+        name: str,
+    ):
         """ 
         Update right hand side data based on the solution from the previous timestep
             solution: solution from solving the sparse matrix 
@@ -179,12 +182,16 @@ class RHS:
             solution (np.array):    Solution of concentrations at timestep t from solving sparse matrix. 
             mesh (xr.Dataset):      UGRID-complaint xarray Dataset with all data required for the transport equation.
             t (int):                Timestep
-            inp (np.array):         Array of shape (time x nface) with user-defined inputs of concentrations
-                                        in each cell at each timestep [boundary conditions]
+            name (str):             Constituent name.
         """
-        solver = np.zeros(len(self.inp[t])) 
+        solver = np.zeros(
+            len(
+                mesh[name].isel(time=t)
+            )
+        ) 
         solver[0:self.nreal_count] = solution
-        solver[self.inp[t].nonzero()] = self.inp[t][self.inp[t].nonzero()] 
+        # TODO: make this work with xarray, probably with xr.where()
+        solver[mesh[name].isel(time=t).nonzero()] = self.inp[t][self.inp[t].nonzero()] 
         self.vals[:] = self._calculate_rhs(mesh, t, solver[0:self.nreal_count])
 
     def _calculate_change_in_time(self, mesh: xr.Dataset, t: int):
