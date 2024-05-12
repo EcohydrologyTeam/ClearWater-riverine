@@ -69,7 +69,9 @@ class Constituent:
     def set_boundary_conditions(
         self,
         filepath: str | Path,
-        mesh: xr.Dataset):
+        mesh: xr.Dataset,
+        boundary_data: pd.DataFrame
+    ):
         """Define boundary conditions for Clearwater Riverine model from a CSV file. 
 
         Args:

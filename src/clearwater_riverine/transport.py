@@ -8,10 +8,12 @@ import geopandas as gpd
 from shapely.geometry import Polygon
 hv.extension("bokeh")
 from typing import (
+    Dict,
     Literal,
     Optional,
     Tuple,
 )
+from pathlib import Path
 
 from clearwater_riverine.mesh import model_mesh
 from clearwater_riverine import variables
@@ -27,7 +29,7 @@ from clearwater_riverine.variables import (
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
 from clearwater_riverine.io.hdf import _hdf_to_xarray
-
+from clearwater_riverine.constituents import Constituent
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -77,100 +79,51 @@ class ClearwaterRiverine:
 
     def __init__(
         self,
-        ras_file_path: str,
+        flow_field_file_path: str | Path,
         diffusion_coefficient_input: float,
+        config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
-        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
     ) -> None:
-        """ Initialize a Clearwater Riverine WQ model mesh by reading HDF output from a RAS2D model to an xarray."""
+        """
+        Initialize a Clearwater Riverine WQ model mesh
+        reading HDF output from a RAS2D model to an xarray.
+        """
         self.gdf = None
+        self.time_step = 0
+
+        # TODO: add config parsing
+        if config_filepath:
+            model_config = {}
+            diffusion_coefficient_input = model_config['diffusion_coefficient']
+            flow_field_file_path = model_config['flow_field_filepath']
+            self.constituents = model_config['constituents'].keys()
+        else:
+            model_config = {}
+            self.constituents = ['constituent']
+           
+        self.contsituent_dict = {}
 
         # define model mesh
         self.mesh = model_mesh(diffusion_coefficient_input)
         if verbose: print("Populating Model Mesh...")
         self.mesh = self.mesh.cwr.read_ras(
-            ras_file_path,
+            flow_field_file_path,
             datetime_range=datetime_range
         )
         self.boundary_data = self.mesh.attrs['boundary_data']
 
         if verbose: print("Calculating Required Parameters...")
         self.mesh = self.mesh.cwr.calculate_required_parameters()
-        self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
-
-
-    def initial_conditions(self, filepath: str):
-        """Define initial conditions for Clearwater Riverine model from a CSV file. 
-
-        Args:
-            filepath (str): Filepath to a CSV containing initial conditions. The CSV should have two columns:
-                one called `Cell_Index` and one called `Concentration`. The file should the concentration
-                in each cell within the model domain at the first timestep. 
-        """
-        init = pd.read_csv(filepath)
-        init['Cell_Index'] = init.Cell_Index.astype(int)
-        self.input_array[0, [init['Cell_Index']]] =  init['Concentration']
-        return 
-
-    def boundary_conditions(self, filepath: str):
-        """Define boundary conditions for Clearwater Riverine model from a CSV file. 
-
-        Args:
-            filepath (str): Filepath to a CSV containing boundary conditions. The CSV should have the following columns:
-                `RAS2D_TS_Name` (the timeseries name, as labeled in the HEC-RAS model), `Datetime`, `Concentration`. 
-                This file should contain the concentration for all relevant boundary cells at every RAS timestep. 
-                If a timestep / boundary cell is not included in this CSV file, the concentration will be set to 0
-                in the Clearwater Riverine model.  
-        """
-        # Read in boundary condition data from user
-        bc_df = pd.read_csv(
-            filepath,
-            parse_dates=['Datetime']
+    
+        self.lhs = LHS(self.mesh)
+        self.initialize_constituents(
+            model_config=model_config
         )
 
-        xarray_time_index = pd.DatetimeIndex(
-            self.mesh.time.values
-        )
-        model_dataframe = pd.DataFrame({
-            'Datetime': xarray_time_index,
-            'Time Index': range(len(xarray_time_index))
-        })
-
-        result_df = pd.DataFrame()
-        for boundary, group_df in bc_df.groupby('RAS2D_TS_Name'):
-            # Merge with model timestep
-            merged_group = pd.merge_asof(
-                model_dataframe,
-                group_df,
-                on='Datetime'
-            )
-            # Interpolate
-            merged_group['Concentration'] = merged_group['Concentration'].interpolate(method='linear')
-            # Append to dataframe
-            result_df = pd.concat(
-                [result_df, merged_group], 
-                ignore_index=True
-            )
-        
-        # Merge with boundary data
-        boundary_df = pd.merge(
-            result_df,
-            self.boundary_data,
-            left_on = 'RAS2D_TS_Name',
-            right_on = 'Name',
-            how='left'
-        )
-        boundary_df['Ghost Cell'] = self.mesh.edges_face2[boundary_df['Face Index'].to_list()]
-        boundary_df['Domain Cell'] = self.mesh.edges_face1[boundary_df['Face Index'].to_list()]
-
-        # Assign to appropriate position in array
-        self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
-
-    def initialize(
+    def initialize_constituents(
         self,
-        initial_condition_path: Optional[str] = None,
-        boundary_condition_path: Optional[str] = None,
-        units: Optional[str] = None,
+        model_config: Dict,
     ):
         """Initializes model, developed to be BMI-adjacent.
 
@@ -191,67 +144,63 @@ class ClearwaterRiverine:
             units: the units of the concentration timeseries. If not provided, defaults to
                 'Unknown.'
         """
-        # Set initial and boundary conditions if provided
-        if initial_condition_path:
-            self.initial_conditions(initial_condition_path)
-        if boundary_condition_path:
-            self.boundary_conditions(boundary_condition_path)
-
-        if not units:
-            units = 'unknown'
-
         self.time_step = 0
-        self.concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
-        self.concentrations[0] = self.input_array[0]
-        self.mesh[CONCENTRATION] = _hdf_to_xarray(
-            self.concentrations,
-            dims = ('time', 'nface'),
-            attrs={'Units': f'{units}'})
-        self.mesh[CONCENTRATION][self.time_step][:] = self.concentrations[0]
+        self.constituent_dict = {}
 
-        self.b = RHS(self.mesh, self.input_array)
-        self.lhs = LHS(self.mesh)
+        for constituent in self.constituents:
+            self.constituent_dict[constituent] = Constituent(
+                name=constituent,
+                constituent_config=model_config['constituents'][constituent],
+                mesh=self.mesh
+            )
     
     def update(
         self,
         update_concentration: Optional[dict[str, xr.DataArray]] = None,
     ):
         """Update a single timestep."""
-        # Allow users to override concentration
-        if update_concentration:
-            for var_name, value in update_concentration.items():
-                self.mesh['concentration'][self.time_step][0: self.mesh.nreal+1] = update_concentration[var_name].values[0:self.mesh.nreal + 1]
-                x = update_concentration[var_name].values[0:self.mesh.nreal + 1]
-        else:
-            x = self.concentrations[self.time_step][0:self.mesh.nreal + 1]
+        ## TODO: update to iterate through dict keys and items
+        for constituent in self.constituents:
+            # Allow users to override concentration
+            ## TODO: confirm this is working as expected
+            if constituent in update_concentration.keys():
+                # for var_name, value in update_concentration.items():
+                self.mesh[constituent.name][self.time_step][0: self.mesh.nreal+1] = \
+                    update_concentration[constituent].values[0:self.mesh.nreal + 1]
+                x = update_concentration[constituent].values[0:self.mesh.nreal + 1]
+            else:
+                x = self.mesh[constituent.name][self.time_step][0:self.mesh.nreal + 1]
         
-        # Update the right hand side of the matrix 
-        self.b.update_values(
-            x,
-            self.mesh,
-            self.time_step
-        )
+            # Update the right hand side of the matrix 
+            constituent.b.update_values(
+                x,
+                self.mesh,
+                self.time_step
+            )
 
-        # Update the left hand side of the matrix 
-        self.lhs.update_values(
-            self.mesh,
-            self.time_step
-        )
+            # Update the left hand side of the matrix 
+            self.lhs.update_values(
+                self.mesh,
+                self.time_step
+            )
 
-        # Define compressed sparse row matrix
-        A = csr_matrix(
-            (self.lhs.coef, (self.lhs.rows, self.lhs.cols)),
-            shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
-        )
+            # Define compressed sparse row matrix
+            A = csr_matrix(
+                (self.lhs.coef, (self.lhs.rows, self.lhs.cols)),
+                shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
+            )
 
-        # Solve
-        x = linalg.spsolve(A, self.b.vals)
+            # Solve
+            x = linalg.spsolve(A, constituent.b.vals)
 
-        # Update timestep and save data
+            # Update timestep and save data
+            ## TODO: figure out how to handle input array... maybe this does need to stay.
+            self.concentrations[self.time_step][0:self.mesh.nreal+1] = x
+            self.concentrations[self.time_step][self.input_array[self.time_step].nonzero()] = self.input_array[self.time_step][self.input_array[self.time_step].nonzero()] 
+            self.mesh[constituent.name][self.time_step][:] = self.concentrations[self.time_step]
+
         self.time_step += 1
-        self.concentrations[self.time_step][0:self.mesh.nreal+1] = x
-        self.concentrations[self.time_step][self.input_array[self.time_step].nonzero()] = self.input_array[self.time_step][self.input_array[self.time_step].nonzero()] 
-        self.mesh['concentration'][self.time_step][:] = self.concentrations[self.time_step]
+
 
     def simulate_wq(
         self,
