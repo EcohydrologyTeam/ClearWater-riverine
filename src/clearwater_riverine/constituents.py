@@ -17,7 +17,10 @@ class Constituent:
         mesh: xr.Dataset,
     ):
         self.name = name
-
+        self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
         # TODO: make units optional
         self.units = constituent_config['units']
 
@@ -63,8 +66,13 @@ class Constituent:
         """
         initial_condition_df = pd.read_csv(filepath)
         initial_condition_df['Cell_Index'] = initial_condition_df.Cell_Index.astype(int)
-        # self.input_array[0, [init['Cell_Index']]] =  init['Concentration']
-        mesh[self.name][0, [initial_condition_df['Cell_Index']]] = initial_condition_df['Concentration']
+        self.input_array[0, [initial_condition_df['Cell_Index']]] =  initial_condition_df['Concentration']
+        mesh[self.name].loc[
+            {
+                'time': 0,
+                'nface': [initial_condition_df['Cell_Index']]
+            }
+        ] = self.input_array[0]
 
     def set_boundary_conditions(
         self,
@@ -118,7 +126,7 @@ class Constituent:
         # Merge with boundary data
         boundary_df = pd.merge(
             result_df,
-            self.boundary_data,
+            boundary_data,
             left_on = 'RAS2D_TS_Name',
             right_on = 'Name',
             how='left'
@@ -127,6 +135,5 @@ class Constituent:
         boundary_df['Domain Cell'] = mesh.edges_face1[boundary_df['Face Index'].to_list()]
 
         # Assign to appropriate position in array
-        # self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
-        mesh[self.name][[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
+        self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
     
