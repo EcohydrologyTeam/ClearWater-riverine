@@ -173,6 +173,7 @@ class RHS:
         mesh: xr.Dataset,
         t: int,
         name: str,
+        input_array: np.array,
     ):
         """ 
         Update right hand side data based on the solution from the previous timestep
@@ -190,8 +191,7 @@ class RHS:
             )
         ) 
         solver[0:self.nreal_count] = solution
-        # TODO: make this work with xarray, probably with xr.where()
-        solver[mesh[name].isel(time=t).nonzero()] = self.inp[t][self.inp[t].nonzero()] 
+        solver[input_array[t].nonzero()] = input_array[t][input_array[t].nonzero()] 
         self.vals[:] = self._calculate_rhs(mesh, t, solver[0:self.nreal_count])
 
     def _calculate_change_in_time(self, mesh: xr.Dataset, t: int):

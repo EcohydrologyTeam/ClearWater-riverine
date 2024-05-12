@@ -6,6 +6,7 @@ from xarray import xr
 import numpy as np
 
 from clearwater_riverine.linalg import RHS
+from clearwater_riverine.variables import NUMBER_OF_REAL_CELLS
 
 
 class Constituent:
@@ -23,11 +24,13 @@ class Constituent:
         self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
         # TODO: make units optional
         self.units = constituent_config['units']
+        self.max_value = None
+        self.min_value = None
 
         # add to model mesh
         mesh[self.name] = xr.DataArray(
             np.nan(
-                (len(self.mesh.time), len(self.mesh.nface))
+                (len(mesh.time), len(mesh.nface))
             ),
             dims = ('time', 'nface'),
             attrs = {
@@ -137,3 +140,11 @@ class Constituent:
         # Assign to appropriate position in array
         self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
     
+    ## TODO: probably a more elegant way to do this
+    def set_value_range(
+        self,
+        mesh: xr.Dataset
+    ):
+        self.max_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
+        self.min_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
+

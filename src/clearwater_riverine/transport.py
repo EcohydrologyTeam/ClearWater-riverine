@@ -185,9 +185,11 @@ class ClearwaterRiverine:
         
             # Update the right hand side of the matrix 
             constituent.b.update_values(
-                x,
-                self.mesh,
-                self.time_step
+                solution=x,
+                mesh=self.mesh,
+                t=self.time_step,
+                name=constituent_name,
+                input_array=constituent.input_array
             )
 
             # Solve
@@ -199,6 +201,15 @@ class ClearwaterRiverine:
             ] = x
             nonzero_indices = np.nonzero(self.input_array[self.time_step])
             self.mesh[constituent_name].loc[self.time_step, nonzero_indices] = self.input_array[self.time_step][nonzero_indices]
+
+            # Calculate mass flux
+            self._mass_flux(
+                self.mesh[constituent_name],
+                constituent.advection_mass_flux,
+                constituent.diffusion_mass_flux,
+                constituent.total_mass_flux,
+                t+1
+                )
 
         # increment timestep
         self.time_step += 1
@@ -212,7 +223,9 @@ class ClearwaterRiverine:
         save: bool = False, 
         output_file_path: str = './clearwater-riverine-wq-model.zarr'
     ):
-        """Runs water quality model. 
+        """Deprecated
+        
+        Runs water quality model. 
 
         Steps through each timestep of the HEC-RAS 2D output and solves the total-load advection-diffusion transport equation 
         using user-defined boundary and initial conditions. Users must use `initial_conditions()` and `boundary_conditions()` 
@@ -233,59 +246,78 @@ class ClearwaterRiverine:
         print("Starting WQ Simulation...")
 
         # Convert Units
-        unit_converter = UnitConverter(self.mesh, input_mass_units, input_volume_units, input_liter_conversion)
-        self.inp_converted = unit_converter._convert_units(self.input_array, convert_to=True)
+        # unit_converter = UnitConverter(self.mesh, input_mass_units, input_volume_units, input_liter_conversion)
+        # self.inp_converted = unit_converter._convert_units(self.input_array, convert_to=True)
         # self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
 
-        lhs = LHS(self.mesh)
-        # concentrations[0] = self.inp_converted[0]
-        # x = concentrations[0][0:self.mesh.nreal + 1]
-
-        # loop over time to solve
+        # Loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
             self.time_step = t
             self._timer(t)
             lhs.update_values(self.mesh, t)
-            A = csr_matrix((lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
+            A = csr_matrix(
+                (lhs.coef,(lhs.rows, lhs.cols)),
+                shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
+            )
 
             # solve for each constituent
             for constituent_name, constituent in self.constituents_dict.items():
-                constituent.b.update_values(x, self.mesh, t)
+                # Solve sparse matrix
+                constituent.b.update_values(
+                    solution=x,
+                    mesh=self.mesh,
+                    t=self.time_step,
+                    name=constituent_name,
+                    input_array=constituent.input_array
+                )
                 x = linalg.spsolve(A, constituent.b.vals)
+
+                # Save solution
                 self.mesh[constituent_name].loc[
-                    {'time': self.time_step}
+                    t+1, 0:self.mesh.nreal+1
                 ] = x
-                # TODO: add nonzero logic from input array!
-                # concentrations[t+1][0:self.mesh.nreal+1] = x
-                # concentrations[t+1][self.inp_converted[t].nonzero()] = self.inp_converted[t][self.inp_converted[t].nonzero()] 
+                nonzero_indices = np.nonzero(self.input_array[self.time_step])
+                self.mesh[constituent_name].loc[self.time_step, nonzero_indices] = self.input_array[self.time_step][nonzero_indices]
+
                 self._mass_flux(
                     self.mesh[constituent_name],
                     constituent.advection_mass_flux,
                     constituent.diffusion_mass_flux,
                     constituent.total_mass_flux,
-                    t
+                    t+1
                 )
         
         # self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t+1)
+        # concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
+        # self.mesh[CONCENTRATION] = _hdf_to_xarray(concentrations_converted, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
+        # # add advection / diffusion mass flux
+        # self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        # self.mesh['mass_flux_diffusion'] = _hdf_to_xarray(diffusion_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        # self.mesh['mass_flux_total'] = _hdf_to_xarray(total_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+
+        # # TODO: move this to plot things besides concentration
+        # self.max_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
+        # self.min_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
+
+        # if save == True:
+        #     self.mesh.cwr.save_clearwater_xarray(output_file_path)
+    
         print(' 100%')
 
-        ## TODO: add model wrap-up tasks --> align with BMI
-        concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
-        self.mesh[CONCENTRATION] = _hdf_to_xarray(concentrations_converted, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
-        # add advection / diffusion mass flux
-        self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
-        self.mesh['mass_flux_diffusion'] = _hdf_to_xarray(diffusion_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
-        self.mesh['mass_flux_total'] = _hdf_to_xarray(total_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
-
-        # TODO: moe this to plot things besides concentration
-        self.max_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
-        self.min_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
+    def finalize(
+        self,
+        save: Optional[bool] = False,
+        output_filepath: Optional[str] = None
+    ):
+        for _, constituent in self.constituent_dict.items():
+            constituent.set_value_range(self.mesh)            
 
         if save == True:
-            self.mesh.cwr.save_clearwater_xarray(output_file_path)
-    
+            self.mesh.cwr.save_clearwater_exarray(output_filepath)
+
+
     def _timer(self, t):
         if t == int(len(self.mesh['time']) / 4):
             print(' 25%')
@@ -341,24 +373,16 @@ class ClearwaterRiverine:
             p1 = Polygon(list(zip(xs.values, ys.values)))
             polygon_list.append(p1)
 
-        poly_gdf = gpd.GeoDataFrame({
-            'nface': self.mesh.nface[0:self.nreal_index],
-            'geometry': polygon_list},
-            crs = crs)
+        poly_gdf = gpd.GeoDataFrame(
+            {
+                'nface': self.mesh.nface[0:self.nreal_index],
+                'geometry': polygon_list
+            },
+            crs = crs
+        )
         self.poly_gdf = poly_gdf.to_crs('EPSG:4326')
         self._update_gdf()
-        
-        # gdf_ls = []
-
-        # for t in range(len(self.mesh.time)):
-        #     temp_gdf = gpd.GeoDataFrame({'cell': self.mesh.nface[0:nreal_index],
-        #                                 'datetime': pd.to_datetime(self.mesh.time[t].values),
-        #                                 'concentration': self.mesh.concentration.isel(time=t, nface=slice(0,nreal_index)),
-        #                                 'volume': self.mesh.volume.isel(time=t, nface=slice(0,nreal_index)),
-        #                                 'cell': self.mesh.nface[0:nreal_index],
-        #                                 'geometry': poly_gdf['geometry']}, 
-        #                                 crs = 'EPSG:4326')
-        #     gdf_ls.append(temp_gdf)
+    
         
     def _update_gdf(self):
         """Update gdf values."""
