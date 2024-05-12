@@ -5,6 +5,7 @@ from scipy.sparse import csr_matrix, linalg
 import holoviews as hv
 import geoviews as gv
 import geopandas as gpd
+import yaml
 from shapely.geometry import Polygon
 hv.extension("bokeh")
 from typing import (
@@ -29,6 +30,7 @@ from clearwater_riverine.variables import (
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
 from clearwater_riverine.io.hdf import _hdf_to_xarray
+from clearwater_riverine.io.config import parse_config
 from clearwater_riverine.constituents import Constituent
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -80,7 +82,7 @@ class ClearwaterRiverine:
     def __init__(
         self,
         flow_field_file_path: str | Path,
-        diffusion_coefficient_input: float,
+        diffusion_coefficient_input: Optional[float] = 0.0,
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
         datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
@@ -92,14 +94,13 @@ class ClearwaterRiverine:
         self.gdf = None
         self.time_step = 0
 
-        # TODO: add config parsing
         if config_filepath:
-            model_config = {}
+            model_config = parse_config(config_filepath=config_filepath)
             diffusion_coefficient_input = model_config['diffusion_coefficient']
             flow_field_file_path = model_config['flow_field_filepath']
             self.constituents = model_config['constituents'].keys()
         else:
-            model_config = {}
+            # TODO: add functionality to build model_config from inputs
             self.constituents = ['constituent']
            
         self.contsituent_dict = {}
@@ -261,7 +262,7 @@ class ClearwaterRiverine:
             )
 
             # solve for each constituent
-            for constituent_name, constituent in self.constituents_dict.items():
+            for constituent_name, constituent in self.constituent_dict.items():
                 # Solve sparse matrix
                 constituent.b.update_values(
                     solution=x,
