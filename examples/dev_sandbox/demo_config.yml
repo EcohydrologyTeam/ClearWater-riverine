@@ -1,0 +1,11 @@
+flow_field_filepath: path_name.hdf
+diffusion_coefficient: 0.1
+constituents:
+  conservative_tracer:
+    initial_conditions:
+    boundary_conditions:
+    units:
+  temperature:
+    initial_conditions:
+    boundary_conditions:
+    units:

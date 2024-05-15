@@ -250,7 +250,8 @@ class ClearwaterRiverine:
         # unit_converter = UnitConverter(self.mesh, input_mass_units, input_volume_units, input_liter_conversion)
         # self.inp_converted = unit_converter._convert_units(self.input_array, convert_to=True)
         # self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
-
+        lhs = LHS(self.mesh)
+        
         # Loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
             self.time_step = t
@@ -305,7 +306,6 @@ class ClearwaterRiverine:
         #     self.mesh.cwr.save_clearwater_xarray(output_file_path)
     
         print(' 100%')
-
 
     def finalize(
         self,
