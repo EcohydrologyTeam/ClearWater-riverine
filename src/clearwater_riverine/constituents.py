@@ -2,7 +2,7 @@ from typing import Dict
 from pathlib import Path
 
 import pandas as pd
-from xarray import xr
+import xarray as xr
 import numpy as np
 
 from clearwater_riverine.linalg import RHS
@@ -29,8 +29,9 @@ class Constituent:
 
         # add to model mesh
         mesh[self.name] = xr.DataArray(
-            np.nan(
-                (len(mesh.time), len(mesh.nface))
+            np.full(
+                (len(mesh.time), len(mesh.nface)),
+                np.nan
             ),
             dims = ('time', 'nface'),
             attrs = {
@@ -72,8 +73,7 @@ class Constituent:
         self.input_array[0, [initial_condition_df['Cell_Index']]] =  initial_condition_df['Concentration']
         mesh[self.name].loc[
             {
-                'time': 0,
-                'nface': [initial_condition_df['Cell_Index']]
+                'time': mesh['time'][0],
             }
         ] = self.input_array[0]
 
@@ -81,7 +81,6 @@ class Constituent:
         self,
         filepath: str | Path,
         mesh: xr.Dataset,
-        boundary_data: pd.DataFrame
     ):
         """Define boundary conditions for Clearwater Riverine model from a CSV file. 
 
@@ -129,7 +128,7 @@ class Constituent:
         # Merge with boundary data
         boundary_df = pd.merge(
             result_df,
-            boundary_data,
+            mesh.boundary_data,
             left_on = 'RAS2D_TS_Name',
             right_on = 'Name',
             how='left'

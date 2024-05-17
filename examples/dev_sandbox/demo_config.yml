@@ -1,11 +1,11 @@
-flow_field_filepath: path_name.hdf
+flow_field_filepath: C:\Users\sjordan\OneDrive - LimnoTech\Desktop\clearWaterTestCases.p48.hdf
 diffusion_coefficient: 0.1
 constituents:
   conservative_tracer:
-    initial_conditions:
-    boundary_conditions:
-    units:
+    initial_conditions: C:\Users\sjordan\OneDrive - LimnoTech\Desktop\cwr_initial_conditions_tracer.csv
+    boundary_conditions: C:\Users\sjordan\OneDrive - LimnoTech\Desktop\cwr_boundary_conditions_tracer.csv
+    units: mg/m3
   temperature:
-    initial_conditions:
-    boundary_conditions:
-    units:
+    initial_conditions: C:\Users\sjordan\OneDrive - LimnoTech\Desktop\cwr_initial_conditions_temp.csv
+    boundary_conditions: C:\Users\sjordan\OneDrive - LimnoTech\Desktop\cwr_boundary_conditions_temp.csv
+    units: degC

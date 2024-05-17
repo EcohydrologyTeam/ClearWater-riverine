@@ -81,7 +81,7 @@ class ClearwaterRiverine:
 
     def __init__(
         self,
-        flow_field_file_path: str | Path,
+        flow_field_file_path: Optional[str | Path] = None,
         diffusion_coefficient_input: Optional[float] = 0.0,
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
