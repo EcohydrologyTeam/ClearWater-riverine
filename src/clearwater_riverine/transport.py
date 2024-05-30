@@ -9,6 +9,7 @@ import yaml
 from shapely.geometry import Polygon
 hv.extension("bokeh")
 from typing import (
+    Any,
     Dict,
     Literal,
     Optional,
@@ -83,9 +84,11 @@ class ClearwaterRiverine:
         self,
         flow_field_file_path: Optional[str | Path] = None,
         diffusion_coefficient_input: Optional[float] = 0.0,
+        constituent_dict: Optional[Dict[str: Dict[str: Any]]] = None,
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
         datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
+
     ) -> None:
         """
         Initialize a Clearwater Riverine WQ model mesh
@@ -100,8 +103,15 @@ class ClearwaterRiverine:
             flow_field_file_path = model_config['flow_field_filepath']
             self.constituents = model_config['constituents'].keys()
         else:
-            # TODO: add functionality to build model_config from inputs
-            self.constituents = ['constituent']
+            if flow_field_file_path:
+                ## TODO: add some checking that input set up correctly
+                if isinstance(constituent_dict, Dict):
+                    self.constituents = constituent_dict
+                    model_config = {'constituents': constituent_dict}
+            else:
+                raise TypeError(
+                    'Missing a `config_filepath` or a `constituent_dict` and `flow_field_file_path` to run the model.'
+                )
            
         self.contsituent_dict = {}
 
@@ -140,7 +150,7 @@ class ClearwaterRiverine:
                 This file should contain the concentration for all relevant boundary cells
                 at every RAS timestep. If a timestep / boundary cell is not included in this
                 CSV file, the concentration will be set to 0 in the Clearwater Riverine model.
-                If not provide,d no boundary condtiions will be set up as part of the initialize
+                If not provided no boundary condtiions will be set up as part of the initialize
                 call. 
             units: the units of the concentration timeseries. If not provided, defaults to
                 'Unknown.'
