@@ -152,7 +152,8 @@ class ClearwaterRiverine:
             self.constituent_dict[constituent] = Constituent(
                 name=constituent,
                 constituent_config=model_config['constituents'][constituent],
-                mesh=self.mesh
+                mesh=self.mesh,
+                flow_field_boundaries=self.boundary_data,
             )
     
     def update(
@@ -174,10 +175,9 @@ class ClearwaterRiverine:
             shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
         )
 
-        for constituent_name, constituent in self.constituents.items():
+        for constituent_name, constituent in self.constituent_dict.items():
             # Allow users to override concentration
-            ## TODO: confirm this is working as expected
-            if constituent in update_concentration.keys():
+            if isinstance(update_concentration, dict) and constituent in update_concentration.keys():
                 self.mesh[constituent_name][self.time_step][0: self.mesh.nreal + 1] = \
                     update_concentration[constituent_name].values[0:self.mesh.nreal +    1]
                 x = update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
@@ -190,7 +190,6 @@ class ClearwaterRiverine:
                 mesh=self.mesh,
                 t=self.time_step,
                 name=constituent_name,
-                input_array=constituent.input_array
             )
 
             # Solve
@@ -198,10 +197,18 @@ class ClearwaterRiverine:
 
             # Update timestep and save data
             self.mesh[constituent_name].loc[
-                self.time_step, 0:self.mesh.nreal+1
+                {
+                    'time': self.mesh.time[self.time_step],
+                    'nface': self.mesh.nface.values[0:self.mesh.nreal+1]
+                }
             ] = x
-            nonzero_indices = np.nonzero(self.input_array[self.time_step])
-            self.mesh[constituent_name].loc[self.time_step, nonzero_indices] = self.input_array[self.time_step][nonzero_indices]
+            nonzero_indices = np.nonzero(constituent.input_array[self.time_step])
+            self.mesh[constituent_name].loc[
+                {
+                    'time': self.mesh.time[self.time_step],
+                    'nface': nonzero_indices[0]
+                }
+            ] = constituent.input_array[self.time_step][nonzero_indices]
 
             # Calculate mass flux
             self._mass_flux(
@@ -209,7 +216,7 @@ class ClearwaterRiverine:
                 constituent.advection_mass_flux,
                 constituent.diffusion_mass_flux,
                 constituent.total_mass_flux,
-                t+1
+                self.time_step
                 )
 
         # increment timestep

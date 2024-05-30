@@ -16,6 +16,7 @@ class Constituent:
         name: str,
         constituent_config: Dict,
         mesh: xr.Dataset,
+        flow_field_boundaries: pd.DataFrame,
     ):
         self.name = name
         self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
@@ -47,11 +48,13 @@ class Constituent:
         self.set_boundary_conditions(
             filepath=constituent_config['boundary_conditions'],
             mesh=mesh,
+            flow_field_boundaries=flow_field_boundaries,
         )
 
         # set up RHS matrix
         self.b = RHS(
             mesh=mesh,
+            input_array=self.input_array,
         )
 
 
@@ -81,17 +84,21 @@ class Constituent:
         self,
         filepath: str | Path,
         mesh: xr.Dataset,
+        flow_field_boundaries: pd.DataFrame
     ):
         """Define boundary conditions for Clearwater Riverine model from a CSV file. 
 
         Args:
             filepath (str): Filepath to a CSV containing boundary conditions. 
-            The CSV should have the following columns: `RAS2D_TS_Name` 
-            (the timeseries name, as labeled in the HEC-RAS model), `Datetime`,
-            `Concentration`. This file should contain the concentration for all
-            relevant boundary cells at every RAS timestep. If a timestep / boundary
-            cell is not included in this CSV file, the concentration will be set to 0
-            in the Clearwater Riverine model.  
+                The CSV should have the following columns: `RAS2D_TS_Name` 
+                (the timeseries name, as labeled in the HEC-RAS model), `Datetime`,
+                `Concentration`. This file should contain the concentration for all
+                relevant boundary cells at every RAS timestep. If a timestep / boundary
+                cell is not included in this CSV file, the concentration will be set to 0
+                in the Clearwater Riverine model. 
+            mesh (xr.Dataset): Unstructured model mesh.
+            flow_field_boundaries (pd.DataFrame): pandas dataframe definining how the 
+                boundaries are configured within the flow field.
         """
         # Read in boundary condition data from user
         bc_df = pd.read_csv(
@@ -128,7 +135,7 @@ class Constituent:
         # Merge with boundary data
         boundary_df = pd.merge(
             result_df,
-            mesh.boundary_data,
+            flow_field_boundaries,
             left_on = 'RAS2D_TS_Name',
             right_on = 'Name',
             how='left'

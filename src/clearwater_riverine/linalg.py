@@ -156,14 +156,21 @@ class LHS:
         self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]    
     
 class RHS:
-    def __init__(self, mesh: xr.Dataset):
+    def __init__(
+        self,
+        mesh: xr.Dataset,
+        input_array: np.array,
+    ):
         """
         Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions. 
 
         Args:
             mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
+            inp (np.array):      Array of shape (time x nface) with user-defined inputs of concentrations
+                                    in each cell at each timestep. 
         """
-        self.nreal_count = mesh.nreal + 1 # 0 indexed
+        self.nreal_count = mesh.nreal + 1  # 0 indexed
+        self.input_array = input_array
         self.vals = np.zeros(self.nreal_count)
         self.ghost_cells = np.where(mesh[EDGES_FACE2] > mesh.nreal)[0]
 
@@ -173,7 +180,6 @@ class RHS:
         mesh: xr.Dataset,
         t: int,
         name: str,
-        input_array: np.array,
     ):
         """ 
         Update right hand side data based on the solution from the previous timestep
@@ -191,7 +197,7 @@ class RHS:
             )
         ) 
         solver[0:self.nreal_count] = solution
-        solver[input_array[t].nonzero()] = input_array[t][input_array[t].nonzero()] 
+        solver[self.input_array[t].nonzero()] = self.input_array[t][self.input_array[t].nonzero()] 
         self.vals[:] = self._calculate_rhs(mesh, t, solver[0:self.nreal_count])
 
     def _calculate_change_in_time(self, mesh: xr.Dataset, t: int):
@@ -369,7 +375,7 @@ class RHS:
         external_cell_index = mesh[EDGES_FACE2][index_list]
 
         concentration_multipliers = np.zeros(len(mesh.nface))
-        concentration_multipliers[internal_cell_index] = self.inp[t][external_cell_index] 
+        concentration_multipliers[internal_cell_index] = self.input_array[t][external_cell_index] 
 
         if len(index_list) != 0:
             if advection:
