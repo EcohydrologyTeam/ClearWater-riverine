@@ -84,7 +84,7 @@ class ClearwaterRiverine:
         self,
         flow_field_file_path: Optional[str | Path] = None,
         diffusion_coefficient_input: Optional[float] = 0.0,
-        constituent_dict: Optional[Dict[str: Dict[str: Any]]] = None,
+        constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
         datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
