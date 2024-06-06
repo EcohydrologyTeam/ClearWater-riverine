@@ -5,7 +5,3 @@ constituents:
     initial_conditions: W:\2ERDC12 - Clearwater\config\cwr_initial_conditions_tracer.csv
     boundary_conditions: W:\2ERDC12 - Clearwater\config\cwr_boundary_conditions_tracer.csv
     units: mg/m3
-  temperature:
-    initial_conditions: W:\2ERDC12 - Clearwater\config\cwr_initial_conditions_temp.csv
-    boundary_conditions: W:\2ERDC12 - Clearwater\config\cwr_boundary_conditions_temp.csv
-    units: degC
