@@ -208,17 +208,17 @@ class ClearwaterRiverine:
             # Update timestep and save data
             self.mesh[constituent_name].loc[
                 {
-                    'time': self.mesh.time[self.time_step],
+                    'time': self.mesh.time[self.time_step + 1],
                     'nface': self.mesh.nface.values[0:self.mesh.nreal+1]
                 }
             ] = x
-            nonzero_indices = np.nonzero(constituent.input_array[self.time_step])
+            nonzero_indices = np.nonzero(constituent.input_array[self.time_step + 1])
             self.mesh[constituent_name].loc[
                 {
-                    'time': self.mesh.time[self.time_step],
+                    'time': self.mesh.time[self.time_step + 1],
                     'nface': nonzero_indices[0]
                 }
-            ] = constituent.input_array[self.time_step][nonzero_indices]
+            ] = constituent.input_array[self.time_step + 1][nonzero_indices]
 
             # Calculate mass flux
             self._mass_flux(
