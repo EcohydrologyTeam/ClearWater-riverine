@@ -5,13 +5,17 @@ from scipy.sparse import csr_matrix, linalg
 import holoviews as hv
 import geoviews as gv
 import geopandas as gpd
+import yaml
 from shapely.geometry import Polygon
 hv.extension("bokeh")
 from typing import (
+    Any,
+    Dict,
     Literal,
     Optional,
     Tuple,
 )
+from pathlib import Path
 
 from clearwater_riverine.mesh import model_mesh
 from clearwater_riverine import variables
@@ -27,7 +31,8 @@ from clearwater_riverine.variables import (
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
 from clearwater_riverine.io.hdf import _hdf_to_xarray
-
+from clearwater_riverine.io.config import parse_config
+from clearwater_riverine.constituents import Constituent
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -77,100 +82,59 @@ class ClearwaterRiverine:
 
     def __init__(
         self,
-        ras_file_path: str,
-        diffusion_coefficient_input: float,
+        flow_field_file_path: Optional[str | Path] = None,
+        diffusion_coefficient_input: Optional[float] = 0.0,
+        constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
+        config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
-        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
+        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
+
     ) -> None:
-        """ Initialize a Clearwater Riverine WQ model mesh by reading HDF output from a RAS2D model to an xarray."""
+        """
+        Initialize a Clearwater Riverine WQ model mesh
+        reading HDF output from a RAS2D model to an xarray.
+        """
         self.gdf = None
+        self.time_step = 0
+
+        if config_filepath:
+            model_config = parse_config(config_filepath=config_filepath)
+            diffusion_coefficient_input = model_config['diffusion_coefficient']
+            flow_field_file_path = model_config['flow_field_filepath']
+            self.constituents = model_config['constituents'].keys()
+        else:
+            if flow_field_file_path:
+                ## TODO: add some checking that input set up correctly
+                if isinstance(constituent_dict, Dict):
+                    self.constituents = constituent_dict
+                    model_config = {'constituents': constituent_dict}
+            else:
+                raise TypeError(
+                    'Missing a `config_filepath` or a `constituent_dict` and `flow_field_file_path` to run the model.'
+                )
+           
+        self.contsituent_dict = {}
 
         # define model mesh
         self.mesh = model_mesh(diffusion_coefficient_input)
         if verbose: print("Populating Model Mesh...")
         self.mesh = self.mesh.cwr.read_ras(
-            ras_file_path,
+            flow_field_file_path,
             datetime_range=datetime_range
         )
         self.boundary_data = self.mesh.attrs['boundary_data']
 
         if verbose: print("Calculating Required Parameters...")
         self.mesh = self.mesh.cwr.calculate_required_parameters()
-        self.input_array = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
-
-
-    def initial_conditions(self, filepath: str):
-        """Define initial conditions for Clearwater Riverine model from a CSV file. 
-
-        Args:
-            filepath (str): Filepath to a CSV containing initial conditions. The CSV should have two columns:
-                one called `Cell_Index` and one called `Concentration`. The file should the concentration
-                in each cell within the model domain at the first timestep. 
-        """
-        init = pd.read_csv(filepath)
-        init['Cell_Index'] = init.Cell_Index.astype(int)
-        self.input_array[0, [init['Cell_Index']]] =  init['Concentration']
-        return 
-
-    def boundary_conditions(self, filepath: str):
-        """Define boundary conditions for Clearwater Riverine model from a CSV file. 
-
-        Args:
-            filepath (str): Filepath to a CSV containing boundary conditions. The CSV should have the following columns:
-                `RAS2D_TS_Name` (the timeseries name, as labeled in the HEC-RAS model), `Datetime`, `Concentration`. 
-                This file should contain the concentration for all relevant boundary cells at every RAS timestep. 
-                If a timestep / boundary cell is not included in this CSV file, the concentration will be set to 0
-                in the Clearwater Riverine model.  
-        """
-        # Read in boundary condition data from user
-        bc_df = pd.read_csv(
-            filepath,
-            parse_dates=['Datetime']
+    
+        self.lhs = LHS(self.mesh)
+        self.initialize_constituents(
+            model_config=model_config
         )
 
-        xarray_time_index = pd.DatetimeIndex(
-            self.mesh.time.values
-        )
-        model_dataframe = pd.DataFrame({
-            'Datetime': xarray_time_index,
-            'Time Index': range(len(xarray_time_index))
-        })
-
-        result_df = pd.DataFrame()
-        for boundary, group_df in bc_df.groupby('RAS2D_TS_Name'):
-            # Merge with model timestep
-            merged_group = pd.merge_asof(
-                model_dataframe,
-                group_df,
-                on='Datetime'
-            )
-            # Interpolate
-            merged_group['Concentration'] = merged_group['Concentration'].interpolate(method='linear')
-            # Append to dataframe
-            result_df = pd.concat(
-                [result_df, merged_group], 
-                ignore_index=True
-            )
-        
-        # Merge with boundary data
-        boundary_df = pd.merge(
-            result_df,
-            self.boundary_data,
-            left_on = 'RAS2D_TS_Name',
-            right_on = 'Name',
-            how='left'
-        )
-        boundary_df['Ghost Cell'] = self.mesh.edges_face2[boundary_df['Face Index'].to_list()]
-        boundary_df['Domain Cell'] = self.mesh.edges_face1[boundary_df['Face Index'].to_list()]
-
-        # Assign to appropriate position in array
-        self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
-
-    def initialize(
+    def initialize_constituents(
         self,
-        initial_condition_path: Optional[str] = None,
-        boundary_condition_path: Optional[str] = None,
-        units: Optional[str] = None,
+        model_config: Dict,
     ):
         """Initializes model, developed to be BMI-adjacent.
 
@@ -186,72 +150,88 @@ class ClearwaterRiverine:
                 This file should contain the concentration for all relevant boundary cells
                 at every RAS timestep. If a timestep / boundary cell is not included in this
                 CSV file, the concentration will be set to 0 in the Clearwater Riverine model.
-                If not provide,d no boundary condtiions will be set up as part of the initialize
+                If not provided no boundary condtiions will be set up as part of the initialize
                 call. 
             units: the units of the concentration timeseries. If not provided, defaults to
                 'Unknown.'
         """
-        # Set initial and boundary conditions if provided
-        if initial_condition_path:
-            self.initial_conditions(initial_condition_path)
-        if boundary_condition_path:
-            self.boundary_conditions(boundary_condition_path)
-
-        if not units:
-            units = 'unknown'
-
         self.time_step = 0
-        self.concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
-        self.concentrations[0] = self.input_array[0]
-        self.mesh[CONCENTRATION] = _hdf_to_xarray(
-            self.concentrations,
-            dims = ('time', 'nface'),
-            attrs={'Units': f'{units}'})
-        self.mesh[CONCENTRATION][self.time_step][:] = self.concentrations[0]
+        self.constituent_dict = {}
 
-        self.b = RHS(self.mesh, self.input_array)
-        self.lhs = LHS(self.mesh)
+        for constituent in self.constituents:
+            self.constituent_dict[constituent] = Constituent(
+                name=constituent,
+                constituent_config=model_config['constituents'][constituent],
+                mesh=self.mesh,
+                flow_field_boundaries=self.boundary_data,
+            )
     
     def update(
         self,
         update_concentration: Optional[dict[str, xr.DataArray]] = None,
     ):
         """Update a single timestep."""
-        # Allow users to override concentration
-        if update_concentration:
-            for var_name, value in update_concentration.items():
-                self.mesh['concentration'][self.time_step][0: self.mesh.nreal+1] = update_concentration[var_name].values[0:self.mesh.nreal + 1]
-                x = update_concentration[var_name].values[0:self.mesh.nreal + 1]
-        else:
-            x = self.concentrations[self.time_step][0:self.mesh.nreal + 1]
-        
-        # Update the right hand side of the matrix 
-        self.b.update_values(
-            x,
-            self.mesh,
-            self.time_step
-        )
 
-        # Update the left hand side of the matrix 
+        # Update the left hand side of the matrix
+        # This is the same for all constituents
         self.lhs.update_values(
             self.mesh,
             self.time_step
         )
 
-        # Define compressed sparse row matrix
+        # Define compressed sparse row matrix for LHS
         A = csr_matrix(
             (self.lhs.coef, (self.lhs.rows, self.lhs.cols)),
             shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
         )
 
-        # Solve
-        x = linalg.spsolve(A, self.b.vals)
+        for constituent_name, constituent in self.constituent_dict.items():
+            # Allow users to override concentration
+            if isinstance(update_concentration, dict) and constituent in update_concentration.keys():
+                self.mesh[constituent_name][self.time_step][0: self.mesh.nreal + 1] = \
+                    update_concentration[constituent_name].values[0:self.mesh.nreal +    1]
+                x = update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
+            else:
+                x = self.mesh[constituent_name][self.time_step][0:self.mesh.nreal + 1]
+        
+            # Update the right hand side of the matrix 
+            constituent.b.update_values(
+                solution=x,
+                mesh=self.mesh,
+                t=self.time_step,
+                name=constituent_name,
+            )
 
-        # Update timestep and save data
+            # Solve
+            x = linalg.spsolve(A, constituent.b.vals)
+
+            # Update timestep and save data
+            self.mesh[constituent_name].loc[
+                {
+                    'time': self.mesh.time[self.time_step + 1],
+                    'nface': self.mesh.nface.values[0:self.mesh.nreal+1]
+                }
+            ] = x
+            nonzero_indices = np.nonzero(constituent.input_array[self.time_step + 1])
+            self.mesh[constituent_name].loc[
+                {
+                    'time': self.mesh.time[self.time_step + 1],
+                    'nface': nonzero_indices[0]
+                }
+            ] = constituent.input_array[self.time_step + 1][nonzero_indices]
+
+            # Calculate mass flux
+            self._mass_flux(
+                self.mesh[constituent_name],
+                constituent.advection_mass_flux,
+                constituent.diffusion_mass_flux,
+                constituent.total_mass_flux,
+                self.time_step
+                )
+
+        # increment timestep
         self.time_step += 1
-        self.concentrations[self.time_step][0:self.mesh.nreal+1] = x
-        self.concentrations[self.time_step][self.input_array[self.time_step].nonzero()] = self.input_array[self.time_step][self.input_array[self.time_step].nonzero()] 
-        self.mesh['concentration'][self.time_step][:] = self.concentrations[self.time_step]
+
 
     def simulate_wq(
         self,
@@ -261,7 +241,9 @@ class ClearwaterRiverine:
         save: bool = False, 
         output_file_path: str = './clearwater-riverine-wq-model.zarr'
     ):
-        """Runs water quality model. 
+        """Deprecated
+        
+        Runs water quality model. 
 
         Steps through each timestep of the HEC-RAS 2D output and solves the total-load advection-diffusion transport equation 
         using user-defined boundary and initial conditions. Users must use `initial_conditions()` and `boundary_conditions()` 
@@ -282,52 +264,78 @@ class ClearwaterRiverine:
         print("Starting WQ Simulation...")
 
         # Convert Units
-        unit_converter = UnitConverter(self.mesh, input_mass_units, input_volume_units, input_liter_conversion)
-        self.inp_converted = unit_converter._convert_units(self.input_array, convert_to=True)
+        # unit_converter = UnitConverter(self.mesh, input_mass_units, input_volume_units, input_liter_conversion)
+        # self.inp_converted = unit_converter._convert_units(self.input_array, convert_to=True)
         # self.inp_converted = self.input_array / input_liter_conversion / conversion_factor # convert to mass/ft3 or mass/m3 
-
-        output = np.zeros((len(self.mesh.time), self.mesh.nreal + 1))
-        advection_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
-        diffusion_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
-        total_mass_flux = np.zeros((len(self.mesh.time), len(self.mesh.nedge)))
-        concentrations = np.zeros((len(self.mesh.time), len(self.mesh.nface)))
-
-        b = RHS(self.mesh, self.inp_converted)
         lhs = LHS(self.mesh)
-        concentrations[0] = self.inp_converted[0]
-        x = concentrations[0][0:self.mesh.nreal + 1]
-
-        # loop over time to solve
+        
+        # Loop over time to solve
         for t in range(len(self.mesh['time']) - 1):
             self.time_step = t
             self._timer(t)
-            b.update_values(x, self.mesh, t)
             lhs.update_values(self.mesh, t)
-            A = csr_matrix((lhs.coef,(lhs.rows, lhs.cols)), shape=(self.mesh.nreal + 1, self.mesh.nreal + 1))
-            x = linalg.spsolve(A, b.vals)
-            # reactions would go here
-            concentrations[t+1][0:self.mesh.nreal+1] = x
-            concentrations[t+1][self.inp_converted[t].nonzero()] = self.inp_converted[t][self.inp_converted[t].nonzero()] 
-            self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t)
+            A = csr_matrix(
+                (lhs.coef,(lhs.rows, lhs.cols)),
+                shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
+            )
+
+            # solve for each constituent
+            for constituent_name, constituent in self.constituent_dict.items():
+                # Solve sparse matrix
+                constituent.b.update_values(
+                    solution=x,
+                    mesh=self.mesh,
+                    t=self.time_step,
+                    name=constituent_name,
+                    input_array=constituent.input_array
+                )
+                x = linalg.spsolve(A, constituent.b.vals)
+
+                # Save solution
+                self.mesh[constituent_name].loc[
+                    t+1, 0:self.mesh.nreal+1
+                ] = x
+                nonzero_indices = np.nonzero(self.input_array[self.time_step])
+                self.mesh[constituent_name].loc[self.time_step, nonzero_indices] = self.input_array[self.time_step][nonzero_indices]
+
+                self._mass_flux(
+                    self.mesh[constituent_name],
+                    constituent.advection_mass_flux,
+                    constituent.diffusion_mass_flux,
+                    constituent.total_mass_flux,
+                    t+1
+                )
         
         # self._mass_flux(concentrations, advection_mass_flux, diffusion_mass_flux, total_mass_flux, t+1)
+        # concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
+        # self.mesh[CONCENTRATION] = _hdf_to_xarray(concentrations_converted, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
+        # # add advection / diffusion mass flux
+        # self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        # self.mesh['mass_flux_diffusion'] = _hdf_to_xarray(diffusion_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+        # self.mesh['mass_flux_total'] = _hdf_to_xarray(total_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
+
+        # # TODO: move this to plot things besides concentration
+        # self.max_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
+        # self.min_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
+
+        # if save == True:
+        #     self.mesh.cwr.save_clearwater_xarray(output_file_path)
+    
         print(' 100%')
-        concentrations_converted = unit_converter._convert_units(concentrations, convert_to=False)
-        self.mesh[CONCENTRATION] = _hdf_to_xarray(concentrations_converted, dims = ('time', 'nface'), attrs={'Units': f'{input_mass_units}/{input_volume_units}'})
 
-        # add advection / diffusion mass flux
-        self.mesh['mass_flux_advection'] = _hdf_to_xarray(advection_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
-        self.mesh['mass_flux_diffusion'] = _hdf_to_xarray(diffusion_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
-        self.mesh['mass_flux_total'] = _hdf_to_xarray(total_mass_flux, dims=('time', 'nedge'), attrs={'Units': f'{input_mass_units}'})
-
-        # may need to move this if we want to plot things besides concentration
-        self.max_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
-        self.min_value = int(self.mesh[CONCENTRATION].sel(nface=slice(0, self.mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
+    def finalize(
+        self,
+        save: Optional[bool] = False,
+        output_filepath: Optional[str] = None
+    ):
+        for _, constituent in self.constituent_dict.items():
+            constituent.set_value_range(self.mesh)            
 
         if save == True:
-            self.mesh.cwr.save_clearwater_xarray(output_file_path)
-    
+            self.mesh.cwr.save_clearwater_exarray(output_filepath)
+
+
     def _timer(self, t):
         if t == int(len(self.mesh['time']) / 4):
             print(' 25%')
@@ -383,24 +391,16 @@ class ClearwaterRiverine:
             p1 = Polygon(list(zip(xs.values, ys.values)))
             polygon_list.append(p1)
 
-        poly_gdf = gpd.GeoDataFrame({
-            'nface': self.mesh.nface[0:self.nreal_index],
-            'geometry': polygon_list},
-            crs = crs)
+        poly_gdf = gpd.GeoDataFrame(
+            {
+                'nface': self.mesh.nface[0:self.nreal_index],
+                'geometry': polygon_list
+            },
+            crs = crs
+        )
         self.poly_gdf = poly_gdf.to_crs('EPSG:4326')
         self._update_gdf()
-        
-        # gdf_ls = []
-
-        # for t in range(len(self.mesh.time)):
-        #     temp_gdf = gpd.GeoDataFrame({'cell': self.mesh.nface[0:nreal_index],
-        #                                 'datetime': pd.to_datetime(self.mesh.time[t].values),
-        #                                 'concentration': self.mesh.concentration.isel(time=t, nface=slice(0,nreal_index)),
-        #                                 'volume': self.mesh.volume.isel(time=t, nface=slice(0,nreal_index)),
-        #                                 'cell': self.mesh.nface[0:nreal_index],
-        #                                 'geometry': poly_gdf['geometry']}, 
-        #                                 crs = 'EPSG:4326')
-        #     gdf_ls.append(temp_gdf)
+    
         
     def _update_gdf(self):
         """Update gdf values."""
