@@ -21,13 +21,13 @@ def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry):
     return simulation
 
 
-def _mass_bal_global(simulation) -> pd.DataFrame:
+def _mass_bal_global(simulation:cwr.ClearwaterRiverine, constituent_name: str) -> pd.DataFrame:
     """Returns entire domain and overall simulation period mass balance values"""
     
     #Find Mass at the start of simulation
     nreal_index = simulation.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] + 1
     vol_start = simulation.mesh.volume[0][0:nreal_index]
-    conc_start = simulation.mesh.concentration[0][0:nreal_index]
+    conc_start = simulation.mesh[constituent_name].data[0][0:nreal_index]
     mass_start = vol_start * conc_start
     vol_start_sum = vol_start.sum()
     mass_start_sum = mass_start.sum()
@@ -39,7 +39,7 @@ def _mass_bal_global(simulation) -> pd.DataFrame:
     #Find Mass at the end of simulation
     t_max_index = len(simulation.mesh.time) - 1
     vol_end = simulation.mesh.volume[t_max_index][0:nreal_index]
-    conc_end = simulation.mesh.concentration[t_max_index][0:nreal_index]
+    conc_end = simulation.mesh[constituent_name].data[t_max_index][0:nreal_index]
     mass_end = vol_end * conc_end
     vol_end_sum = vol_end.sum()
     mass_end_sum = mass_end.sum()
@@ -86,10 +86,11 @@ def _mass_bal_global(simulation) -> pd.DataFrame:
         df[bc_name_vol] = bc_totalVol_xda_val_np
         bcTotalVolInOutAll = bcTotalVolInOutAll + bc_totalVol_xda_val_np
         
-        bc_edgeMass_xda = simulation.mesh.mass_flux_total.sel(nedge=bndryData_n_Face_arrF)
+        bc_edgeMass_xda = simulation.constituent_dict[constituent_name].total_mass_flux[:, bndryData_n_Face_arrF]
         bc_totalMass_xda = bc_edgeMass_xda.sum()
-        bc_totalMass_xda_val = bc_totalMass_xda.values
-        bc_totalMass_xda_val_np = np.array([bc_totalMass_xda_val])
+        #bc_totalMass_xda_val = bc_totalMass_xda.values
+        #bc_totalMass_xda_val_np = np.array([bc_totalMass_xda_val])
+        bc_totalMass_xda_val_np = bc_totalMass_xda
         bc_name_mass = bc_name + '_mass'
         df[bc_name_mass] = bc_totalMass_xda_val_np
         bcTotalMassInOutAll = bcTotalMassInOutAll + bc_totalMass_xda_val_np
@@ -103,10 +104,12 @@ def _mass_bal_global(simulation) -> pd.DataFrame:
         df[bc_name_in_vol] = bc_totalVol_xda_val_np_in
         bcTotalVolInAll = bcTotalVolInAll + bc_totalVol_xda_val_np_in
         
-        bc_edgeMass_xda_in = bc_edgeMass_xda.where(bc_edgeMass_xda<=0, other=0)
+        #bc_edgeMass_xda_in = bc_edgeMass_xda.where(bc_edgeMass_xda<=0, other=0)
+        bc_edgeMass_xda_in = np.where(bc_edgeMass_xda<=0, bc_edgeMass_xda, bc_edgeMass_xda*0)
         bc_totalMass_xda_in = bc_edgeMass_xda_in.sum()
-        bc_totalMass_xda_val_in = bc_totalMass_xda_in.values
-        bc_totalMass_xda_val_np_in = np.array([bc_totalMass_xda_val_in])
+        #bc_totalMass_xda_val_in = bc_totalMass_xda_in.values
+        #bc_totalMass_xda_val_np_in = np.array([bc_totalMass_xda_val_in])
+        bc_totalMass_xda_val_np_in = bc_totalMass_xda_in
         bc_name_in_mass = bc_name + '_in_mass'
         df[bc_name_in_mass] = bc_totalMass_xda_val_np_in
         bcTotalMassInAll = bcTotalMassInAll + bc_totalMass_xda_val_np_in
@@ -120,12 +123,14 @@ def _mass_bal_global(simulation) -> pd.DataFrame:
         df[bc_name_out_vol] = bc_totalVol_xda_val_np_out
         bcTotalVolOutAll = bcTotalVolOutAll + bc_totalVol_xda_val_np_out
         
-        bc_edgeMass_xda_out = bc_edgeMass_xda.where(bc_edgeMass_xda>=0, other=0)
+        #bc_edgeMass_xda_out = bc_edgeMass_xda.where(bc_edgeMass_xda>=0, other=0)
+        bc_edgeMass_xda_out = np.where(bc_edgeMass_xda>=0, bc_edgeMass_xda, bc_edgeMass_xda*0)
         bc_totalMass_xda_out = bc_edgeMass_xda_out.sum()
-        bc_totalMass_xda_val_out = bc_totalMass_xda_out.values
-        bc_totalMass_xda_val_np_out = np.array([bc_totalMass_xda_val_out])
-        bc_name_out = bc_name + '_out'
-        df[bc_name_out] = bc_totalMass_xda_val_np_out
+        #bc_totalMass_xda_val_out = bc_totalMass_xda_out.values
+        #bc_totalMass_xda_val_np_out = np.array([bc_totalMass_xda_val_out])
+        bc_totalMass_xda_val_np_out = bc_totalMass_xda_out
+        bc_name_out_mass = bc_name + '_out_mass'
+        df[bc_name_out_mass] = bc_totalMass_xda_val_np_out
         bcTotalMassOutAll = bcTotalMassOutAll + bc_totalMass_xda_val_np_out
          
     df['bcTotalVolInOutAll'] = bcTotalVolInOutAll

@@ -2,6 +2,7 @@
 Script to help with debugging Clearwater-Riverine.
 """
 from pathlib import Path
+import os
 from typing import (
     Optional,
     Tuple
@@ -22,13 +23,21 @@ def run_clearwater_riverine_model(
     for t in range(99):
         transport_model.update()
     
-    mass_bal_df = _mass_bal_global(transport_model)
+    #mass_bal_df = _mass_bal_global(transport_model)
 
     return transport_model
 
 
 if __name__ == '__main__':
-    config_filepath = r'C:\Users\sjordan\OneDrive - LimnoTech\Documents\GitHub\ClearWater-riverine\examples\dev_sandbox\demo_config.yml'
+        # point to config
+    dir_str = os.path.abspath("")
+    dir = Path(dir_str)
+    dir_sandbox = dir / "examples" / "dev_sandbox"
+    config_filepath = dir_sandbox / "demo_config_single.yml"
+    print(dir)
+    print(config_filepath)
+    print(config_filepath.exists())
+    #config_filepath = r'C:\Users\sjordan\OneDrive - LimnoTech\Documents\GitHub\ClearWater-riverine\examples\dev_sandbox\demo_config.yml'
     start_index = 0
     end_index = 100
 
@@ -37,4 +46,4 @@ if __name__ == '__main__':
         datetime_range=(start_index, end_index)
     )
 
-
+    mass_bal_df = _mass_bal_global(transport_model, 'conservative_tracer')

@@ -77,5 +77,5 @@ if __name__ == '__main__':
 
     print(f'Running {hdf_name}.')
 
-    _mass_bal_global(transport_model)
+    _mass_bal_global(transport_model, 'conservative_tracer')
 
