@@ -8,7 +8,7 @@ from typing import (
     Tuple
 )
 import clearwater_riverine as cwr
-from clearwater_riverine.postproc_util import _mass_bal_global
+from clearwater_riverine.postproc_util import _mass_bal_global, _mass_bal_global_100_Ans
 
 def run_clearwater_riverine_model(
     config_filepath: str | Path,
@@ -47,3 +47,4 @@ if __name__ == '__main__':
     )
 
     mass_bal_df = _mass_bal_global(transport_model, 'conservative_tracer')
+    mass_bal_df_100 = _mass_bal_global_100_Ans(transport_model, 'conservative_tracer')

@@ -21,7 +21,8 @@ def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry):
     return simulation
 
 
-def _mass_bal_global(simulation:cwr.ClearwaterRiverine, constituent_name: str) -> pd.DataFrame:
+def _mass_bal_global(simulation:cwr.ClearwaterRiverine,
+                     constituent_name: str) -> pd.DataFrame:
     """Returns entire domain and overall simulation period mass balance values"""
     
     #Find Mass at the start of simulation
@@ -156,7 +157,8 @@ def _mass_bal_global(simulation:cwr.ClearwaterRiverine, constituent_name: str) -
 
 
 
-def _mass_bal_global_100_Ans(simulation) -> pd.DataFrame:
+def _mass_bal_global_100_Ans(simulation:cwr.ClearwaterRiverine,
+                             constituent_name: str) -> pd.DataFrame:
     """Returns entire domain and overall simulation period mass balance values
        assuming intial conditions are 100 mg/L everywhere and any boundary
        conditions inputs are also 100mg/L
@@ -165,8 +167,8 @@ def _mass_bal_global_100_Ans(simulation) -> pd.DataFrame:
     #Find Mass at the start of simulation
     nreal_index = simulation.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] + 1
     vol_start = simulation.mesh.volume[0][0:nreal_index]
-    conc_start = simulation.mesh.concentration[0][0:nreal_index]
-    conc_start_100 = conc_start.copy(deep=True)
+    conc_start = simulation.mesh[constituent_name].data[0][0:nreal_index]
+    conc_start_100 = vol_start.copy(deep=True)
     conc_start_100 = conc_start_100.where(conc_start_100==100, other=100)
     mass_start = vol_start * conc_start_100
     vol_start_sum = vol_start.sum()
@@ -179,8 +181,8 @@ def _mass_bal_global_100_Ans(simulation) -> pd.DataFrame:
     #Find Mass at the end of simulation
     t_max_index = len(simulation.mesh.time) - 1
     vol_end = simulation.mesh.volume[t_max_index][0:nreal_index]
-    conc_end = simulation.mesh.concentration[t_max_index][0:nreal_index]
-    conc_end_100 = conc_end.copy(deep=True)
+    conc_end = simulation.mesh[constituent_name].data[t_max_index][0:nreal_index]
+    conc_end_100 = vol_end.copy(deep=True)
     conc_end_100 = conc_end_100.where(conc_end_100==100, other=100)
     mass_end = vol_end * conc_end_100
     vol_end_sum = vol_end.sum()
@@ -268,7 +270,7 @@ def _mass_bal_global_100_Ans(simulation) -> pd.DataFrame:
         bc_totalMass_xda_out = bc_edgeMass_xda_out.sum()
         bc_totalMass_xda_val_out = bc_totalMass_xda_out.values
         bc_totalMass_xda_val_np_out = np.array([bc_totalMass_xda_val_out])
-        bc_name_out = bc_name + '_out'
+        bc_name_out = bc_name + '_out_mass'
         df[bc_name_out] = bc_totalMass_xda_val_np_out
         bcTotalMassOutAll = bcTotalMassOutAll + bc_totalMass_xda_val_np_out
          
