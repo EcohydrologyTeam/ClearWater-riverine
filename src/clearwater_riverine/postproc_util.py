@@ -2,15 +2,11 @@
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 import clearwater_riverine as cwr
 from clearwater_riverine import variables
 
-#import pytest
-
-
-
-#def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry) -> crw.ClearwaterRiverine:
 def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry):
     """Returns a Clearwater Riverine Simulation object that has water quality results"""
     fpath = ras_hdf
@@ -21,8 +17,10 @@ def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry):
     return simulation
 
 
-def _mass_bal_global(simulation:cwr.ClearwaterRiverine,
-                     constituent_name: str) -> pd.DataFrame:
+def _mass_bal_global(
+    simulation:cwr.ClearwaterRiverine,
+    constituent_name: str
+) -> pd.DataFrame:
     """Returns entire domain and overall simulation period mass balance values"""
     
     #Find Mass at the start of simulation
@@ -69,7 +67,7 @@ def _mass_bal_global(simulation:cwr.ClearwaterRiverine,
     bcTotalMassInAll = [0]
     bcTotalMassOutAll = [0]
     
-    for index, row in bcLineIDs_sorted.iterrows():
+    for _, row in bcLineIDs_sorted.iterrows():
         #Total Flow/Mass from boundary condition
         bc_name = row['Name']
         bc_id = row['BC Line ID']
@@ -157,8 +155,10 @@ def _mass_bal_global(simulation:cwr.ClearwaterRiverine,
 
 
 
-def _mass_bal_global_100_Ans(simulation:cwr.ClearwaterRiverine,
-                             constituent_name: str) -> pd.DataFrame:
+def _mass_bal_global_100_Ans(
+    simulation:cwr.ClearwaterRiverine,
+    constituent_name: str
+) -> pd.DataFrame:
     """Returns entire domain and overall simulation period mass balance values
        assuming intial conditions are 100 mg/L everywhere and any boundary
        conditions inputs are also 100mg/L
@@ -167,9 +167,12 @@ def _mass_bal_global_100_Ans(simulation:cwr.ClearwaterRiverine,
     #Find Mass at the start of simulation
     nreal_index = simulation.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] + 1
     vol_start = simulation.mesh.volume[0][0:nreal_index]
-    conc_start = simulation.mesh[constituent_name].data[0][0:nreal_index]
-    conc_start_100 = vol_start.copy(deep=True)
-    conc_start_100 = conc_start_100.where(conc_start_100==100, other=100)
+    conc_start = simulation.mesh[constituent_name][0][0:nreal_index]
+    conc_start_100 = xr.full_like(
+        conc_start,
+        fill_value=100,
+        dtype=np.float64
+    )
     mass_start = vol_start * conc_start_100
     vol_start_sum = vol_start.sum()
     mass_start_sum = mass_start.sum()
@@ -181,9 +184,12 @@ def _mass_bal_global_100_Ans(simulation:cwr.ClearwaterRiverine,
     #Find Mass at the end of simulation
     t_max_index = len(simulation.mesh.time) - 1
     vol_end = simulation.mesh.volume[t_max_index][0:nreal_index]
-    conc_end = simulation.mesh[constituent_name].data[t_max_index][0:nreal_index]
-    conc_end_100 = vol_end.copy(deep=True)
-    conc_end_100 = conc_end_100.where(conc_end_100==100, other=100)
+    conc_end = simulation.mesh[constituent_name][t_max_index][0:nreal_index]
+    conc_end_100 = xr.full_like(
+        conc_end,
+        fill_value=100,
+        dtype=np.float64
+    )
     mass_end = vol_end * conc_end_100
     vol_end_sum = vol_end.sum()
     mass_end_sum = mass_end.sum()
@@ -213,7 +219,7 @@ def _mass_bal_global_100_Ans(simulation:cwr.ClearwaterRiverine,
     bcTotalMassInAll = [0]
     bcTotalMassOutAll = [0]
     
-    for index, row in bcLineIDs_sorted.iterrows():
+    for _, row in bcLineIDs_sorted.iterrows():
         #Total Mass from boundary condition
         bc_name = row['Name']
         bc_id = row['BC Line ID']
@@ -229,9 +235,11 @@ def _mass_bal_global_100_Ans(simulation:cwr.ClearwaterRiverine,
         bc_name_vol = bc_name + '_vol'
         df[bc_name_vol] = bc_totalVol_xda_val_np
         bcTotalVolInOutAll = bcTotalVolInOutAll + bc_totalVol_xda_val_np
-        
-        bc_edgeConc100_xda = bc_edgeFlow_xda.copy(deep=True)
-        bc_edgeConc100_xda = bc_edgeConc100_xda.where(bc_edgeConc100_xda==100, other=100)
+        bc_edgeConc100_xda = xr.full_like(
+            bc_edgeFlow_xda,
+            fill_value=100,
+            dtype=np.float64
+        )
         bc_edgeMass_xda = bc_edgeFlow_xda * simulation.mesh[variables.CHANGE_IN_TIME] * bc_edgeConc100_xda
         bc_totalMass_xda = bc_edgeMass_xda.sum()
         bc_totalMass_xda_val = bc_totalMass_xda.values
