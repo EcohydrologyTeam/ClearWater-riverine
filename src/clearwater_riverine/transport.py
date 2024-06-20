@@ -189,9 +189,9 @@ class ClearwaterRiverine:
 
         for constituent_name, constituent in self.constituent_dict.items():
             # Allow users to override concentration
-            if isinstance(update_concentration, dict) and constituent in update_concentration.keys():
+            if isinstance(update_concentration, dict) and constituent_name in update_concentration.keys():
                 self.mesh[constituent_name][self.time_step][0: self.mesh.nreal + 1] = \
-                    update_concentration[constituent_name].values[0:self.mesh.nreal +    1]
+                    update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
                 x = update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
             else:
                 x = self.mesh[constituent_name][self.time_step][0:self.mesh.nreal + 1]
