@@ -83,7 +83,7 @@ class ClearwaterRiverine:
     def __init__(
         self,
         flow_field_file_path: Optional[str | Path] = None,
-        diffusion_coefficient_input: Optional[float] = 0.0,
+        diffusion_coefficient_input: Optional[float] = None,
         constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
@@ -99,8 +99,10 @@ class ClearwaterRiverine:
 
         if config_filepath:
             model_config = parse_config(config_filepath=config_filepath)
-            diffusion_coefficient_input = model_config['diffusion_coefficient']
-            flow_field_file_path = model_config['flow_field_filepath']
+            if diffusion_coefficient_input is None:
+                diffusion_coefficient_input = model_config['diffusion_coefficient']
+            if not flow_field_file_path:
+                flow_field_file_path = model_config['flow_field_filepath']
             self.constituents = model_config['constituents'].keys()
         else:
             if flow_field_file_path:
@@ -333,7 +335,7 @@ class ClearwaterRiverine:
             constituent.set_value_range(self.mesh)            
 
         if save == True:
-            self.mesh.cwr.save_clearwater_exarray(output_filepath)
+            self.mesh.cwr.save_clearwater_xarray(output_filepath)
 
 
     def _timer(self, t):
