@@ -189,12 +189,14 @@ class ClearwaterRiverine:
 
         # Check if constituent_name from update_concentration dict is one
         # of the constituents in the model
-        for update_constituent_name, _ in update_concentration.items():
-            if update_constituent_name in self.constituent_dict:
-                pass
-            else:
-                print(f"WARNING: {update_constituent_name} is not being used in the model.")
-                print("Please review the constituent names in the update dictionary")
+        
+        if isinstance(update_concentration, dict):
+            for update_constituent_name, _ in update_concentration.items():
+                if update_constituent_name in self.constituent_dict:
+                    pass
+                else:
+                    print(f"WARNING: {update_constituent_name} is not being used in the model.")
+                    print("Please review the constituent names in the update dictionary")
 
         for constituent_name, constituent in self.constituent_dict.items():
             # Allow users to override concentration
