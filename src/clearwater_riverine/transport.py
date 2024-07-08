@@ -26,7 +26,7 @@ from clearwater_riverine.variables import (
     EDGES_FACE2,
     CHANGE_IN_TIME,
     NUMBER_OF_REAL_CELLS,
-    CONCENTRATION
+    VOLUME,
 )
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
@@ -103,12 +103,12 @@ class ClearwaterRiverine:
                 diffusion_coefficient_input = model_config['diffusion_coefficient']
             if not flow_field_file_path:
                 flow_field_file_path = model_config['flow_field_filepath']
-            self.constituents = model_config['constituents'].keys()
+            self.constituents = list(model_config['constituents'].keys())
         else:
             if flow_field_file_path:
                 ## TODO: add some checking that input set up correctly
                 if isinstance(constituent_dict, Dict):
-                    self.constituents = constituent_dict.keys()
+                    self.constituents = list(constituent_dict.keys())
                     model_config = {'constituents': constituent_dict}
             else:
                 raise TypeError(
@@ -340,14 +340,24 @@ class ClearwaterRiverine:
         #     self.mesh.cwr.save_clearwater_xarray(output_file_path)
     
         print(' 100%')
+    
+    def set_value_range(
+        self,
+        constituent_name: Optional[str] = None
+    ):
+        """Set value ranges for constituents."""
+        if constituent_name != None:
+            self.constituent_dict[constituent_name].set_value_range(self.mesh)
+        else:
+            for _, constituent in self.constituent_dict.items():
+                constituent.set_value_range(self.mesh)  
 
     def finalize(
         self,
         save: Optional[bool] = False,
         output_filepath: Optional[str] = None
     ):
-        for _, constituent in self.constituent_dict.items():
-            constituent.set_value_range(self.mesh)            
+        self.set_value_range()          
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_filepath)
@@ -425,19 +435,29 @@ class ClearwaterRiverine:
     def _update_gdf(self):
         """Update gdf values."""
         self.plotting_time_step = self.time_step
+        constituent_dfs = []
+        gdf_elements = self.constituents + [VOLUME]
+        for constituent in gdf_elements:
+            df_from_array = self.mesh[constituent].isel(
+                nface=slice(0,self.nreal_index)
+                ).to_dataframe()
+            df_from_array.reset_index(inplace=True)
+            constituent_dfs.append(df_from_array)
 
-        df_from_array = self.mesh[[self.constituents]].isel(
-            nface=slice(0,self.nreal_index)
-            ).to_dataframe()
-        df_from_array.reset_index(inplace=True)
-        self.df_merged = gpd.GeoDataFrame(
-            pd.merge(
-                df_from_array,
-                self.poly_gdf,
-                on='nface',
-                how='left'
-            )
+        all_constituents = pd.concat(
+            constituent_dfs,
+            axis=1,
         )
+        all_constituents = all_constituents.loc[:, ~all_constituents.columns.duplicated()]
+
+        self.df_merged = gpd.GeoDataFrame(
+                pd.merge(
+                    all_constituents,
+                    self.poly_gdf,
+                    on='nface',
+                    how='left'
+                )
+            )
         self.df_merged.rename(
             columns={
                 'nface':'cell',
@@ -468,6 +488,8 @@ class ClearwaterRiverine:
         if clim_max != None:
             mx_val = clim_max
         else:
+            if self.constituent_dict[constituent_name].max_value == None:
+                self.set_value_range(constituent_name)
             mx_val = self.constituent_dict[constituent_name].max_value
         return mx_val
 
@@ -491,6 +513,8 @@ class ClearwaterRiverine:
         if clim_min != None:
             mn_val = clim_min
         else:
+            if self.constituent_dict[constituent_name].min_value == None:
+                self.set_value_range(constituent_name)
             mn_val = self.constituent_dict[constituent_name].min_value
         return mn_val
 
@@ -519,13 +543,14 @@ class ClearwaterRiverine:
             constituent_name=constituent_name
         )
         mn_val = self._minimum_plotting_value(
-            clim_max=clim[0],
+            clim_min=clim[0],
             constituent_name=constituent_name
         )
         return mx_val, mn_val
 
     def _prep_plot(
         self,
+        constituent_name: str | None,
         clim: tuple,
         gdf_plot=False,
         crs: Optional[str] = None,
@@ -556,7 +581,8 @@ class ClearwaterRiverine:
         crs: Optional[str] = None,
         clim: Optional[tuple] = (None, None),
         cmap: Optional[str] = 'OrRd',
-        time_index_range: Optional[tuple] = (0, -1)
+        time_index_range: Optional[tuple] = (0, -1), 
+        filter_empty: Optional[bool] = True,
     ):
         """Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
 
@@ -569,10 +595,11 @@ class ClearwaterRiverine:
             clim_max (float, optional): maximum value for color bar. If not specifies, the default will be the 
                 maximum concentration value in the model domain over the entire simulation horizon. 
             time_index_range (tuple, optional): minimum and maximum time index to plot.
+            filter_empty (boolean, optional): provides users the ability to filter out empty cells.
         """
 
         constituent_name, mx_val, mn_val = self._prep_plot(
-            self,
+            constituent_name=constituent_name,
             clim=clim,
             gdf_plot=True,
             crs=crs,
@@ -581,6 +608,8 @@ class ClearwaterRiverine:
         def map_generator(datetime):
             """This function generates plots for the DynamicMap"""
             ras_sub_df = self.gdf[self.gdf.datetime == datetime]
+            if filter_empty:
+                ras_sub_df = ras_sub_df[ras_sub_df[VOLUME] != 0]
             units = self.mesh[constituent_name].Units
             ras_map = gv.Polygons(
                 ras_sub_df,
@@ -615,7 +644,7 @@ class ClearwaterRiverine:
             clim_max (float, optional): maximum value for color bar. 
         """
         constituent_name, mx_val, mn_val = self._prep_plot(
-            self,
+            constituent_name=constituent_name,
             clim=clim,
         )
 
@@ -691,7 +720,7 @@ class ClearwaterRiverine:
 
         """
         constituent_name, mx_val, mn_val = self._prep_plot(
-            self,
+            constituent_name=constituent_name,
             clim=clim,
             gdf_plot=True,
             crs=crs,
@@ -702,7 +731,7 @@ class ClearwaterRiverine:
         ).values
 
         c = self.gdf[
-            (self.gdf.datetime == date_value) & (self.gdf.concentration !=0 )
+            (self.gdf.datetime == date_value) & (self.gdf[VOLUME] != 0)
         ].plot(
             column=constituent_name,
             cmap=cmap,
