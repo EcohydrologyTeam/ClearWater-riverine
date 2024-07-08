@@ -1,0 +1,36 @@
+# import modules
+from pathlib import Path
+import os
+import pandas as pd
+import xarray as xr
+import clearwater_riverine as cwr
+
+
+#point to config
+dir_str = os.path.abspath("")
+dir = Path(dir_str)
+dir_sandbox = dir / "examples" / "dev_sandbox"
+config_filepath = dir_sandbox / "demo_config.yml"
+print(dir)
+print(config_filepath)
+print(config_filepath.exists())
+
+
+#setup model
+transport_model = cwr.ClearwaterRiverine(
+    config_filepath=config_filepath,
+    verbose=True,
+)
+
+
+#make an array the shape of the temp array with 5,000 everywhere
+arbitrary_values_tracer = xr.full_like(transport_model.mesh.conservative_tracer, 200) 
+#print(arbitrary_values_tracer)
+arbitrary_values_temp = xr.full_like(transport_model.mesh.temperature, 5000) 
+update_concentration = {'conservative_tracer_IncorrectName':arbitrary_values_tracer.isel(time=1),
+                        'conservative_tracer':arbitrary_values_tracer.isel(time=1),
+                        'temperature_IncorrectName': arbitrary_values_temp.isel(time=1),
+                        'temperature': arbitrary_values_temp.isel(time=1)}
+
+transport_model.update(update_concentration)
+

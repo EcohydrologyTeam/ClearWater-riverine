@@ -187,11 +187,22 @@ class ClearwaterRiverine:
             shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
         )
 
+        # Check if constituent_name from update_concentration dict is one
+        # of the constituents in the model
+        
+        if isinstance(update_concentration, dict):
+            for update_constituent_name, _ in update_concentration.items():
+                if update_constituent_name in self.constituent_dict:
+                    pass
+                else:
+                    print(f"WARNING: {update_constituent_name} is not being used in the model.")
+                    print("Please review the constituent names in the update dictionary")
+
         for constituent_name, constituent in self.constituent_dict.items():
             # Allow users to override concentration
-            if isinstance(update_concentration, dict) and constituent in update_concentration.keys():
+            if isinstance(update_concentration, dict) and constituent_name in update_concentration.keys():
                 self.mesh[constituent_name][self.time_step][0: self.mesh.nreal + 1] = \
-                    update_concentration[constituent_name].values[0:self.mesh.nreal +    1]
+                    update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
                 x = update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
             else:
                 x = self.mesh[constituent_name][self.time_step][0:self.mesh.nreal + 1]
