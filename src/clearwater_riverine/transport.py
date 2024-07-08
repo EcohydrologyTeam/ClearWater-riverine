@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from scipy.sparse import csr_matrix, linalg
+import matplotlib.pyplot as plt
 import holoviews as hv
 import geoviews as gv
 import geopandas as gpd
@@ -386,7 +387,7 @@ class ClearwaterRiverine:
         total_mass_flux[t] = advection_mass_flux[t] + diffusion_mass_flux[t]
 
 
-    def _prep_plot(
+    def _prep_gdf(
         self,
         crs: str,
         ):
@@ -522,6 +523,31 @@ class ClearwaterRiverine:
             constituent_name=constituent_name
         )
         return mx_val, mn_val
+
+    def _prep_plot(
+        self,
+        clim: tuple,
+        gdf_plot=False,
+        crs: Optional[str] = None,
+    ):
+        """Duplicate code for prepping plots."""
+        if gdf_plot:
+            if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
+                if crs == None:
+                    raise ValueError("This is your first time running the plot function. You must specify a crs!")
+                else:
+                    self._prep_gdf(crs)
+        
+            if self.plotting_time_step != self.time_step:
+                self._update_gdf()
+            
+        constituent_name = self._check_constituent(constituent_name)
+
+        mx_val, mn_val = self._define_clims(
+            clim=clim,
+            constituent_name=constituent_name
+        )
+        return constituent_name, mx_val, mn_val
         
 
     def plot(
@@ -545,20 +571,11 @@ class ClearwaterRiverine:
             time_index_range (tuple, optional): minimum and maximum time index to plot.
         """
 
-        if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
-            if crs == None:
-                raise ValueError("This is your first time running the plot function. You must specify a crs!")
-            else:
-                self._prep_plot(crs)
-        
-        if self.plotting_time_step != self.time_step:
-            self._update_gdf()
-        
-        constituent_name = self._check_constituent(constituent_name)
-
-        mx_val, mn_val = self._define_clims(
+        constituent_name, mx_val, mn_val = self._prep_plot(
+            self,
             clim=clim,
-            constituent_name=constituent_name
+            gdf_plot=True,
+            crs=crs,
         )
 
         def map_generator(datetime):
@@ -597,11 +614,9 @@ class ClearwaterRiverine:
         Args:
             clim_max (float, optional): maximum value for color bar. 
         """
-        constituent_name = self._check_constituent(constituent_name)
-
-        mx_val, mn_val = self._define_clims(
+        constituent_name, mx_val, mn_val = self._prep_plot(
+            self,
             clim=clim,
-            constituent_name=constituent_name
         )
 
         def quick_map_generator(datetime):
@@ -651,3 +666,56 @@ class ClearwaterRiverine:
             return p1 # hv.Overlay([p2, p1]).opts(title=title)
 
         return hv.DynamicMap(quick_map_generator, kdims=['Time']).redim.values(Time=self.mesh.time.values)
+    
+    def static_plot(
+        self,
+        plotting_timestep: int,
+        constituent_name: Optional[str] = None,
+        clim: Optional[tuple] = (None,None),
+        cmap: Optional[str] = 'RdYlBu_r', 
+        crs: Optional[str] = None,    
+        save: Optional[bool] = False,
+        output_path: Optional[str | Path] = None,
+    ):
+        """Generates a static plot at a given timestep
+        
+            Args:
+                plotting_timestep (int): integer timestep to plot.
+                constituent_name (str): name of constituent to plot.
+                crs (str): coordinate system of the HEC-RAS 2D model. Only required the first time you call this method.
+                clim (tuple): min and max color limit values.
+                    Defaults to min and max values of constituent.
+                cmap (str): colormap.
+                save (bool): save 
+                output_path (str | Path): output path to save image.
+
+        """
+        constituent_name, mx_val, mn_val = self._prep_plot(
+            self,
+            clim=clim,
+            gdf_plot=True,
+            crs=crs,
+        )
+
+        date_value = self.mesh.time.isel(
+            time=plotting_timestep
+        ).values
+
+        c = self.gdf[
+            (self.gdf.datetime == date_value) & (self.gdf.concentration !=0 )
+        ].plot(
+            column=constituent_name,
+            cmap=cmap,
+            vmin=mn_val,
+            vmax=mx_val,
+            edgecolor = 'white',
+            linewidth = 0.1,
+        )
+        plt.xticks([])
+        plt.yticks([])
+        ax = plt.gca()
+        plt.axis('off')
+        plt.rcParams['figure.facecolor'] = 'lightgrey'
+        if save == True:
+            plt.savefig(output_path)
+        plt.show()
