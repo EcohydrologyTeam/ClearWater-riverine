@@ -110,7 +110,9 @@ class ClearWaterXarray:
                     'face_cell_indexes_df',
                     'face_volume_elevation_info',
                     'face_volume_elevation_values',
-                    'boundary_data']:
+                    'boundary_data',
+                    'volume_calculation_required',
+                    'face_area_calculation_required']:
             self._attempt_delete(key)
 
         # write output
