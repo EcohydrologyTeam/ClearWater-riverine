@@ -20,6 +20,9 @@ EDGE_LENGTH = 'edge_length'
 CHANGE_IN_TIME = 'dt'
 WATER_SURFACE_ELEVATION =  'water_surface_elev'
 DIFFUSION_COEFFICIENT = 'diffusion_coefficient'
+FACE_HYD_DEPTH = 'face_hydraulic_depth'  #optional output in HEC-RAS hdf file
+FACE_VEL_X = 'face_velocity_x'  #optional output in HEC-RAS hdf file
+FACE_VEL_Y = 'face_velocity_y'  #optional output in HEC-RAS hdf file
 
 # Calculated Values
 FLOW_ACROSS_FACE = 'face_flow'
@@ -30,6 +33,7 @@ COEFFICIENT_TO_DIFFUSION_TERM  = 'coeff_to_diffusion'
 SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM = 'sum_coeff_to_diffusion'
 GHOST_CELL_VOLUMES_IN = 'ghost_volumes_in'
 GHOST_CELL_VOLUMES_OUT = 'ghost_volumes_out'
+FACE_VEL_MAG = 'face_velocity_magnitude'
 
 # Water Quality
 POLLUTANT_LOAD = 'pollutant_load'
