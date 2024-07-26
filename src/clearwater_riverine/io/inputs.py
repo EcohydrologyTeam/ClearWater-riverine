@@ -1,3 +1,5 @@
+from abc import ABC
+from abc import abstractmethod
 from pathlib import Path
 from typing import (
     Type,
@@ -104,3 +106,62 @@ class RASInputFactory:
             raise ValueError("File type is not accepted.")
 
 reading_factory = RASInputFactory()
+
+class ZarrLoader:
+    """Loads Zarr Output"""
+    def load(mesh_file_path: str | Path):
+        return xr.open_zarr(
+            mesh_file_path
+        )
+
+class NetCDFLoader:
+    """Loads NetCDF Output"""
+    def load(mesh_file_path: str | Path):
+        return xr.open_dataset(
+            mesh_file_path,
+            engine='netcdf4'
+        )
+class ClearWaterRiverineLoader:
+    """Loads Clearwater Riverine mesh
+
+    Attributes:
+        mesh_file_path (str | Path): filepath to Clearwater Riverine output file
+    """
+    def __init__(self, mesh_file_path: str) -> None:
+        """Checks if output filepath exists"""
+        self.mesh_file_path = mesh_file_path
+        dir = Path(self.output_file_path).parents[0]
+        if dir.is_dir() == False:
+            raise FileNotFoundError(
+                errno.ENOENT, os.strerror(errno.ENOENT), mesh_file_path
+            )
+    
+    def load_mesh(
+        self,
+        loader: Union[Type[ZarrLoader], Type[NetCDFLoader]]
+    ) -> None:
+        """Loads model output using specified loader
+        Args:
+            looader (ZarrLoader or NetCDFLoader): loader class. 
+                Currently only supports loading from NetCDF or zarr.
+        """
+        loader.load(self.mesh_file_path)
+
+class ClearWaterRiverineLoadingFactory:
+    """
+    Creates factory to retrieve the correct reader from the loading factory.
+    """
+    def get_loader(
+        self,
+        mesh_file_path: str,
+    ) -> Union[Type[ZarrLoader], Type[NetCDFLoader]]:
+        self.mesh_file_path = mesh_file_path
+        self.extension = Path(self.mesh_file_path).suffix
+        if self.extension == '.zarr':
+            return ZarrLoader()
+        elif self.extension  == '.nc':
+            return NetCDFLoader()
+        else:
+            raise ValueError(f"Cannot save as {self.output_extension}.")
+    
+loading_factory = ClearWaterRiverineLoadingFactory()

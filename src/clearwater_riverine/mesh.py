@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from typing import (
     Optional,
     Tuple,
@@ -7,11 +8,16 @@ from typing import (
 import xarray as xr
 import pandas as pd
 
-from clearwater_riverine.io.inputs import RASInput, RASReader
+from clearwater_riverine.io.inputs import (
+    RASInput,
+    RASReader,
+    ClearWaterRiverineInputLoader, 
+    ClearWaterRiverineLoader,
+)
 from clearwater_riverine.io.outputs import ClearWaterRiverineOutput, ClearWaterRiverineWriter
 from clearwater_riverine.utilities import WQVariableCalculator
 
-def model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
+def instantiate_model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
     """ Initialize the Clearwater Model Mesh
 
     Args:
@@ -48,6 +54,14 @@ def model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
         'diffusion_coefficient': diffusion_coefficient_input}
 
     return ds
+
+def load_model_mesh(
+    mesh_file_path: str | Path
+):
+    # write output
+    loader = ClearWaterRiverineLoader()
+    return loader.load_mesh(mesh_file_path)
+    
 
 @xr.register_dataset_accessor("cwr")
 class ClearWaterXarray:
