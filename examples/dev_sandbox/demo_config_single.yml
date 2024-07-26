@@ -1,0 +1,7 @@
+flow_field_filepath: W:\2ERDC12 - Clearwater\config\clearWaterTestCases.p48.hdf
+diffusion_coefficient: 0.1
+constituents:
+  conservative_tracer:
+    initial_conditions: W:\2ERDC12 - Clearwater\config\cwr_initial_conditions_tracer.csv
+    boundary_conditions: W:\2ERDC12 - Clearwater\config\cwr_boundary_conditions_tracer.csv
+    units: mg/m3
