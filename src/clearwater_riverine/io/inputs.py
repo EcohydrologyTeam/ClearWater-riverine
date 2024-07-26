@@ -109,14 +109,14 @@ reading_factory = RASInputFactory()
 
 class ZarrLoader:
     """Loads Zarr Output"""
-    def load(mesh_file_path: str | Path):
+    def load(self, mesh_file_path: str | Path):
         return xr.open_zarr(
             mesh_file_path
         )
 
 class NetCDFLoader:
     """Loads NetCDF Output"""
-    def load(mesh_file_path: str | Path):
+    def load(self, mesh_file_path: str | Path):
         return xr.open_dataset(
             mesh_file_path,
             engine='netcdf4'
@@ -130,7 +130,7 @@ class ClearWaterRiverineLoader:
     def __init__(self, mesh_file_path: str) -> None:
         """Checks if output filepath exists"""
         self.mesh_file_path = mesh_file_path
-        dir = Path(self.output_file_path).parents[0]
+        dir = Path(self.mesh_file_path).parents[0]
         if dir.is_dir() == False:
             raise FileNotFoundError(
                 errno.ENOENT, os.strerror(errno.ENOENT), mesh_file_path
@@ -138,14 +138,16 @@ class ClearWaterRiverineLoader:
     
     def load_mesh(
         self,
-        loader: Union[Type[ZarrLoader], Type[NetCDFLoader]]
     ) -> None:
         """Loads model output using specified loader
         Args:
             looader (ZarrLoader or NetCDFLoader): loader class. 
                 Currently only supports loading from NetCDF or zarr.
         """
-        loader.load(self.mesh_file_path)
+        loader = loading_factory.get_loader(
+            self.mesh_file_path,
+        )
+        return loader.load(self.mesh_file_path)
 
 class ClearWaterRiverineLoadingFactory:
     """
@@ -162,6 +164,6 @@ class ClearWaterRiverineLoadingFactory:
         elif self.extension  == '.nc':
             return NetCDFLoader()
         else:
-            raise ValueError(f"Cannot save as {self.output_extension}.")
+            raise ValueError(f"Cannot save as {self.extension}.")
     
 loading_factory = ClearWaterRiverineLoadingFactory()

@@ -11,7 +11,6 @@ import pandas as pd
 from clearwater_riverine.io.inputs import (
     RASInput,
     RASReader,
-    ClearWaterRiverineInputLoader, 
     ClearWaterRiverineLoader,
 )
 from clearwater_riverine.io.outputs import ClearWaterRiverineOutput, ClearWaterRiverineWriter
@@ -59,8 +58,8 @@ def load_model_mesh(
     mesh_file_path: str | Path
 ):
     # write output
-    loader = ClearWaterRiverineLoader()
-    return loader.load_mesh(mesh_file_path)
+    loader = ClearWaterRiverineLoader(mesh_file_path)
+    return loader.load_mesh()
     
 
 @xr.register_dataset_accessor("cwr")
