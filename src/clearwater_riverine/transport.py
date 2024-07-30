@@ -131,7 +131,7 @@ class ClearwaterRiverine:
             self._determine_constituents()
             self.initialize_constituents(
                 method='load'
-            )
+            )   
             if verbose: print(
                 f"""
                     Loaded model mesh.
@@ -394,6 +394,8 @@ class ClearwaterRiverine:
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_filepath)
+            output_path = Path(output_filepath)
+            self.boundary_data.to_csv(f'{output_path.parent}/{output_path.stem}_boundary_data.csv')
 
 
     def _timer(self, t):
