@@ -63,7 +63,7 @@ class LHS:
                                              (np.isin(mesh.nedge, self.internal_edges)))[0]
         flow_in_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] < 0) & \
                                    (np.isin(mesh.nedge, self.internal_edges)))[0]
-        empty_cells = np.where(mesh[VOLUME][t+1] == 0)[0][0:self.nreal_count]
+        empty_cells = np.where((mesh[VOLUME][t+1] == 0) & (np.arange(len(mesh[VOLUME][t+1])) < self.nreal_count))[0][0:self.nreal_count]
 
         # initialize arrays that will define the sparse matrix 
         len_val = self.internal_edge_count * 2 + self.nreal_count * 2 + \
