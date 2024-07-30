@@ -157,4 +157,4 @@ examples/data_temp/
 .vscode/settings.json
 .vscode/launch.json
 
-examples/dev_sandbox/temp/sumwere_creek_coarse_p48/*
+examples/dev_sandbox/temp/*
