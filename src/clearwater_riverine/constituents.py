@@ -1,4 +1,8 @@
-from typing import Dict
+from typing import (
+    Dict,
+    Literal,
+    Optional
+)
 from pathlib import Path
 
 import pandas as pd
@@ -14,9 +18,10 @@ class Constituent:
     def __init__(
         self,
         name: str,
-        constituent_config: Dict,
         mesh: xr.Dataset,
-        flow_field_boundaries: pd.DataFrame,
+        flow_field_boundaries: Optional[pd.DataFrame] = None,
+        constituent_config: Optional[Dict] = None,
+        method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
         self.name = name
         self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
@@ -24,38 +29,42 @@ class Constituent:
         self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
         self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
         # TODO: make units optional
-        self.units = constituent_config['units']
-        self.max_value = None
-        self.min_value = None
+        if method == 'initialize':
+            self.units = constituent_config['units']
+            self.max_value = None
+            self.min_value = None
 
-        # add to model mesh
-        mesh[self.name] = xr.DataArray(
-            np.full(
-                (len(mesh.time), len(mesh.nface)),
-                np.nan
-            ),
-            dims = ('time', 'nface'),
-            attrs = {
-                'Units': f'{self.units}'
-            }
-        )
+            # add to model mesh
+            mesh[self.name] = xr.DataArray(
+                np.full(
+                    (len(mesh.time), len(mesh.nface)),
+                    np.nan
+                ),
+                dims = ('time', 'nface'),
+                attrs = {
+                    'Units': f'{self.units}'
+                }
+            )
 
-        # define initial and boundary conditions
-        self.set_initial_conditions(
-            filepath=constituent_config['initial_conditions'],
-            mesh=mesh,
-        )
-        self.set_boundary_conditions(
-            filepath=constituent_config['boundary_conditions'],
-            mesh=mesh,
-            flow_field_boundaries=flow_field_boundaries,
-        )
+            # define initial and boundary conditions
+            self.set_initial_conditions(
+                filepath=constituent_config['initial_conditions'],
+                mesh=mesh,
+            )
+            self.set_boundary_conditions(
+                filepath=constituent_config['boundary_conditions'],
+                mesh=mesh,
+                flow_field_boundaries=flow_field_boundaries,
+            )
 
-        # set up RHS matrix
-        self.b = RHS(
-            mesh=mesh,
-            input_array=self.input_array,
-        )
+            # set up RHS matrix
+            self.b = RHS(
+                mesh=mesh,
+                input_array=self.input_array,
+            )
+        elif method == 'load':
+            self.units = mesh[name].Units
+            self.set_value_range(mesh)
 
 
     def set_initial_conditions(

@@ -1,4 +1,5 @@
-#from pathlib import Path
+from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -19,9 +20,18 @@ def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry):
 
 def _mass_bal_global(
     simulation:cwr.ClearwaterRiverine,
-    constituent_name: str
+    constituent_name: str,
+    boundary_data_path: Optional[str | Path] = None,
 ) -> pd.DataFrame:
     """Returns entire domain and overall simulation period mass balance values"""
+    if _mass_flux_calculation_required(
+        simulation=simulation,
+        constituent_name=constituent_name,
+    ):
+        _calculate_mass_flux(
+            simulation=simulation,
+            constituent_name=constituent_name,
+        )
     
     #Find Mass at the start of simulation
     nreal_index = simulation.mesh.attrs[variables.NUMBER_OF_REAL_CELLS] + 1
@@ -55,7 +65,10 @@ def _mass_bal_global(
     df = pd.DataFrame(data=d)
     
     #Loop to find total mass in/out from all boundary conditions
-    bndryData = simulation.boundary_data
+    bndryData = _parse_boundary_data(
+        simulation=simulation,
+        boundary_data_path=boundary_data_path
+    )
     bcLineIDs = bndryData.groupby(by='Name').mean(numeric_only=True)
     bcLineIDs_sorted = bcLineIDs.sort_values(by=['BC Line ID']).reset_index()
     
@@ -153,11 +166,10 @@ def _mass_bal_global(
     return df
 
 
-
-
 def _mass_bal_global_100_Ans(
     simulation:cwr.ClearwaterRiverine,
-    constituent_name: str
+    constituent_name: str,
+    boundary_data_path: Optional[str | Path] = None
 ) -> pd.DataFrame:
     """Returns entire domain and overall simulation period mass balance values
        assuming intial conditions are 100 mg/L everywhere and any boundary
@@ -205,9 +217,8 @@ def _mass_bal_global_100_Ans(
          'Mass_end': mass_end_sum_val_np}
     df = pd.DataFrame(data=d)
     
-    
     #Loop to find total mass in/out from all boundary conditions
-    bndryData = simulation.boundary_data
+    bndryData = _parse_boundary_data(simulation)
     bcLineIDs = bndryData.groupby(by='Name').mean(numeric_only=True)
     bcLineIDs_sorted = bcLineIDs.sort_values(by=['BC Line ID']).reset_index()
 
@@ -306,3 +317,53 @@ def _mass_bal_global_100_Ans(
 def _mass_bal_val(df, col) -> float:
     mass = df[col].values[0]
     return mass
+
+def _mass_flux_calculation_required(
+    simulation: cwr.ClearwaterRiverine,
+    constituent_name: str,
+) -> bool:
+    """Determines if mass flux calculation is needed."""
+    base_condition =  np.zeros(
+        (len(simulation.mesh.time),
+        len(simulation.mesh.nedge))
+    )
+    constituent = simulation.constituent_dict[constituent_name]
+    if np.array_equal(constituent.total_mass_flux, base_condition):
+        return True
+    else:
+        return False
+
+def _calculate_mass_flux(
+    simulation: cwr.ClearwaterRiverine,
+    constituent_name: str,
+) -> None:
+    """Calculates mass flux.
+    Used when user has loaded in a model mesh.
+    """
+    print('Calculating mass fluxes...')
+    constituent = simulation.constituent_dict[constituent_name]
+
+    for t in range(len(simulation.mesh.time) - 1):
+        simulation._mass_flux(
+            simulation.mesh[constituent_name],
+            constituent.advection_mass_flux,
+            constituent.diffusion_mass_flux,
+            constituent.total_mass_flux,
+            t
+        )
+    print('Max flux calculations complete!')
+
+def _parse_boundary_data(
+    simulation: cwr.ClearwaterRiverine,
+    boundary_data_path: str | Path,
+) -> pd.DataFrame:
+    try:
+        boundary_data = simulation.boundary_data
+    except AttributeError:
+        if boundary_data_path:
+            boundary_data = pd.read_csv(
+                boundary_data_path
+            )
+        else:
+            raise ValueError("boundary_data_path input required")
+    return boundary_data
