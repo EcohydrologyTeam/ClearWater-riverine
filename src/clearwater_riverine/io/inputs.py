@@ -13,6 +13,9 @@ import os
 import xarray as xr
 
 from clearwater_riverine.io.hdf import HDFReader
+from clearwater_riverine.variables import (
+    FACE_NODES
+)
 # from mesh import ClearWaterMesh
 
 class RASInput:
@@ -107,20 +110,32 @@ class RASInputFactory:
 
 reading_factory = RASInputFactory()
 
-class ZarrLoader:
+
+class Loader(ABC):
+    @abstractmethod
+    def load(self, mesh_file_path: str | Path):
+        ...
+    
+    def format_mesh(self, mesh:xr.Dataset) -> xr.Dataset:
+        mesh[FACE_NODES] = mesh[FACE_NODES].fillna(-1)
+        mesh[FACE_NODES] = mesh[FACE_NODES].astype(int)
+        return mesh
+    
+class ZarrLoader(Loader):
     """Loads Zarr Output"""
     def load(self, mesh_file_path: str | Path):
         return xr.open_zarr(
             mesh_file_path
         )
 
-class NetCDFLoader:
+class NetCDFLoader(Loader):
     """Loads NetCDF Output"""
     def load(self, mesh_file_path: str | Path):
         return xr.open_dataset(
             mesh_file_path,
             engine='netcdf4'
         )
+
 class ClearWaterRiverineLoader:
     """Loads Clearwater Riverine mesh
 
@@ -147,7 +162,9 @@ class ClearWaterRiverineLoader:
         loader = loading_factory.get_loader(
             self.mesh_file_path,
         )
-        return loader.load(self.mesh_file_path)
+        mesh = loader.load(self.mesh_file_path)
+        mesh = loader.format_mesh(mesh)
+        return mesh
 
 class ClearWaterRiverineLoadingFactory:
     """

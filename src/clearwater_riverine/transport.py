@@ -11,6 +11,7 @@ hv.extension("bokeh")
 from typing import (
     Any,
     Dict,
+    Literal,
     Optional,
     Tuple,
 )
@@ -124,12 +125,13 @@ class ClearwaterRiverine:
                     'Missing a `config_filepath` or a `constituent_dict` and `flow_field_file_path` to run the model.'
                 )
            
-        self.contsituent_dict = {}
-
         # define model mesh
         if mesh_file_path:
             self.mesh = load_model_mesh(mesh_file_path)
-            self.constituents = self._determine_constituents()
+            self._determine_constituents()
+            self.initialize_constituents(
+                method='load'
+            )
             if verbose: print(
                 f"""
                     Loaded model mesh.
@@ -153,11 +155,13 @@ class ClearwaterRiverine:
             self.lhs = LHS(self.mesh)
             self.initialize_constituents(
                 model_config=model_config
+                method='initialize'
             )
 
     def initialize_constituents(
         self,
-        model_config: Dict,
+        model_config: Optional[Dict] = None,
+        method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
         """Initializes model, developed to be BMI-adjacent.
 
@@ -181,13 +185,21 @@ class ClearwaterRiverine:
         self.time_step = 0
         self.constituent_dict = {}
 
-        for constituent in self.constituents:
-            self.constituent_dict[constituent] = Constituent(
-                name=constituent,
-                constituent_config=model_config['constituents'][constituent],
-                mesh=self.mesh,
-                flow_field_boundaries=self.boundary_data,
-            )
+        if method == 'initialize':
+            for constituent in self.constituents:
+                self.constituent_dict[constituent] = Constituent(
+                    name=constituent,
+                    mesh=self.mesh,
+                    constituent_config=model_config['constituents'][constituent],
+                    flow_field_boundaries=self.boundary_data,
+                )
+        else:
+            for constituent in self.constituents:
+                self.constituent_dict[constituent] = Constituent(
+                    name=constituent,
+                    mesh=self.mesh,
+                    method=method,
+                )
     
     def update(
         self,
