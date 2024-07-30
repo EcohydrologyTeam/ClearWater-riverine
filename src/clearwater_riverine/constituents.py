@@ -64,7 +64,7 @@ class Constituent:
             )
         elif method == 'load':
             self.units = mesh[name].Units
-            self.set_value_range()
+            self.set_value_range(mesh)
 
 
     def set_initial_conditions(

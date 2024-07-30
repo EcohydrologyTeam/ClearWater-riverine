@@ -154,7 +154,7 @@ class ClearwaterRiverine:
         
             self.lhs = LHS(self.mesh)
             self.initialize_constituents(
-                model_config=model_config
+                model_config=model_config,
                 method='initialize'
             )
 
