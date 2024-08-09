@@ -11,22 +11,29 @@ hv.extension("bokeh")
 from typing import (
     Any,
     Dict,
+    Literal,
     Optional,
     Tuple,
 )
 from pathlib import Path
 import warnings
 
-from clearwater_riverine.mesh import model_mesh
+from clearwater_riverine.mesh import (
+    instantiate_model_mesh,
+    load_model_mesh
+)
 from clearwater_riverine import variables
 from clearwater_riverine.variables import (
     ADVECTION_COEFFICIENT,
     COEFFICIENT_TO_DIFFUSION_TERM,
     EDGES_FACE1,
     EDGES_FACE2,
+    FACES,
     CHANGE_IN_TIME,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
+    HYDRODYNAMIC_VARIABLES,
+    TOPOLOGY_VARIABLES,
 )
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
@@ -88,7 +95,7 @@ class ClearwaterRiverine:
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
         datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
-
+        mesh_file_path: Optional[str | Path] = None,
     ) -> None:
         """
         Initialize a Clearwater Riverine WQ model mesh
@@ -110,33 +117,51 @@ class ClearwaterRiverine:
                 if isinstance(constituent_dict, Dict):
                     self.constituents = list(constituent_dict.keys())
                     model_config = {'constituents': constituent_dict}
+            elif mesh_file_path:
+                ## TODO: add checking that input set up correctly
+                self.constituents = None
             else:
                 raise TypeError(
                     'Missing a `config_filepath` or a `constituent_dict` and `flow_field_file_path` to run the model.'
                 )
            
-        self.contsituent_dict = {}
-
         # define model mesh
-        self.mesh = model_mesh(diffusion_coefficient_input)
-        if verbose: print("Populating Model Mesh...")
-        self.mesh = self.mesh.cwr.read_ras(
-            flow_field_file_path,
-            datetime_range=datetime_range
-        )
-        self.boundary_data = self.mesh.attrs['boundary_data']
+        if mesh_file_path:
+            self.mesh = load_model_mesh(mesh_file_path)
+            self._determine_constituents()
+            self.initialize_constituents(
+                method='load'
+            )   
+            if verbose: print(
+                f"""
+                    Loaded model mesh.
+                    Parsed the following constituents: {self.constituents}.
+                    Post processing and plotting capabilities supported.
+                    Hotstart model runs not currently supported.
+                """
+            )
+        else:
+            self.mesh = instantiate_model_mesh(diffusion_coefficient_input)
+            if verbose: print("Populating Model Mesh...")
+            self.mesh = self.mesh.cwr.read_ras(
+                flow_field_file_path,
+                datetime_range=datetime_range
+            )
+            self.boundary_data = self.mesh.attrs['boundary_data']
 
-        if verbose: print("Calculating Required Parameters...")
-        self.mesh = self.mesh.cwr.calculate_required_parameters()
-    
-        self.lhs = LHS(self.mesh)
-        self.initialize_constituents(
-            model_config=model_config
-        )
+            if verbose: print("Calculating Required Parameters...")
+            self.mesh = self.mesh.cwr.calculate_required_parameters()
+        
+            self.lhs = LHS(self.mesh)
+            self.initialize_constituents(
+                model_config=model_config,
+                method='initialize'
+            )
 
     def initialize_constituents(
         self,
-        model_config: Dict,
+        model_config: Optional[Dict] = None,
+        method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
         """Initializes model, developed to be BMI-adjacent.
 
@@ -160,13 +185,21 @@ class ClearwaterRiverine:
         self.time_step = 0
         self.constituent_dict = {}
 
-        for constituent in self.constituents:
-            self.constituent_dict[constituent] = Constituent(
-                name=constituent,
-                constituent_config=model_config['constituents'][constituent],
-                mesh=self.mesh,
-                flow_field_boundaries=self.boundary_data,
-            )
+        if method == 'initialize':
+            for constituent in self.constituents:
+                self.constituent_dict[constituent] = Constituent(
+                    name=constituent,
+                    mesh=self.mesh,
+                    constituent_config=model_config['constituents'][constituent],
+                    flow_field_boundaries=self.boundary_data,
+                )
+        else:
+            for constituent in self.constituents:
+                self.constituent_dict[constituent] = Constituent(
+                    name=constituent,
+                    mesh=self.mesh,
+                    method=method,
+                )
     
     def update(
         self,
@@ -361,6 +394,8 @@ class ClearwaterRiverine:
 
         if save == True:
             self.mesh.cwr.save_clearwater_xarray(output_filepath)
+            output_path = Path(output_filepath)
+            self.boundary_data.to_csv(f'{output_path.parent}/{output_path.stem}_boundary_data.csv')
 
 
     def _timer(self, t):
@@ -748,3 +783,11 @@ class ClearwaterRiverine:
         if save == True:
             plt.savefig(output_path)
         plt.show()
+
+    def _determine_constituents(self):
+        self.constituents = [
+            f for f in self.mesh.data_vars
+            if FACES in self.mesh[f].dims
+            and f not in HYDRODYNAMIC_VARIABLES
+            and f not in TOPOLOGY_VARIABLES
+        ]

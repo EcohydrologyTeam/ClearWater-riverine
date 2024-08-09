@@ -1,3 +1,5 @@
+from abc import ABC
+from abc import abstractmethod
 from pathlib import Path
 from typing import (
     Type,
@@ -11,6 +13,9 @@ import os
 import xarray as xr
 
 from clearwater_riverine.io.hdf import HDFReader
+from clearwater_riverine.variables import (
+    FACE_NODES
+)
 # from mesh import ClearWaterMesh
 
 class RASInput:
@@ -104,3 +109,78 @@ class RASInputFactory:
             raise ValueError("File type is not accepted.")
 
 reading_factory = RASInputFactory()
+
+
+class Loader(ABC):
+    @abstractmethod
+    def load(self, mesh_file_path: str | Path):
+        ...
+    
+    def format_mesh(self, mesh:xr.Dataset) -> xr.Dataset:
+        mesh[FACE_NODES] = mesh[FACE_NODES].fillna(-1)
+        mesh[FACE_NODES] = mesh[FACE_NODES].astype(int)
+        return mesh
+    
+class ZarrLoader(Loader):
+    """Loads Zarr Output"""
+    def load(self, mesh_file_path: str | Path):
+        return xr.open_zarr(
+            mesh_file_path
+        )
+
+class NetCDFLoader(Loader):
+    """Loads NetCDF Output"""
+    def load(self, mesh_file_path: str | Path):
+        return xr.open_dataset(
+            mesh_file_path,
+            engine='netcdf4'
+        )
+
+class ClearWaterRiverineLoader:
+    """Loads Clearwater Riverine mesh
+
+    Attributes:
+        mesh_file_path (str | Path): filepath to Clearwater Riverine output file
+    """
+    def __init__(self, mesh_file_path: str) -> None:
+        """Checks if output filepath exists"""
+        self.mesh_file_path = mesh_file_path
+        dir = Path(self.mesh_file_path).parents[0]
+        if dir.is_dir() == False:
+            raise FileNotFoundError(
+                errno.ENOENT, os.strerror(errno.ENOENT), mesh_file_path
+            )
+    
+    def load_mesh(
+        self,
+    ) -> None:
+        """Loads model output using specified loader
+        Args:
+            looader (ZarrLoader or NetCDFLoader): loader class. 
+                Currently only supports loading from NetCDF or zarr.
+        """
+        loader = loading_factory.get_loader(
+            self.mesh_file_path,
+        )
+        mesh = loader.load(self.mesh_file_path)
+        mesh = loader.format_mesh(mesh)
+        return mesh
+
+class ClearWaterRiverineLoadingFactory:
+    """
+    Creates factory to retrieve the correct reader from the loading factory.
+    """
+    def get_loader(
+        self,
+        mesh_file_path: str,
+    ) -> Union[Type[ZarrLoader], Type[NetCDFLoader]]:
+        self.mesh_file_path = mesh_file_path
+        self.extension = Path(self.mesh_file_path).suffix
+        if self.extension == '.zarr':
+            return ZarrLoader()
+        elif self.extension  == '.nc':
+            return NetCDFLoader()
+        else:
+            raise ValueError(f"Cannot save as {self.extension}.")
+    
+loading_factory = ClearWaterRiverineLoadingFactory()
