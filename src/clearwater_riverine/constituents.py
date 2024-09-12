@@ -4,6 +4,7 @@ from typing import (
     Optional
 )
 from pathlib import Path
+import warnings
 
 import pandas as pd
 import xarray as xr
@@ -63,7 +64,14 @@ class Constituent:
                 input_array=self.input_array,
             )
         elif method == 'load':
-            self.units = mesh[name].Units
+            try:
+                self.units = mesh[name].Units
+            except AttributeError as err:
+                warnings.warn(
+                    f'Constituent {self.name} does not have units defined',
+                    UserWarning       
+                )
+
             self.set_value_range(mesh)
 
 
