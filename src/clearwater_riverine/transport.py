@@ -17,12 +17,13 @@ from typing import (
 )
 from pathlib import Path
 import warnings
+import inspect
 
 from clearwater_riverine.mesh import (
     instantiate_model_mesh,
     load_model_mesh
 )
-from clearwater_riverine import variables
+import clearwater_riverine.variables
 from clearwater_riverine.variables import (
     ADVECTION_COEFFICIENT,
     COEFFICIENT_TO_DIFFUSION_TERM,
@@ -32,8 +33,6 @@ from clearwater_riverine.variables import (
     CHANGE_IN_TIME,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
-    HYDRODYNAMIC_VARIABLES,
-    TOPOLOGY_VARIABLES,
 )
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
@@ -65,8 +64,6 @@ CONVERSIONS = {'Metric': {'Liters': 0.001},
                'Imperial': {'Liters': 0.0353147},
                'Unknown': {'Liters': 0.001},
                }
-
-
 
 class ClearwaterRiverine:
     """ Creates Clearwater Riverine water quality model.
@@ -785,9 +782,9 @@ class ClearwaterRiverine:
         plt.show()
 
     def _determine_constituents(self):
+        defined_variables = [f[1] for f in inspect.getmembers(clearwater_riverine.variables)]
         self.constituents = [
             f for f in self.mesh.data_vars
             if FACES in self.mesh[f].dims
-            and f not in HYDRODYNAMIC_VARIABLES
-            and f not in TOPOLOGY_VARIABLES
+            and f not in defined_variables
         ]

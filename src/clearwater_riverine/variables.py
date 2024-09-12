@@ -8,6 +8,7 @@ EDGE_NODES = 'edge_nodes'
 FACE_NODES = 'face_nodes'
 EDGE_FACE_CONNECTIVITY = 'edge_face_connectivity'
 FACES = 'nface'
+MESH_2D = 'mesh_2d'
 
 # Available Variables
 EDGES_FACE1 = 'edges_face1'
@@ -15,6 +16,7 @@ EDGES_FACE2 = 'edges_face2'
 NUMBER_OF_REAL_CELLS = 'nreal'
 VOLUME = 'volume'
 FACE_SURFACE_AREA = 'faces_surface_area'
+WETTED_SURFACE_AREA = 'wetted_surface_area'
 EDGE_VELOCITY = 'edge_velocity'
 EDGE_LENGTH = 'edge_length'
 CHANGE_IN_TIME = 'dt'
@@ -30,31 +32,3 @@ COEFFICIENT_TO_DIFFUSION_TERM  = 'coeff_to_diffusion'
 SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM = 'sum_coeff_to_diffusion'
 GHOST_CELL_VOLUMES_IN = 'ghost_volumes_in'
 GHOST_CELL_VOLUMES_OUT = 'ghost_volumes_out'
-
-# Water Quality
-POLLUTANT_LOAD = 'pollutant_load'
-CONCENTRATION = 'concentration'
-
-TOPOLOGY_VARIABLES = [
-    'mesh2d',
-    FACE_NODES,
-    EDGE_NODES,
-    EDGE_FACE_CONNECTIVITY,
-    EDGES_FACE1,
-    EDGES_FACE2,
-]
-
-HYDRODYNAMIC_VARIABLES = [
-    FACE_SURFACE_AREA,
-    EDGE_VELOCITY,
-    EDGE_LENGTH,
-    WATER_SURFACE_ELEVATION,
-    VOLUME,
-    FLOW_ACROSS_FACE,
-    ADVECTION_COEFFICIENT,
-    EDGE_VERTICAL_AREA,
-    FACE_TO_FACE_DISTANCE,
-    DIFFUSION_COEFFICIENT,
-    CHANGE_IN_TIME,
-    'wetted_surface_area',
-]
