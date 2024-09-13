@@ -28,7 +28,11 @@ from clearwater_riverine.variables import (
     WATER_SURFACE_ELEVATION,
     FLOW_ACROSS_FACE,
     NUMBER_OF_REAL_CELLS,
-    VOLUME
+    VOLUME,
+    FACE_HYD_DEPTH,
+    FACE_VEL_X,
+    FACE_VEL_Y,
+    FACE_VEL_MAG
 )
 
 
@@ -49,6 +53,9 @@ def _hdf_internal_paths(project_name):
         WATER_SURFACE_ELEVATION: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Water Surface',
         FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow',
         VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume',
+        FACE_HYD_DEPTH: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Hydraulic Depth',
+        FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Velocity - Velocity X',
+        FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Velocity - Velocity Y',
         'project_name': 'Geometry/2D Flow Areas/Attributes',
         'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
         'volume elevation info': f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info',
@@ -315,6 +322,35 @@ class HDFReader:
             mesh.attrs['face_cell_indexes_df'] = _hdf_to_dataframe(
                 self.infile[self.paths[EDGE_FACE_CONNECTIVITY]]
             )
+        try:
+            mesh[FACE_HYD_DEPTH] = _hdf_to_xarray(
+                self.infile[self.paths[FACE_HYD_DEPTH]],
+                (['time', 'nface']),
+                time_constraint=self.datetime_range_indices
+            )
+        except KeyError:
+            print("'Cell Hydraulic Depth' not found in hdf file; skip reading it. ")
+        try:
+            mesh[FACE_VEL_X] = _hdf_to_xarray(
+                self.infile[self.paths[FACE_VEL_X]],
+                (['time', 'nface']),
+                time_constraint=self.datetime_range_indices
+            )
+        except KeyError:
+            print("'Cell Velocity - Velocity X' not found in hdf file; skip reading it. ")
+        try:
+            mesh[FACE_VEL_Y] = _hdf_to_xarray(
+                self.infile[self.paths[FACE_VEL_Y]],
+                (['time', 'nface']),
+                time_constraint=self.datetime_range_indices
+            )
+        except KeyError:
+            print("'Cell Velocity - Velocity Y' not found in hdf file; skip reading it. ")
+        try:
+            mesh[FACE_VEL_MAG] = (mesh[FACE_VEL_X] ** 2
+                                + mesh[FACE_VEL_Y] ** 2) ** 0.5
+        except KeyError:
+            print("Cell velocities X and Y not found in hdf file; skip calculating velocity magnitude")
 
     def define_boundary_hydrodynamics(self, mesh: xr.Dataset):
         """Read necessary information on hydrodynamics,"""
