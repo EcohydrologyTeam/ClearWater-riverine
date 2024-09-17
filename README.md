@@ -63,6 +63,12 @@ Alternatively, use the faster [`libmamba` solver](https://conda.github.io/conda-
 conda env create -f environment.yml --solver=libmamba
 ```
 
+If users are experiencing issues with plots NOT displaying in jupyter notebooks once a cell is executed, then we recommend using the `environment_working.yml` file. We have noticed that later versions of some libraries might be creating a conflict, but we have not been able to track down the root cause since no warnings/errors are given when the plot does NOT display:
+
+```shell
+conda env create -f environment_working.yml --solver=libmamba
+```
+
 Activate the environment using the instructions printed by conda after the environment is created successfully.
 
 To update your environment to the latest versions of dependencies and/or add additional dependencies to your environment (by first editting [`environment.yml`](environment.yml)), run the following command:
