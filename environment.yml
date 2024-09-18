@@ -21,7 +21,6 @@ dependencies:
   - geopandas
   - spatialpandas
   - fastparquet # consider removing in favor of using pyarrow engine
-
   - xarray-simlab # Explore for refactoring
 
   # Testing and static analysis
@@ -33,11 +32,13 @@ dependencies:
   - snakeviz
 
   # Examples (optional)
-  - pooch # for xarray tutorial dataset
+  # - pooch # for xarray tutorial dataset
 
   # Visualization (optional)
   - hvplot  # hvPlot installs most HoloViz libs, https://holoviz.org
   - geoviews
+  - panel >=0.14 # Major update for dashboarding
+  - cmasher # Adds function to subset colormaps, including from HoloViz's colorcet
   - selenium # required for saving gif output
   - geckodriver # required for saving gif output
   - param 
@@ -48,6 +49,7 @@ dependencies:
   - ipympl  # jupyter-matplotlib, https://github.com/matplotlib/ipympl
   - ipywidgets  # Interactive HTML widgets for Jupyter
   - jupyter_bokeh # Renders Holviz / Bokeh objects in Jupyter
+  - pyviz_comms # bidirectional communication between Python & JavaScript for Jupyter
 
   # Dev tools: Language Server Protocol (LSP) (Optional), for:
     # code navigation + hover suggestions + linters + autocompletion + rename
