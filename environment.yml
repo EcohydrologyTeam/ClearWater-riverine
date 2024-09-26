@@ -44,11 +44,11 @@ dependencies:
   - param 
 
   # Interactivity via Jupyter Notebooks
-  - jupyterlab
+  - jupyterlab >=4
   - nodejs  # required for many extensions
   - ipympl  # jupyter-matplotlib, https://github.com/matplotlib/ipympl
   - ipywidgets  # Interactive HTML widgets for Jupyter
-  - jupyter_bokeh # Renders Holviz / Bokeh objects in Jupyter
+  - jupyter_bokeh >=4.0.1 # Renders Holviz / Bokeh objects in Jupyter
   - pyviz_comms # bidirectional communication between Python & JavaScript for Jupyter
 
   # Dev tools: Language Server Protocol (LSP) (Optional), for:
