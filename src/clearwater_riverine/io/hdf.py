@@ -29,10 +29,13 @@ from clearwater_riverine.variables import (
     FLOW_ACROSS_FACE,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
+    VOLUME_ELEVATION_INFO,
+    VOLUME_ELEVATION_VALUES,
+    VOLUME_ELEVATION_LOOKUP,
     FACE_HYD_DEPTH,
     FACE_VEL_X,
     FACE_VEL_Y,
-    FACE_VEL_MAG
+    FACE_VEL_MAG,
 )
 
 
@@ -65,7 +68,9 @@ def _hdf_internal_paths(project_name):
         'normalunitvector_length': f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length',
         'boundary_condition_external_faces': 'Geometry/Boundary Condition Lines/External Faces',
         'boundary_condition_attributes': 'Geometry/Boundary Condition Lines/Attributes/',
-        'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions'
+        'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions',
+        VOLUME_ELEVATION_INFO: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info',
+        VOLUME_ELEVATION_VALUES: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values',
     }
     return hdf_paths
 
@@ -351,6 +356,69 @@ class HDFReader:
                                 + mesh[FACE_VEL_Y] ** 2) ** 0.5
         except KeyError:
             print("Cell velocities X and Y not found in hdf file; skip calculating velocity magnitude")
+        
+        mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self._create_lookup_df()
+    
+    def _create_lookup_df(self):
+        volume_elevation_info_df = _hdf_to_dataframe(
+            self.infile[self.paths[VOLUME_ELEVATION_INFO]]
+            )
+        volume_elevation_vals_df = _hdf_to_dataframe(
+            self.infile[self.paths[VOLUME_ELEVATION_VALUES]]
+        )
+        # Define cells associated with each lookup value
+        volume_elevation_vals_df['Cell']  = np.concatenate([
+            np.full(count, cell)
+            for cell, count in zip(volume_elevation_info_df.index, volume_elevation_info_df['Count'])
+            ])
+
+        # Create lookup table
+        df_ls = []
+
+        for cell in volume_elevation_vals_df['Cell'].unique():
+            cell_df = self._create_cell_lookup_table(
+                cell,
+                volume_elevation_vals_df
+            )
+            df_ls.append(cell_df)
+
+        return pd.concat(df_ls)
+
+    def _create_cell_lookup_table(
+        self,
+        cell_no: int,
+        df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        # Filter for single cell
+        df_temp = df[df['Cell'] == cell_no]
+        test_df = df_temp.copy().reset_index(drop=True)
+        cell_surface_area = _hdf_to_dataframe(
+            self.infile[self.paths[FACE_SURFACE_AREA]]
+            )
+
+        # Compute differences in elevation and volume between adjacent rows 
+        # (i.e., vertical layers in the cell)
+        test_df['Delta Elev'] = test_df['Elevation'].diff()
+        test_df['Delta Volume'] = test_df['Volume'].diff()
+
+        # Calculate the wetted surface area based on the volume and depth
+        test_df['Surface Area'] = test_df['Delta Volume'] / test_df['Delta Elev']
+
+        # Average surface area between two elevation bands
+        # Approximates wetted surface area between two elevatiosn
+        test_df['Wetted Surface Area'] = (test_df['Surface Area'] + test_df['Surface Area'].shift(-1)) / 2
+
+        # Get maximum volume
+        max_index = test_df['Volume'].idxmax()
+
+        # Set edge cases (first and last slice)
+        # Compare with total surface area for the cell as a whole
+        cell_table = cell_surface_area[cell_surface_area.index == cell_no]
+        input_value = cell_table['Surface Area'].values[0] 
+        # Set wetted surface area at the first row to 0 (i.e., first slice)
+        test_df.at[0, 'Wetted Surface Area'] = 0 
+        test_df.at[max_index, 'Wetted Surface Area'] = input_value
+        return test_df
 
     def define_boundary_hydrodynamics(self, mesh: xr.Dataset):
         """Read necessary information on hydrodynamics,"""

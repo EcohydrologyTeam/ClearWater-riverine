@@ -7,8 +7,11 @@ import xarray as xr
 
 from clearwater_riverine import variables
 from clearwater_riverine.variables import (
-    EDGES_FACE1,
-    EDGES_FACE2,
+    FACES,
+    TIME,
+    VOLUME,
+    VOLUME_ELEVATION_LOOKUP,
+    WETTED_SURFACE_AREA,
 )
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -539,3 +542,57 @@ class WQVariableCalculator:
         dt = dt / np.timedelta64(1, 's')
         dt = np.insert(dt, len(dt), np.nan)
         mesh[variables.CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
+
+
+def calculate_wetted_surface_area(
+    mesh: xr.Dataset
+):
+    """Calculates the wetted surface area based on elevation / volume lookup table."""
+    # Define required dimensions for lookup xarray
+    nface = len(mesh[FACES])
+    surface_area_lookup =  mesh.attrs[VOLUME_ELEVATION_LOOKUP] 
+    lookup_max = surface_area_lookup.groupby(
+        'Cell').count()['Wetted Surface Area'].max()
+
+    surface_area_lookup['lookup'] = surface_area_lookup.groupby('Cell').cumcount()
+
+    # Pivot to wide format
+    volume_wide = surface_area_lookup.pivot(
+        index='Cell', columns='lookup', values='Volume'
+        ).reindex(range(nface))
+    area_wide = surface_area_lookup.pivot(
+        index='Cell', columns='lookup', values='Wetted Surface Area'
+        ).reindex(range(nface))
+
+    # Convert to xarray.DataArray, filling missing values with nan
+    # Within an xarray dataset
+    lookup_dataset = xr.Dataset({
+        VOLUME: xr.DataArray(volume_wide.values, dims=('nface', 'lookup')),
+        WETTED_SURFACE_AREA: xr.DataArray(area_wide.values, dims=('nface', 'lookup')),
+        },
+        coords={
+            'nface':  mesh[FACES].values,
+            'lookup': np.arange(lookup_max)
+        }
+    )
+
+    # Preallocate output array
+    result = []
+
+    for nf in mesh[FACES].values:
+        interp_vals = np.interp(
+            mesh[VOLUME].sel(nface=nf).values, # actual volumes
+            lookup_dataset[VOLUME].sel(nface=nf).values, # lookup volumes
+            lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values, # lookup surface area
+            left=lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values[0], # interp to lowermost value
+            right=lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values[-1], # interp to uppermost value
+        ) # shape (time,)
+        interp_vals = np.nan_to_num(interp_vals, nan=0)
+        result.append(interp_vals)
+
+    # Convert result back to xarray.DataArray
+    mesh[WETTED_SURFACE_AREA]= xr.DataArray(
+        np.array(result).T,  # transpose so shape is (time, nface)
+        dims=[TIME, FACES],
+    )
+
