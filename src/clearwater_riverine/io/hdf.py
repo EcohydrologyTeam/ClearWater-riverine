@@ -416,8 +416,8 @@ class HDFReader:
         cell_table = cell_surface_area[cell_surface_area.index == cell_no]
         input_value = cell_table['Surface Area'].values[0] 
         # Set wetted surface area at the first row to 0 (i.e., first slice)
-        test_df.at[0, 'Wetted Surface Area'] = 0 
         test_df.at[max_index, 'Wetted Surface Area'] = input_value
+        test_df.at[0, 'Wetted Surface Area'] = 0 
         return test_df
 
     def define_boundary_hydrodynamics(self, mesh: xr.Dataset):
