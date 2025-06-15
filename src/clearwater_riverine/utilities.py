@@ -576,23 +576,40 @@ def calculate_wetted_surface_area(
         }
     )
 
-    # Preallocate output array
-    result = []
+    # fill null lookup values with the maximum
+    # this will help the interpolation function work correctly for large values
+    for variable in [VOLUME, WETTED_SURFACE_AREA]:
+        lookup_dataset[variable] = lookup_dataset[variable].fillna(
+            lookup_dataset[variable].max(dim='lookup', skipna=True)
+        )
 
+    # Preallocate output array
+    result = xr.DataArray(
+        np.full((mesh.dims[TIME], mesh.dims[FACES]), np.nan),
+        dims=[TIME, FACES],
+        coords={
+            TIME: mesh[TIME],
+            FACES: mesh[FACES],
+        }
+    )
+
+    # Loop through faces, get wetted surface area for all timesteps
     for nf in mesh[FACES].values:
-        interp_vals = np.interp(
-            mesh[VOLUME].sel(nface=nf).values, # actual volumes
-            lookup_dataset[VOLUME].sel(nface=nf).values, # lookup volumes
-            lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values, # lookup surface area
-            left=lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values[0], # interp to lowermost value
-            right=lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values[-1], # interp to uppermost value
-        ) # shape (time,)
-        interp_vals = np.nan_to_num(interp_vals, nan=0)
-        result.append(interp_vals)
+        volumes = mesh[VOLUME].sel(nface=nf).values
+        lookup_volumes = lookup_dataset[VOLUME].sel(nface=nf).values
+        lookup_wetted_surface_area = \
+            lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values
+
+        result[:,  nf] = np.interp(
+            volumes,
+            lookup_volumes,
+            lookup_wetted_surface_area,
+            left=lookup_wetted_surface_area[0], # interp to lowermost value
+            right=lookup_wetted_surface_area[-1], # interp to largest value
+        )
 
     # Convert result back to xarray.DataArray
-    mesh[WETTED_SURFACE_AREA]= xr.DataArray(
-        np.array(result).T,  # transpose so shape is (time, nface)
-        dims=[TIME, FACES],
-    )
+    mesh[WETTED_SURFACE_AREA] = result
+
+    return lookup_dataset
 
