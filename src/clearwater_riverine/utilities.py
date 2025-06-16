@@ -585,7 +585,7 @@ def calculate_wetted_surface_area(
 
     # Preallocate output array
     result = xr.DataArray(
-        np.full((mesh.dims[TIME], mesh.dims[FACES]), np.nan),
+        np.full((mesh.sizes[TIME], mesh.sizes[FACES]), np.nan),
         dims=[TIME, FACES],
         coords={
             TIME: mesh[TIME],
@@ -610,6 +610,3 @@ def calculate_wetted_surface_area(
 
     # Convert result back to xarray.DataArray
     mesh[WETTED_SURFACE_AREA] = result
-
-    return lookup_dataset
-
