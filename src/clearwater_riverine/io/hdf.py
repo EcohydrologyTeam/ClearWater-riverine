@@ -395,6 +395,16 @@ class HDFReader:
         cell_surface_area = _hdf_to_dataframe(
             self.infile[self.paths[FACE_SURFACE_AREA]]
             )
+        
+        # Add row for flat cells (i.e., only one entry in lookup)
+        # Create arbitrarily larger value
+        increment_val = 0.01
+        if len(test_df) == 1:
+            # Preemptively add second row before any calculations
+            new_row = test_df.iloc[0].copy()
+            new_row['Elevation'] += increment_val
+            new_row['Volume'] += increment_val
+            test_df = pd.concat([test_df, pd.DataFrame([new_row])], ignore_index=True)
 
         # Compute differences in elevation and volume between adjacent rows 
         # (i.e., vertical layers in the cell)
