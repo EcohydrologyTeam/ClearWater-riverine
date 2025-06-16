@@ -356,10 +356,11 @@ class HDFReader:
                                 + mesh[FACE_VEL_Y] ** 2) ** 0.5
         except KeyError:
             print("Cell velocities X and Y not found in hdf file; skip calculating velocity magnitude")
-        
+
         mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self._create_lookup_df()
-    
+
     def _create_lookup_df(self):
+        """Create volume elevation lookup dataframe."""
         volume_elevation_info_df = _hdf_to_dataframe(
             self.infile[self.paths[VOLUME_ELEVATION_INFO]]
             )
@@ -367,10 +368,15 @@ class HDFReader:
             self.infile[self.paths[VOLUME_ELEVATION_VALUES]]
         )
         # Define cells associated with each lookup value
-        volume_elevation_vals_df['Cell']  = np.concatenate([
-            np.full(count, cell)
-            for cell, count in zip(volume_elevation_info_df.index, volume_elevation_info_df['Count'])
-            ])
+        volume_elevation_vals_df['Cell'] = np.concatenate(
+            [
+                np.full(count, cell)
+                for cell, count in zip(
+                    volume_elevation_info_df.index,
+                    volume_elevation_info_df['Count']
+                )
+            ]
+        )
 
         # Create lookup table
         df_ls = []
@@ -389,13 +395,14 @@ class HDFReader:
         cell_no: int,
         df: pd.DataFrame,
     ) -> pd.DataFrame:
+        """Create volume-elevation lookup table for each cell."""
         # Filter for single cell
         df_temp = df[df['Cell'] == cell_no]
         test_df = df_temp.copy().reset_index(drop=True)
         cell_surface_area = _hdf_to_dataframe(
             self.infile[self.paths[FACE_SURFACE_AREA]]
             )
-        
+
         # Add row for flat cells (i.e., only one entry in lookup)
         # Create arbitrarily larger value
         increment_val = 0.01
@@ -404,19 +411,24 @@ class HDFReader:
             new_row = test_df.iloc[0].copy()
             new_row['Elevation'] += increment_val
             new_row['Volume'] += increment_val
-            test_df = pd.concat([test_df, pd.DataFrame([new_row])], ignore_index=True)
+            test_df = pd.concat(
+                [test_df, pd.DataFrame([new_row])],
+                ignore_index=True
+            )
 
-        # Compute differences in elevation and volume between adjacent rows 
+        # Compute differences in elevation and volume between adjacent rows
         # (i.e., vertical layers in the cell)
         test_df['Delta Elev'] = test_df['Elevation'].diff()
         test_df['Delta Volume'] = test_df['Volume'].diff()
 
         # Calculate the wetted surface area based on the volume and depth
-        test_df['Surface Area'] = test_df['Delta Volume'] / test_df['Delta Elev']
+        test_df['Surface Area'] = \
+            test_df['Delta Volume'] / test_df['Delta Elev']
 
         # Average surface area between two elevation bands
         # Approximates wetted surface area between two elevatiosn
-        test_df['Wetted Surface Area'] = (test_df['Surface Area'] + test_df['Surface Area'].shift(-1)) / 2
+        test_df['Wetted Surface Area'] = \
+            (test_df['Surface Area'] + test_df['Surface Area'].shift(-1)) / 2
 
         # Get maximum volume
         max_index = test_df['Volume'].idxmax()
@@ -424,10 +436,10 @@ class HDFReader:
         # Set edge cases (first and last slice)
         # Compare with total surface area for the cell as a whole
         cell_table = cell_surface_area[cell_surface_area.index == cell_no]
-        input_value = cell_table['Surface Area'].values[0] 
+        input_value = cell_table['Surface Area'].values[0]
         # Set wetted surface area at the first row to 0 (i.e., first slice)
         test_df.at[max_index, 'Wetted Surface Area'] = input_value
-        test_df.at[0, 'Wetted Surface Area'] = 0 
+        test_df.at[0, 'Wetted Surface Area'] = 0
         return test_df
 
     def define_boundary_hydrodynamics(self, mesh: xr.Dataset):

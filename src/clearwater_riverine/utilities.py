@@ -547,14 +547,17 @@ class WQVariableCalculator:
 def calculate_wetted_surface_area(
     mesh: xr.Dataset
 ):
-    """Calculates the wetted surface area based on elevation / volume lookup table."""
+    """
+    Calculate wetted surface area based on elevation-volume lookup table.
+    """
     # Define required dimensions for lookup xarray
     nface = len(mesh[FACES])
-    surface_area_lookup =  mesh.attrs[VOLUME_ELEVATION_LOOKUP] 
+    surface_area_lookup = mesh.attrs[VOLUME_ELEVATION_LOOKUP]
     lookup_max = surface_area_lookup.groupby(
         'Cell').count()['Wetted Surface Area'].max()
 
-    surface_area_lookup['lookup'] = surface_area_lookup.groupby('Cell').cumcount()
+    surface_area_lookup['lookup'] = \
+        surface_area_lookup.groupby('Cell').cumcount()
 
     # Pivot to wide format
     volume_wide = surface_area_lookup.pivot(
@@ -566,9 +569,13 @@ def calculate_wetted_surface_area(
 
     # Convert to xarray.DataArray, filling missing values with nan
     # Within an xarray dataset
-    lookup_dataset = xr.Dataset({
-        VOLUME: xr.DataArray(volume_wide.values, dims=('nface', 'lookup')),
-        WETTED_SURFACE_AREA: xr.DataArray(area_wide.values, dims=('nface', 'lookup')),
+    lookup_dataset = xr.Dataset(
+        {
+            VOLUME: xr.DataArray(volume_wide.values, dims=('nface', 'lookup')),
+            WETTED_SURFACE_AREA: xr.DataArray(
+                area_wide.values,
+                dims=('nface', 'lookup')
+            ),
         },
         coords={
             'nface':  mesh[FACES].values,
@@ -604,8 +611,8 @@ def calculate_wetted_surface_area(
             volumes,
             lookup_volumes,
             lookup_wetted_surface_area,
-            left=lookup_wetted_surface_area[0], # interp to lowermost value
-            right=lookup_wetted_surface_area[-1], # interp to largest value
+            left=lookup_wetted_surface_area[0],  # interp to lowermost value
+            right=lookup_wetted_surface_area[-1],  # interp to largest value
         )
 
     # Convert result back to xarray.DataArray
