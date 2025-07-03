@@ -116,3 +116,4 @@ We recommend using [JupyterLab](https://jupyterlab.readthedocs.io/en/stable/) to
 This library is developed by ERDC-EL through funding from the ECOMOD project.
 Dr. Todd E. Steissberg (ERDC-EL) developed the vision for this library as an example of how to couple at water transport model with a water quality reaction model :
 
+Hailie testing for first commit 
