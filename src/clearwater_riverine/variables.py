@@ -25,6 +25,9 @@ DIFFUSION_COEFFICIENT = 'diffusion_coefficient'
 FACE_HYD_DEPTH = 'face_hydraulic_depth'  #optional output in HEC-RAS hdf file
 FACE_VEL_X = 'face_velocity_x'  #optional output in HEC-RAS hdf file
 FACE_VEL_Y = 'face_velocity_y'  #optional output in HEC-RAS hdf file
+VOLUME_ELEVATION_INFO = 'volume_elevation_info'
+VOLUME_ELEVATION_VALUES = 'volume_elevation_values'
+VOLUME_ELEVATION_LOOKUP = 'volume_elevation_lookup'
 
 # Calculated Values
 FLOW_ACROSS_FACE = 'face_flow'
