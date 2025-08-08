@@ -108,6 +108,7 @@ class LHS:
         self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.real_edges_face2]
 
         ###### Advection
+        # TODO: Get this into a function to eliminate redundant code
         # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
         if len(flow_out_indices) > 0:
             start = end
@@ -159,9 +160,28 @@ class LHS:
             # subtract from corresponding neighbor cell (off-diagonal)
             start = end
             end = end + len(flow_out_gate_indices)  # len(flow_out_indices_internal) <-- will we have to do this?
-            self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_out_indices_internal]
-            self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices_internal]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices_internal] * -1  
+            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_out_gate_indices]
+            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
+            self.coef[start:end] = mesh[GATE_FLOW][t][flow_out_gate_indices] * -1 
+        
+        if len(flow_in_gate_indices) > 0:
+            # update indices
+            start = end
+            end = end + len(flow_in_indices)
+
+            ## where it is negative, the concentration across the face will be the neighbor cell ("N")
+            ## so the coefficient will be off-diagonal 
+            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_in_gate_indices]
+            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
+            self.coef[start:end] = mesh[GATE_FLOW][t][flow_in_gate_indices] 
+
+            ## update indices 
+            start = end
+            end = end + len(flow_in_indices)
+            ## do the opposite on the corresponding diagonal 
+            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
+            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
+            self.coef[start:end] = mesh[GATE_FLOW][t][flow_in_gate_indices]  * -1 
 
          
         
