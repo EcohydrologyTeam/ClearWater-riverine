@@ -10,6 +10,8 @@ from clearwater_riverine.variables import(
     EDGES_FACE2,
     EDGE_VELOCITY,
     FACES,
+    GATE_CONNECTIVITY,
+    GATE_FLOW,
     VOLUME,
 )
 
@@ -63,12 +65,15 @@ class LHS:
                                              (np.isin(mesh.nedge, self.internal_edges)))[0]
         flow_in_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] < 0) & \
                                    (np.isin(mesh.nedge, self.internal_edges)))[0]
+        flow_out_gate_indices = np.where((mesh[GATE_FLOW][t] > 0))[0]
+        flow_in_gate_indices = np.where((mesh[GATE_FLOW][t] < 0))[0]
         empty_cells = np.where((mesh[VOLUME][t+1] == 0) & (np.arange(len(mesh[VOLUME][t+1])) < self.nreal_count))[0][0:self.nreal_count]
 
         # initialize arrays that will define the sparse matrix 
         len_val = self.internal_edge_count * 2 + self.nreal_count * 2 + \
             len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells) + \
-                len(self.real_edges_face1) + len(self.real_edges_face2)
+                len(self.real_edges_face1) + len(self.real_edges_face2) + \
+                len(flow_out_gate_indices) + len(flow_in_gate_indices)
         self.rows = np.zeros(len_val)
         self.cols = np.zeros(len_val)
         self.coef = np.zeros(len_val)
@@ -138,7 +143,27 @@ class LHS:
             ## do the opposite on the corresponding diagonal 
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
             self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices]  * -1 
+            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices]  * -1
+
+        # gate advection
+        if len(flow_out_gate_indices) > 0:
+            start = end
+            end = end + len(flow_out_gate_indices)
+
+            # where advection coefficient is positive, the concentration across the face will be the REFERENCE CELL 
+            # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
+            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
+            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
+            self.coef[start:end] = mesh[GATE_FLOW][t][flow_out_gate_indices]  
+
+            # subtract from corresponding neighbor cell (off-diagonal)
+            start = end
+            end = end + len(flow_out_gate_indices)  # len(flow_out_indices_internal) <-- will we have to do this?
+            self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_out_indices_internal]
+            self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices_internal]
+            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices_internal] * -1  
+
+         
         
         ###### off-diagonal terms - diffusion
         # update indices
@@ -153,7 +178,8 @@ class LHS:
         end = end + self.internal_edge_count
         self.rows[start:end] = mesh[EDGES_FACE2][self.internal_edges]
         self.cols[start:end] = mesh[EDGES_FACE1][self.internal_edges]
-        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]    
+        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]
+
     
 class RHS:
     def __init__(
