@@ -24,6 +24,7 @@ from clearwater_riverine.variables import (
     FACE_Y,
     FACE_SURFACE_AREA,
     GATE_CONNECTIVITY,
+    GATE_FLOW,
     EDGE_VELOCITY,
     EDGE_LENGTH,
     WATER_SURFACE_ELEVATION,
@@ -385,8 +386,25 @@ class HDFReader:
         except KeyError:
             print("Cell velocities X and Y not found in hdf file; skip calculating velocity magnitude")
 
-
         mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self._create_lookup_df()
+
+        # add gate flows
+        if self.has_gates:
+            flow_list = []
+            for g in self.gates:
+                gate_flow = self.infile[
+                    f'{self.paths['gate_path']}/{g}/HW TW Segments/Flow'][()][:,-1]
+                flow_list.append(gate_flow)
+            
+            flow_array = np.concatenate(flow_list, axis=0)
+
+            mesh[GATE_FLOW] = xr.DataArray(
+                data=flow_array,
+                dims=["time", GATE_FLOW],
+                attrs={
+                    'long_name': 'flow in cells'
+                }
+            )
 
     def _create_lookup_df(self):
         """Create volume elevation lookup dataframe."""
