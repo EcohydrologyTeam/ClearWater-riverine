@@ -269,9 +269,9 @@ class HDFReader:
             connectivity_list = []
             for g in self.gates:
                 headwater_cells = self.infile[
-                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Headwater Cells"][()]
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Headwater Cells"][()].astype(int)
                 tailwater_cells = self.infile[
-                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Tailwater Cells"][()]
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Tailwater Cells"][()].astype(int)
                 gate_connectivity = np.stack((headwater_cells, tailwater_cells), axis=1)
                 connectivity_list.append(gate_connectivity)
             
@@ -397,6 +397,7 @@ class HDFReader:
                 flow_list.append(gate_flow)
             
             flow_array = np.stack(flow_list, axis=1)
+            flow_array = flow_array[self.datetime_range_indices[0]: self.datetime_range_indices[1]]
 
             mesh[GATE_FLOW] = xr.DataArray(
                 data=flow_array,
