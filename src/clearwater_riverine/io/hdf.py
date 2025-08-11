@@ -73,7 +73,7 @@ def _hdf_internal_paths(project_name):
         'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions',
         VOLUME_ELEVATION_INFO: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info',
         VOLUME_ELEVATION_VALUES: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values',
-        'gate_path': 'Results/Unsteady/Output Blocks/Base Output/Unsteady Time Series/SA 2D Area Conn/',
+        'gate_path': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/SA 2D Area Conn',
     }
     return hdf_paths
 
@@ -154,7 +154,7 @@ class HDFReader:
         self.paths = _hdf_internal_paths(self.project_name)
         self.datetime_range = datetime_range
         try:
-            self.gates = list(self.infile[self.paths['gate_path']])
+            self.gates = list(self.infile[self.paths['gate_path']].keys())
             self.has_gates = True
         except KeyError:
             self.has_gates = False
@@ -269,9 +269,9 @@ class HDFReader:
             connectivity_list = []
             for g in self.gates:
                 headwater_cells = self.infile[
-                    f'{self.paths['gate_path']}/{g}/HW TW Segments/Headwater Cells'][()]
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Headwater Cells"][()]
                 tailwater_cells = self.infile[
-                    f'{self.paths['gate_path']}/{g}/HW TW Segments/Tailwater Cells'][()]
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Tailwater Cells"][()]
                 gate_connectivity = np.stack((headwater_cells, tailwater_cells), axis=1)
                 connectivity_list.append(gate_connectivity)
             
@@ -393,10 +393,10 @@ class HDFReader:
             flow_list = []
             for g in self.gates:
                 gate_flow = self.infile[
-                    f'{self.paths['gate_path']}/{g}/HW TW Segments/Flow'][()][:,-1]
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Flow"][()][:,-1]
                 flow_list.append(gate_flow)
             
-            flow_array = np.concatenate(flow_list, axis=0)
+            flow_array = np.stack(flow_list, axis=1)
 
             mesh[GATE_FLOW] = xr.DataArray(
                 data=flow_array,
