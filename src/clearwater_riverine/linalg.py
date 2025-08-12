@@ -65,8 +65,12 @@ class LHS:
                                              (np.isin(mesh.nedge, self.internal_edges)))[0]
         flow_in_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] < 0) & \
                                    (np.isin(mesh.nedge, self.internal_edges)))[0]
-        flow_out_gate_indices = np.where((mesh[GATE_FLOW][t] > 0))[0]
-        flow_in_gate_indices = np.where((mesh[GATE_FLOW][t] < 0))[0]
+        try: 
+            flow_out_gate_indices = np.where((mesh[GATE_FLOW][t] > 0))[0]
+            flow_in_gate_indices = np.where((mesh[GATE_FLOW][t] < 0))[0]
+        except KeyError:
+            flow_out_gate_indices = np.array([])
+            flow_in_gate_indices = np.array([])
         empty_cells = np.where((mesh[VOLUME][t+1] == 0) & (np.arange(len(mesh[VOLUME][t+1])) < self.nreal_count))[0][0:self.nreal_count]
 
         # initialize arrays that will define the sparse matrix 
