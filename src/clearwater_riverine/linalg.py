@@ -171,7 +171,7 @@ class LHS:
         if len(flow_in_gate_indices) > 0:
             # update indices
             start = end
-            end = end + len(flow_in_indices)
+            end = end + len(flow_in_gate_indices)
 
             ## where it is negative, the concentration across the face will be the neighbor cell ("N")
             ## so the coefficient will be off-diagonal 
@@ -181,7 +181,7 @@ class LHS:
 
             ## update indices 
             start = end
-            end = end + len(flow_in_indices)
+            end = end + len(flow_in_gate_indices)
             ## do the opposite on the corresponding diagonal 
             self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
             self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
