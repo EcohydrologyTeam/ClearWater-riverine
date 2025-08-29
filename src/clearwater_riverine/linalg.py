@@ -425,7 +425,7 @@ class RHS:
         external_cell_index = mesh[EDGES_FACE2][index_list]
 
         concentration_multipliers = np.zeros(len(mesh.nface))
-        concentration_multipliers[internal_cell_index] = self.input_array[t][external_cell_index] 
+        concentration_multipliers[internal_cell_index] = self.input_array[t][external_cell_index]
 
         if len(index_list) != 0:
             if advection:
