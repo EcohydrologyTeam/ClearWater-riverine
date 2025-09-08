@@ -44,7 +44,7 @@ class LHS:
         This function populates the sparse matrix with:
             - Values on the Diagonal (associated with the cell with the same index as that row/column):
                 - Load at the t+1 timestep (volume at the t + 1 timestep / change in time)
-                - Sum of diffusion coefficients associated with a cell
+                - Sum of diffusion coefficients associated with a cell      
                 - FOR DRY CELLS ONLY (volume = 0), insert a dummy value (1) so that the matrix is not singular
             - Values Off-Diagonal:
                 - Coefficient to the diffusion term at the t+1 timestep 
@@ -98,6 +98,7 @@ class LHS:
         self.coef[start:end] = mesh[VOLUME][t+1][0:self.nreal_count] / seconds 
 
         # diagonal terms - sum of diffusion coefficients associated with each cell
+        # Diffusion coefficients for ghost cells will get added to the RHS of the matrix.
         start = end
         end = end + len(self.real_edges_face1)
 
@@ -120,11 +121,13 @@ class LHS:
 
             # where advection coefficient is positive, the concentration across the face will be the REFERENCE CELL 
             # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
+            # Advection coefficient for timestep t is the flow across the face going from t to t+1 
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
             self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices]  
+            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices]
 
             # subtract from corresponding neighbor cell (off-diagonal)
+            # for internal cells only
             start = end
             end = end + len(flow_out_indices_internal)
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_out_indices_internal]
@@ -137,7 +140,8 @@ class LHS:
             end = end + len(flow_in_indices)
 
             ## where it is negative, the concentration across the face will be the neighbor cell ("N")
-            ## so the coefficient will be off-diagonal 
+            ## so the coefficient will be off-diagonal
+            ## This is internal cells only; external cells will be handled on the RHS
             self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_in_indices]
             self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
             self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices] 
@@ -187,8 +191,6 @@ class LHS:
             self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
             self.coef[start:end] = mesh[GATE_FLOW][t][flow_in_gate_indices]  * -1 
 
-         
-        
         ###### off-diagonal terms - diffusion
         # update indices
         start = end
@@ -216,7 +218,7 @@ class RHS:
 
         Args:
             mesh (xr.Dataset):   UGRID-complaint xarray Dataset with all data required for the transport equation.
-            inp (np.array):      Array of shape (time x nface) with user-defined inputs of concentrations
+            input_array (np.array): Array of shape (time x nface) with user-defined inputs of concentrations
                                     in each cell at each timestep. 
         """
         self.nreal_count = mesh.nreal + 1  # 0 indexed
@@ -321,7 +323,7 @@ class RHS:
             concentrations (xr.DataArray):  Concentrations at t timestep.
         """
         load = self._calculate_load(mesh, t, concentrations)
-        ghost_cells_in, ghost_cells_out = self._calculate_ghost_cell_values(mesh, t+1)
+        ghost_cells_in, ghost_cells_out = self._calculate_ghost_cell_values(mesh, t)
         return load + ghost_cells_in + ghost_cells_out
 
 
@@ -390,6 +392,9 @@ class RHS:
             edge_array (np.ndarray):        Numpy array with a length equal to the number of edges in the model.
                                                 Populated with edge values between a ghost cell and and an internal cell. 
             face_array (np.ndarray):        Empty numpy array with a length equal to the number of faces in the model.
+            mesh_array (xr.DataArray):      Values associated with an edge for a model mesh.
+            index_list (list):              List of ghost cells meeting flowing in or out condition
+            internal_cell_index:            Internal cell for a ghost cell edge.
         
         Returns:
             face_array (np.ndarray):         Numpy array with a length equal to the number of faces in the model.
@@ -425,7 +430,7 @@ class RHS:
         external_cell_index = mesh[EDGES_FACE2][index_list]
 
         concentration_multipliers = np.zeros(len(mesh.nface))
-        concentration_multipliers[internal_cell_index] = self.input_array[t][external_cell_index]
+        concentration_multipliers[internal_cell_index] = self.input_array[t+1][external_cell_index]
 
         if len(index_list) != 0:
             if advection:
