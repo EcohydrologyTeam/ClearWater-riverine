@@ -218,7 +218,10 @@ def _mass_bal_global_100_Ans(
     df = pd.DataFrame(data=d)
     
     #Loop to find total mass in/out from all boundary conditions
-    bndryData = _parse_boundary_data(simulation)
+    bndryData = _parse_boundary_data(
+        simulation,
+        boundary_data_path=boundary_data_path
+    )
     bcLineIDs = bndryData.groupby(by='Name').mean(numeric_only=True)
     bcLineIDs_sorted = bcLineIDs.sort_values(by=['BC Line ID']).reset_index()
 
@@ -355,7 +358,7 @@ def _calculate_mass_flux(
 
 def _parse_boundary_data(
     simulation: cwr.ClearwaterRiverine,
-    boundary_data_path: str | Path,
+    boundary_data_path: Optional[str | Path] = None,
 ) -> pd.DataFrame:
     try:
         boundary_data = simulation.boundary_data

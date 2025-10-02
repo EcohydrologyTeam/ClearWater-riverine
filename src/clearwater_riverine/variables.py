@@ -39,3 +39,7 @@ SUM_OF_COEFFICIENTS_TO_DIFFUSION_TERM = 'sum_coeff_to_diffusion'
 GHOST_CELL_VOLUMES_IN = 'ghost_volumes_in'
 GHOST_CELL_VOLUMES_OUT = 'ghost_volumes_out'
 FACE_VEL_MAG = 'face_velocity_magnitude'
+
+# Structures
+GATE_CONNECTIVITY = 'gate_connectivity'
+GATE_FLOW = 'gate_flow'

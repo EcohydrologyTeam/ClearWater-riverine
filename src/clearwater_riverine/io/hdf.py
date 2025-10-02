@@ -23,6 +23,8 @@ from clearwater_riverine.variables import (
     FACE_X,
     FACE_Y,
     FACE_SURFACE_AREA,
+    GATE_CONNECTIVITY,
+    GATE_FLOW,
     EDGE_VELOCITY,
     EDGE_LENGTH,
     WATER_SURFACE_ELEVATION,
@@ -71,6 +73,7 @@ def _hdf_internal_paths(project_name):
         'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions',
         VOLUME_ELEVATION_INFO: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info',
         VOLUME_ELEVATION_VALUES: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values',
+        'gate_path': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/SA 2D Area Conn',
     }
     return hdf_paths
 
@@ -150,6 +153,11 @@ class HDFReader:
         ][()][0][0].decode('UTF-8')
         self.paths = _hdf_internal_paths(self.project_name)
         self.datetime_range = datetime_range
+        try:
+            self.gates = list(self.infile[self.paths['gate_path']].keys())
+            self.has_gates = True
+        except KeyError:
+            self.has_gates = False
 
     def _parse_dates(self):
         """Date handling."""
@@ -256,6 +264,27 @@ class HDFReader:
                 'long_name': 'neighbor faces for edges',
                 'start_index': 0
             })
+        
+        if self.has_gates:
+            connectivity_list = []
+            for g in self.gates:
+                headwater_cells = self.infile[
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Headwater Cells"][()].astype(int)
+                tailwater_cells = self.infile[
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Tailwater Cells"][()].astype(int)
+                gate_connectivity = np.stack((tailwater_cells, headwater_cells), axis=1)
+                connectivity_list.append(gate_connectivity)
+            
+            connectivity_array = np.concatenate(connectivity_list, axis=0)
+
+            mesh[GATE_CONNECTIVITY] = xr.DataArray(
+                data=connectivity_array,
+                dims=[GATE_CONNECTIVITY, '2'],
+                attrs={
+                    'long_name': 'cells connected by gates'
+                }
+            )
+
 
     def define_hydrodynamics(self, mesh: xr.Dataset):
         """Populates hydrodynamic data in UGRID-compliant xarray."""
@@ -358,6 +387,26 @@ class HDFReader:
             print("Cell velocities X and Y not found in hdf file; skip calculating velocity magnitude")
 
         mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self._create_lookup_df()
+
+        # add gate flows
+        if self.has_gates:
+            flow_list = []
+            for g in self.gates:
+                gate_flow = self.infile[
+                    f"{self.paths['gate_path']}/{g}/HW TW Segments/Flow"][()][:,0:-1] * -1
+                flow_list.append(gate_flow)
+            
+            # flow_array = np.stack(flow_list, axis=1)
+            flow_array = np.concatenate(flow_list, axis=1) 
+            flow_array = flow_array[self.datetime_range_indices[0]: self.datetime_range_indices[1]]
+
+            mesh[GATE_FLOW] = xr.DataArray(
+                data=flow_array,
+                dims=["time", GATE_FLOW],
+                attrs={
+                    'long_name': 'flow in cells'
+                }
+            )
 
     def _create_lookup_df(self):
         """Create volume elevation lookup dataframe."""
