@@ -7,7 +7,9 @@ import xarray as xr
 
 from clearwater_riverine import variables
 from clearwater_riverine.variables import (
+    AVERAGE_DEPTH,
     FACES,
+    MAXIMUM_DEPTH,
     TIME,
     VOLUME,
     VOLUME_ELEVATION_LOOKUP,
@@ -617,3 +619,14 @@ def calculate_wetted_surface_area(
 
     # Convert result back to xarray.DataArray
     mesh[WETTED_SURFACE_AREA] = result
+
+def calculate_average_depth(
+    mesh: xr.Dataset     
+):
+    """Calculate average depth based on volume and wetted surface area."""
+    # If wetted surface area does not exist, calculate it.
+    if WETTED_SURFACE_AREA not in mesh.data_vars:
+        calculate_wetted_surface_area(mesh)
+    
+    # Calculate average depth
+    mesh[AVERAGE_DEPTH] = mesh[VOLUME] / mesh[WETTED_SURFACE_AREA]
