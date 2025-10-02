@@ -630,7 +630,11 @@ def calculate_average_depth(
         calculate_wetted_surface_area(mesh)
     
     # Calculate average depth
-    mesh[AVERAGE_DEPTH] = mesh[VOLUME] / mesh[WETTED_SURFACE_AREA]
+    mesh[AVERAGE_DEPTH] = xr.where(
+        mesh[WETTED_SURFACE_AREA] > 0,
+        mesh[VOLUME] / mesh[WETTED_SURFACE_AREA],
+        0
+    )
 
 
 def calculate_maximum_depth(
