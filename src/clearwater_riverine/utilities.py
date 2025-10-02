@@ -13,6 +13,7 @@ from clearwater_riverine.variables import (
     TIME,
     VOLUME,
     VOLUME_ELEVATION_LOOKUP,
+    WATER_SURFACE_ELEVATION,
     WETTED_SURFACE_AREA,
 )
 
@@ -630,3 +631,21 @@ def calculate_average_depth(
     
     # Calculate average depth
     mesh[AVERAGE_DEPTH] = mesh[VOLUME] / mesh[WETTED_SURFACE_AREA]
+
+
+def calculate_maximum_depth(
+    mesh: xr.Dataset,
+):
+    """Calculate the maximum depth based on water surface elevation."""
+
+    minimum_elevation = (
+        mesh.attrs[VOLUME_ELEVATION_LOOKUP]
+        .groupby("Cell")["Elevation"]
+        .min()
+        .to_xarray()
+        .rename({"Cell": "nface"})
+        .reindex(nface=mesh.nface) # volume elevation lookup only has real cells
+    )
+
+    mesh[MAXIMUM_DEPTH] = mesh[WATER_SURFACE_ELEVATION] - minimum_elevation
+
