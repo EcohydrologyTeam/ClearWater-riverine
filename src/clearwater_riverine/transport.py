@@ -18,6 +18,7 @@ from typing import (
 from pathlib import Path
 import warnings
 import inspect
+from datetime import datetime
 
 from clearwater_riverine.mesh import (
     instantiate_model_mesh,
@@ -91,7 +92,7 @@ class ClearwaterRiverine:
         constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
-        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
+        datetime_range: Optional[Tuple[int, int] | Tuple[datetime, datetime]] = None,
         mesh_file_path: Optional[str | Path] = None,
     ) -> None:
         """
@@ -138,6 +139,7 @@ class ClearwaterRiverine:
                 """
             )
         else:
+            # Read HEC RAS HDF
             self.mesh = instantiate_model_mesh(diffusion_coefficient_input)
             if verbose: print("Populating Model Mesh...")
             self.mesh = self.mesh.cwr.read_ras(

@@ -12,6 +12,7 @@ import xarray as xr
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from clearwater_data.variables.xarray import DataArrayVariable
 
 from clearwater_riverine.variables import (
     NODE_X,
@@ -19,8 +20,6 @@ from clearwater_riverine.variables import (
     TIME,
     FACE_NODES,
     EDGE_NODES,
-    EDGES_FACE1,
-    EDGES_FACE2,
     EDGE_FACE_CONNECTIVITY,
     FACE_X,
     FACE_Y,
@@ -31,15 +30,11 @@ from clearwater_riverine.variables import (
     EDGE_LENGTH,
     WATER_SURFACE_ELEVATION,
     FLOW_ACROSS_FACE,
-    NUMBER_OF_REAL_CELLS,
     VOLUME,
     VOLUME_ELEVATION_INFO,
     VOLUME_ELEVATION_VALUES,
     VOLUME_ELEVATION_LOOKUP,
     FACE_HYD_DEPTH,
-    FACE_VEL_X,
-    FACE_VEL_Y,
-    FACE_VEL_MAG,
 )
 
 def _parse_attributes(dataset) -> Dict[str, Any]:
@@ -106,15 +101,18 @@ class RASHDFDataSource:
         self.end_datetime: Optional[Union[int, datetime]] = kwargs.pop("start_datetime")
         self.datetime_range = (self.start_datetime, self.end_datetime)
         self.mesh = kwargs.pop("mesh")  #  does the mesh live in the data source? ...do i create it here?
-        self.variables_to_read = [
-            VOLUME,
-            FACE_SURFACE_AREA,
-            EDGE_VELOCITY,
-            EDGE_LENGTH,
-            WATER_SURFACE_ELEVATION,
-            VOLUME_ELEVATION_INFO,
-            VOLUME_ELEVATION_VALUES,
-        ]
+        self.temporal_variables = {
+            VOLUME: 'nface',
+            EDGE_VELOCITY: 'nedge',
+            WATER_SURFACE_ELEVATION: 'nedge',
+            FLOW_ACROSS_FACE: 'nedge',
+        }
+        self.static_variables = {
+            FACE_SURFACE_AREA: 'nface',
+            EDGE_LENGTH: 'nedge',
+            VOLUME_ELEVATION_INFO: None,
+            VOLUME_ELEVATION_VALUES: None,
+        }
         
         self.__validate_datetime_range()
 
@@ -125,14 +123,13 @@ class RASHDFDataSource:
             ][()][0][0].decode('UTF-8')
             self.paths = self.__set_internal_paths()
             self.gate_names = self.__identify_gates(self, infile)
+            self.__parse_datetimes(infile)
 
             # populate mesh
             self.__define_spatial_coordinates(infile)
-            self.__initialize_time_coordinate(infile)
             self.__define_topology(infile)
             self.__define_boundary_hydrodynamics(infile)
             self.__read_static_variables(infile)
-            self.__read_temporal_variables(infile)
 
 
     def __identify_gates(
@@ -168,8 +165,8 @@ class RASHDFDataSource:
             FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Face Flow',
             VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Volume',
             FACE_HYD_DEPTH: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Hydraulic Depth',
-            FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity X',
-            FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity Y',
+            # FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity X',
+            # FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity Y',
             'project_name': 'Geometry/2D Flow Areas/Attributes',
             'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
             'volume elevation info': f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Info',
@@ -185,38 +182,6 @@ class RASHDFDataSource:
             'gate_path': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/SA 2D Area Conn',
         }
 
-    def __validate_datetime_range(
-        self,
-    ):
-        if isinstance(self.datetime_range[0], int) & isinstance(self.datetime_range[1], int):
-            self.datetime_range_indices: Tuple[int, int] = (
-                self.datetime_range[0],
-                self.datetime_range[1] + 1
-                )
-        elif isinstance(self.datetime_range[0], datetime) & isinstance(self.datetime_range[1], datetime):
-            subset_dates = self.all_datetimes[
-                (self.all_datetimes>= self.datetime_range[0]) & (self.all_datetimes <= self.datetime_range[1])
-            ]
-            subset_indices = subset_dates.index.intersection(
-                self.all_datetimes.index
-            )
-            self.datetime_range_indices: Tuple[int, int] = (
-                subset_indices[0],
-                subset_indices[-1] + 1
-            )
-        ## TODO: add additional validation / setup for only start / end date provided.
-        else:
-            raise TypeError(
-                "Invalid datetime_range, must be tuple of datetimes or ints"
-            )
-    
-    def __initialize_time_coordinate(
-        self,
-        infile: h5py.File,
-    ):
-        self.__parse_datetimes()
-        self.__subset_datetimes()
-        self.__update_time_coordinate()
 
     def __parse_datetimes(
         self, 
@@ -231,30 +196,6 @@ class RASHDFDataSource:
         ## OR if it's faster to do this binary conversion for each new chunk read.
         time_stamps = pd.Series(time_stamps_binary).str.decode('utf8')
         self.all_datetimes = pd.to_datetime(time_stamps, format='%d%b%Y %H:%M:%S')
-
-
-    def __subset_datetimes(
-        self,
-    ):
-
-        if self.datetime_range_indices != (None, None):
-            self.datetime_subset = self.all_datetimes[
-                    self.datetime_range_indices[0]:
-                    self.datetime_range_indices[1]
-                    ]
-        else:
-            self.datetime_subset = self.all_datetimes
-
-
-    def __update_time_coordinate(
-        self,  
-    ):
-        self.mesh = self.mesh.assign_coords(
-            time=xr.DataArray(
-                data=self.datetime_subset,
-                dims=('time',),
-            )
-        )
 
 
     def __define_spatial_coordinates(
@@ -336,23 +277,93 @@ class RASHDFDataSource:
                 }
             )
 
-        def __read(self, variable_name: str):
-            ## TODO: Handle datetimes
-            if variable_name in self.mesh.data_vars:
-                return self.mesh[variable_name]
-            else:
-                self.__update_mesh()
-                return self.mesh[variable_name]
+    def read(self, parameter_name:str) -> DataArrayVariable:
+        return DataArrayVariable(self.__read(parameter_name))
+
+    def __read(self, parameter_name: str):
+        if parameter_name in self.mesh.data_vars:
+            return self.mesh[parameter_name]
+        else:
+            self.__subset_datetimes(
+                self.start_datetime,
+                self.end_datetime,
+            )
+            self.__update_time_coordinate()
+            self.__update_mesh()
+            return self.mesh[parameter_name]
         
-        def __update_mesh(
-                self,
-        ):
-            ## TODO: Handle datetimes for temporal variables
-            with h5py.File(self.file_path, 'r') as infile:
-                # self.__subset_datetimes(infile)
-                # self.__update_time_coordinates(infile)
-                self.__read_static_variables(infile)
-                self.__read_temporal_variables(infile)
+    def read_chunk(
+        self,
+        parameter_name: str,
+        start_time: datetime,
+        end_time: datetime
+    ) -> DataArrayVariable:
+        return DataArrayVariable(self.__read_chunk(parameter_name, start_time, end_time))
+        
+    
+    def __read_chunk(
+        self,
+        parameter_name: str,
+        start_time: datetime,
+        end_time: datetime
+    ):
+        if "time" in self.mesh.coords:
+            if (self.mesh.time[0]) == start_time & (self.mesh.time[-1] == end_time):
+                if parameter_name in self.mesh.data_vars:
+                    return self.mesh[parameter_name]
+        else:
+            self.__subset_datetimes(
+                start_time,
+                end_time
+            )
+            self.__update_time_coordinate()
+            self.__update_mesh()
+            return DataArrayVariable(self.mesh[parameter_name])
+        
+    
+    def __update_mesh(
+            self,
+    ):
+        with h5py.File(self.file_path, 'r') as infile:
+            self.__read_temporal_variables(infile)
+
+    # def read() --> as variable DataArray variable
+
+    def __subset_datetimes(
+        self,
+        start_datetime: datetime,
+        end_datetime: datetime,
+    ):
+        
+        subset_dates = self.all_datetimes[
+            (self.all_datetimes>= start_datetime) & (self.all_datetimes <= end_datetime)
+        ]
+        subset_indices = subset_dates.index.intersection(
+            self.all_datetimes.index
+        )
+        self.datetime_range_indices: Tuple[int, int] = (
+            subset_indices[0],
+            subset_indices[-1] + 1
+        )
+
+        if self.datetime_range_indices != (None, None):
+            self.datetime_subset = self.all_datetimes[
+                    self.datetime_range_indices[0]:
+                    self.datetime_range_indices[1]
+                    ]
+        else:
+            self.datetime_subset = self.all_datetimes
+
+
+    def __update_time_coordinate(
+        self,  
+    ):
+        self.mesh = self.mesh.assign_coords(
+            time=xr.DataArray(
+                data=self.datetime_subset,
+                dims=('time',),
+            )
+        )
 
     
     def __read_static_variables(
@@ -368,37 +379,21 @@ class RASHDFDataSource:
             infile[self.paths[EDGE_LENGTH]][:, 2],
             ('nedge'),
         )
+        
+        # TODO: don't save this as an xarray attribute. Register separate variable to registry?
+        # TODO: Maybe just read the necessary data and don't do extra calcs until later?
+        self.mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self.__create_lookup_df(infile)
 
     def __read_temporal_variables(
         self,
         infile: h5py.File,
     ):
-        self.mesh[EDGE_VELOCITY] = _hdf_to_xarray(
-            infile[self.paths[EDGE_VELOCITY]],
-            ('time', 'nedge'),
-            time_constraint=self.datetime_range_indices,
-
-        )
-        self.mesh[WATER_SURFACE_ELEVATION] = _hdf_to_xarray(
-            infile[self.paths[WATER_SURFACE_ELEVATION]],
-            ('time', 'nface'),
-            time_constraint=self.datetime_range_indices
-        )
-        self.mesh[VOLUME] = _hdf_to_xarray(
-            infile[self.paths[VOLUME]],
-            ('time', 'nface'),
-            time_constraint=self.datetime_range_indices
-         )
-            
-        self.mesh[FLOW_ACROSS_FACE] = _hdf_to_xarray(
-            infile[self.paths[FLOW_ACROSS_FACE]],
-            ('time', 'nedge'),
-            time_constraint=self.datetime_range_indices
+        for variable in self.temporal_variables.keys():
+            self.mesh[variable] = _hdf_to_xarray(
+                infile[self.paths[EDGE_VELOCITY]],
+                ('time', self.temporal_variables[variable]),
+                time_constraint=self.datetime_range_indices,
             )
-
-        # TODO: don't save this as an xarray attribute. Register separate variable to registry?
-        # TODO: Maybe just read the necessary data and don't do extra calcs until later?
-        self.mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self.__create_lookup_df(infile)
 
         # add gate flows
         if self.has_gates:
