@@ -16,7 +16,7 @@ from clearwater_riverine.io.inputs import (
 from clearwater_riverine.io.outputs import ClearWaterRiverineOutput, ClearWaterRiverineWriter
 from clearwater_riverine.utilities import WQVariableCalculator
 
-def instantiate_model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
+def instantiate_model_mesh() -> xr.Dataset:
     """ Initialize the Clearwater Model Mesh
 
     Args:
@@ -50,7 +50,7 @@ def instantiate_model_mesh(diffusion_coefficient_input: float) -> xr.Dataset:
     )
     ds.attrs = {
         'Conventions': 'CF-1.8 UGRID-1.0 Deltares-0.10',
-        'diffusion_coefficient': diffusion_coefficient_input}
+        }
 
     return ds
 

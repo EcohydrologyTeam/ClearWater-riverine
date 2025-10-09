@@ -14,6 +14,10 @@ import pandas as pd
 from datetime import datetime
 from clearwater_data.variables.xarray import DataArrayVariable
 
+from clearwater_riverine.mesh import (
+    instantiate_model_mesh,
+    load_model_mesh
+)
 from clearwater_riverine.variables import (
     NODE_X,
     NODE_Y,
@@ -100,7 +104,7 @@ class RASHDFDataSource:
         self.start_datetime: Optional[Union[int, datetime]] = kwargs.pop("start_datetime")
         self.end_datetime: Optional[Union[int, datetime]] = kwargs.pop("start_datetime")
         self.datetime_range = (self.start_datetime, self.end_datetime)
-        self.mesh = kwargs.pop("mesh")  #  does the mesh live in the data source? ...do i create it here?
+        self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
             VOLUME: 'nface',
             EDGE_VELOCITY: 'nedge',
