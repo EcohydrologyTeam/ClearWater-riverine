@@ -101,8 +101,8 @@ class RASHDFDataSource:
     """
     def __init__(self, **kwargs) -> None:
         self.ras_hdf_path: str = kwargs.pop("ras_hdf_path")
-        self.start_datetime: Optional[Union[int, datetime]] = kwargs.pop("start_datetime")
-        self.end_datetime: Optional[Union[int, datetime]] = kwargs.pop("start_datetime")
+        self.start_datetime: datetime = kwargs.pop("start_datetime", None)
+        self.end_datetime: datetime = kwargs.pop("start_datetime", None)
         self.datetime_range = (self.start_datetime, self.end_datetime)
         self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
@@ -118,7 +118,8 @@ class RASHDFDataSource:
             VOLUME_ELEVATION_VALUES: None,
         }
         
-        self.__validate_datetime_range()
+        ## TODO: add datetime validation somewhere
+        # self.__validate_datetime_range()
 
         with h5py.File(self.file_path, 'r') as infile:
             # set-up steps
