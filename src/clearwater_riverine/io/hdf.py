@@ -72,7 +72,10 @@ def _hdf_to_xarray(
 ) -> xr.DataArray:
     """Read n-dimensional HDF5 dataset and return it as an xarray.DataArray"""
     if attrs is None:
-        attrs = _parse_attributes(dataset)
+        try:
+            attrs = _parse_attributes(dataset)
+        except AttributeError as e:
+            attrs = {}
     if time_constraint != (None, None):
         data_to_read = dataset[()][time_constraint[0]: time_constraint[1]]
     else:
@@ -102,13 +105,13 @@ class RASHDFDataSource:
     def __init__(self, **kwargs) -> None:
         self.ras_hdf_path: str = kwargs.pop("ras_hdf_path")
         self.start_datetime: datetime = kwargs.pop("start_datetime", None)
-        self.end_datetime: datetime = kwargs.pop("start_datetime", None)
+        self.end_datetime: datetime = kwargs.pop("end_datetime", None)
         self.datetime_range = (self.start_datetime, self.end_datetime)
         self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
             VOLUME: 'nface',
             EDGE_VELOCITY: 'nedge',
-            WATER_SURFACE_ELEVATION: 'nedge',
+            WATER_SURFACE_ELEVATION: 'nface',
             FLOW_ACROSS_FACE: 'nedge',
         }
         self.static_variables = {
@@ -121,13 +124,13 @@ class RASHDFDataSource:
         ## TODO: add datetime validation somewhere
         # self.__validate_datetime_range()
 
-        with h5py.File(self.file_path, 'r') as infile:
+        with h5py.File(self.ras_hdf_path, 'r') as infile:
             # set-up steps
             self.project_name = infile[
                 'Geometry/2D Flow Areas/Attributes'
             ][()][0][0].decode('UTF-8')
             self.paths = self.__set_internal_paths()
-            self.gate_names = self.__identify_gates(self, infile)
+            self.gate_names = self.__identify_gates(infile)
             self.__parse_datetimes(infile)
 
             # populate mesh
@@ -329,7 +332,7 @@ class RASHDFDataSource:
     def __update_mesh(
             self,
     ):
-        with h5py.File(self.file_path, 'r') as infile:
+        with h5py.File(self.ras_hdf_path, 'r') as infile:
             self.__read_temporal_variables(infile)
 
     # def read() --> as variable DataArray variable
@@ -341,7 +344,7 @@ class RASHDFDataSource:
     ):
         
         subset_dates = self.all_datetimes[
-            (self.all_datetimes>= start_datetime) & (self.all_datetimes <= end_datetime)
+            (self.all_datetimes >= start_datetime) & (self.all_datetimes <= end_datetime)
         ]
         subset_indices = subset_dates.index.intersection(
             self.all_datetimes.index
@@ -395,13 +398,13 @@ class RASHDFDataSource:
     ):
         for variable in self.temporal_variables.keys():
             self.mesh[variable] = _hdf_to_xarray(
-                infile[self.paths[EDGE_VELOCITY]],
+                infile[self.paths[variable]],
                 ('time', self.temporal_variables[variable]),
                 time_constraint=self.datetime_range_indices,
             )
 
         # add gate flows
-        if self.has_gates:
+        if self. gate_names is not None:
             flow_list = []
             for g in self.gates:
                 gate_flow = infile[

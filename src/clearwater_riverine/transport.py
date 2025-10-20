@@ -36,6 +36,8 @@ from clearwater_riverine.variables import (
     CHANGE_IN_TIME,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
+    VOLUME_ELEVATION_INFO,
+    VOLUME_ELEVATION_VALUES
 )
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
@@ -108,9 +110,9 @@ class ClearwaterRiverine:
         self.gdf = None
         self.time_step = 0
         if variable_registry is None:
-            self.__registry = VariableRegistry()
+            self.registry = VariableRegistry()
         else:
-            self.__registry = variable_registry
+            self.registry = variable_registry
         
         self.__start_datetime = start_datetime
         self.__end_datetime = end_datetime
@@ -167,15 +169,18 @@ class ClearwaterRiverine:
             )
             ## TODO: add chunking
             for variable_name in self.__data_sources['hydrodynamic_model'].temporal_variables:
-                self.__data_sources['hydrodynamic_model'].read(variable_name)
-                self.__registry.register(
+                data = self.__data_sources['hydrodynamic_model'].read(variable_name)
+                self.registry.register(
                     variable_name,
-                    self.__data_sources['hydrodynamic_model'].mesh[variable_name]
+                    data
+                    # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
                 )
             for variable_name in self.__data_sources['hydrodynamic_model'].static_variables:
-                self.__registry.register(
-                    variable_name,
-                    self.__data_sources['hydrodynamic_model'].mesh[variable_name]
+                ## TODO: deal with these separately outside of the mesh
+                if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
+                    self.registry.register(
+                        variable_name,
+                        self.__data_sources['hydrodynamic_model'].mesh[variable_name]
                 )
 
             ## TODO: adapt all of this to use the registry
