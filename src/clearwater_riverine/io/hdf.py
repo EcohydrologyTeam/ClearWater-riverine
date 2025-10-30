@@ -315,10 +315,13 @@ class RASHDFDataSource:
         start_time: datetime,
         end_time: datetime
     ):
-        if "time" in self.mesh.coords:
-            if (self.mesh.time[0]) == start_time & (self.mesh.time[-1] == end_time):
-                if parameter_name in self.mesh.data_vars:
-                    return self.mesh[parameter_name]
+        if (
+            "time" in self.mesh.coords
+            and (self.mesh.time[0] == start_time)
+            and (self.mesh.time[-1] == end_time)
+            and (parameter_name in self.mesh.data_vars)
+        ):
+            return DataArrayVariable(self.mesh[parameter_name])
         else:
             self.__subset_datetimes(
                 start_time,

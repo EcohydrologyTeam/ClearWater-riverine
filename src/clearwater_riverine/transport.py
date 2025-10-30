@@ -109,10 +109,7 @@ class ClearwaterRiverine:
         ## TODO: probably get rid of these?
         self.gdf = None
         self.time_step = 0
-        if variable_registry is None:
-            self.registry = VariableRegistry()
-        else:
-            self.registry = variable_registry
+        self.registry = variable_registry if variable_registry is not None else VariableRegistry()
         
         self.__start_datetime = start_datetime
         self.__end_datetime = end_datetime
