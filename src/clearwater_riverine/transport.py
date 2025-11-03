@@ -88,98 +88,123 @@ class ClearwaterRiverine:
             The unstructured mesh follows UGRID CF Conventions. 
         boundary_data (pd.DataFrame): Information on RAS model boundaries, extracted directly from HEC-RAS 2D output. 
     """
-
+    ## TODO: Discuss- will anyone init the model except with a config?
+    # Can we delete all other inputs to CW-R?
     def __init__(
         self,
         config_filepath: Optional[str] = None,
         flow_field_file_path: Optional[str | Path] = None,
-        diffusion_coefficient_input: Optional[float] = None,
+        # diffusion_coefficient_input: Optional[float] = None,
         constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
-        verbose: Optional[bool] = False,
         start_datetime: Optional[datetime] = None,
         end_datetime: Optional[datetime] = None,
         variable_registry: Optional[VariableRegistry] = None,
+        chunk_size: Optional[timedelta] = None,
         # datetime_range: Optional[Tuple[int, int] | Tuple[datetime, datetime]] = None,
-        mesh_file_path: Optional[str | Path] = None,
+        # mesh_file_path: Optional[str | Path] = None,
     ) -> None:
         """
         Initialize a Clearwater Riverine WQ model mesh
         reading HDF output from a RAS2D model to an xarray.
         """
         ## TODO: probably get rid of these?
-        self.gdf = None
-        self.time_step = 0
-        self.registry = variable_registry if variable_registry is not None else VariableRegistry()
-        
-        self.__start_datetime = start_datetime
-        self.__end_datetime = end_datetime
-        self.__data_sources: dict[str, DataSource | ChunkedDataSource] = {}
-        
-        if config_filepath:
-            model, data_sources, consitutents = init_from_config(config_filepath)
-            flow_field_file_path = model.get("file_path", None)
-            chunk_size = model.get("chunk_size", None)
+        # self.gdf = None
+        # self.time_step = 0
 
-            diffusion_coefficient_input = model_config['diffusion_coefficient']
-            if not flow_field_file_path:
-                flow_field_file_path = model_config['flow_field_filepath']
-            self.constituents = list(model_config['constituents'].keys())
+        self.registry = variable_registry if variable_registry is not None else VariableRegistry()
+
+        if config_filepath:
+            model, data_sources, constituents = init_from_config(config_filepath)
+            self.__flow_field_file_path = model.get("file_path", None)
+            self.__chunk_size = model.get("chunk_size", None)
+            self.__start_datetime = model.get("start_datetime", None)
+            self.__end_datetime = model.get("end_datetime", None)
+            for name, data_source in data_sources.items():
+                self.__variable_data_sources[name] = data_source
+            self.__consituents: list[str] = constituents
         else:
-            if flow_field_file_path:
-                ## TODO: add some checking that input set up correctly
-                if isinstance(constituent_dict, Dict):
-                    self.constituents = list(constituent_dict.keys())
-                    model_config = {'constituents': constituent_dict}
-            elif mesh_file_path:
-                ## TODO: add checking that input set up correctly
-                self.constituents = None
-            else:
-                raise TypeError(
-                    'Missing a `config_filepath` or a `constituent_dict` and `flow_field_file_path` to run the model.'
+            self.__flow_field_file_path = flow_field_file_path
+            self.__start_datetime = start_datetime
+            self.__end_datetime = end_datetime
+            self.__chunk_size
+            self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
+        
+        self.__init_model()
+
+
+    def __init_model(self):        
+        # Register configured information
+        # For now this should include diffusion coefficient, initial conditions, boundary conditions
+        for variable_name, data_source in self.__data_sources:
+            if isinstance(data_source, ChunkedDataSource):
+                data = data_source.read_chunk(
+                    variable_name,
+                    self.__start_datetime, self.__end_datetime + self.__chunk_size
                 )
-           
-        ## TODO: update this later (loading mesh)
-        # define model mesh
-        if mesh_file_path:
-            self.mesh = load_model_mesh(mesh_file_path)
-            self._determine_constituents()
-            self.initialize_constituents(
-                method='load'
-            )   
-            if verbose: print(
-                f"""
-                    Loaded model mesh.
-                    Parsed the following constituents: {self.constituents}.
-                    Post processing and plotting capabilities supported.
-                    Hotstart model runs not currently supported.
-                """
+            else:
+                data = data_source.read(variable_name)
+            
+            self.variable_registry.register(
+                variable_name,
+                data,
             )
-        else:
-            # Read HEC RAS HDF
-            ## In the future, if we adapt to additional models, make this configurable
-            ## For now, there is only one option so we can call the data souce directly
-            ## TODO: move to config scripts, mirroring modules
-            if verbose: print("Populating Model Mesh...")  ## TODO: Add to logging
-            self.__data_sources['hydrodynamic_model'] = RASHDFDataSource(
-                ras_hdf_path=flow_field_file_path,
-                start_datetime=self.__start_datetime,
-                end_datetime=self.__end_datetime,
+
+        # Register hydrodynamic data
+        self.__data_sources['hydrodynamic_model'] = RASHDFDataSource(
+            ras_hdf_path=self.__flow_field_file_path,
+            start_datetime=self.__start_datetime,
+            end_datetime=self.__end_datetime,
+        )
+        
+        ## TODO: add chunking
+        for variable_name in self.__data_sources['hydrodynamic_model'].temporal_variables:
+            data = self.__data_sources['hydrodynamic_model'].read(variable_name)
+            self.registry.register(
+                variable_name,
+                data
+                # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
             )
-            ## TODO: add chunking
-            for variable_name in self.__data_sources['hydrodynamic_model'].temporal_variables:
-                data = self.__data_sources['hydrodynamic_model'].read(variable_name)
+        for variable_name in self.__data_sources['hydrodynamic_model'].static_variables:
+            ## TODO: deal with these separately outside of the mesh
+            if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
                 self.registry.register(
                     variable_name,
-                    data
-                    # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
-                )
-            for variable_name in self.__data_sources['hydrodynamic_model'].static_variables:
-                ## TODO: deal with these separately outside of the mesh
-                if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
-                    self.registry.register(
-                        variable_name,
-                        self.__data_sources['hydrodynamic_model'].mesh[variable_name]
-                )
+                    self.__data_sources['hydrodynamic_model'].mesh[variable_name]
+            )
+            
+            
+    
+        # else:
+        #     if flow_field_file_path:
+        #         ## TODO: add some checking that input set up correctly
+        #         if isinstance(constituent_dict, Dict):
+        #             self.constituents = list(constituent_dict.keys())
+        #             model_config = {'constituents': constituent_dict}
+        #     elif mesh_file_path:
+        #         ## TODO: add checking that input set up correctly
+        #         self.constituents = None
+        #     else:
+        #         raise TypeError(
+        #             'Missing a `config_filepath` or a `constituent_dict` and `flow_field_file_path` to run the model.'
+        #         )
+           
+        # ## TODO: update this later (loading mesh)
+        # # define model mesh
+        # if mesh_file_path:
+        #     self.mesh = load_model_mesh(mesh_file_path)
+        #     self._determine_constituents()
+        #     self.initialize_constituents(
+        #         method='load'
+        #     )   
+        #     if verbose: print(
+        #         f"""
+        #             Loaded model mesh.
+        #             Parsed the following constituents: {self.constituents}.
+        #             Post processing and plotting capabilities supported.
+        #             Hotstart model runs not currently supported.
+        #         """
+        #     )
+             
 
             ## TODO: adapt all of this to use the registry
             # self.boundary_data = self.mesh.attrs['boundary_data']

@@ -1,6 +1,7 @@
 import yaml
 from pathlib import Path
 from typing import Dict
+from clearwater_riverine.transport import ClearwaterRiverine
 from clearwater_data.variables import VariableRegistry
 from clearwater_data.io.zarr import ZarrDataStore, ZarrDataSource
 from clearwater_data.io.csv import CSVDataSource
@@ -29,7 +30,12 @@ def init_from_config(
 
     data_sources = __init_data_sources(config)
 
-    return model, data_sources, constituents
+    return ClearwaterRiverine(
+        flow_field_filepath=model.get("file_path"),
+        start_datetime=model.get("start_datetime", None),
+        end_datetime=model.get("end_datetime", None),
+        VariableRegistry=VariableRegistry(),
+    )
 
 
 def __init_single_data_source(source_name: str, source_config: dict) -> "DataSource":
@@ -66,6 +72,7 @@ def __init_data_sources(
 
         initial_conditions = source_config["initial_conditions"]
         data_source[f"{source_name}_initial"] = __init_single_data_source(source_name, initial_conditions)
+
     return data_source
 
 
