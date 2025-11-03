@@ -1,10 +1,15 @@
 import yaml
 from pathlib import Path
 from typing import Dict
+from clearwater_data.variables import VariableRegistry
+from clearwater_data.io.zarr import ZarrDataStore, ZarrDataSource
+from clearwater_data.io.csv import CSVDataSource
+from clearwater_data.io.base import DataSource, ChunkedDataSource
+from clearwater_data.io.float import FloatDataSource
 
 REQUIRED_CONFIG_KEYS = [
-    'diffusion_coefficient',
-    'flow_field_filepath',
+    'model',
+    'data_sources',
     'constituents'
 ]
 
@@ -12,6 +17,56 @@ REQUIRED_CONSTITUENT_KEYS = [
     'initial_conditions',
     'boundary_conditions'
 ]
+
+def init_from_config(
+    config_filepath: str | Path,
+    ):
+    """Initializes Riverine from config"""
+    config = read_config(config_filepath)
+
+    model = config['model']
+    constituents = list(config['constituents'].keys())
+
+    data_sources = __init_data_sources(config)
+
+    return model, data_sources, constituents
+
+
+def __init_single_data_source(source_name: str, source_config: dict) -> "DataSource":
+    """Helper to initialize a single data source from its config."""
+    if "|" in source_name:
+        raise ValueError(
+            f"Invalid source name: {source_name}. Source names cannot contain the '|' character."
+        )
+
+    provider_name = source_config["provider"].lower()
+
+    if provider_name == "csv":
+        return CSVDataSource(**source_config["data"])
+    elif provider_name == "float":
+        return FloatDataSource(**source_config["data"])
+    else:
+        raise ValueError(
+            f"Unknown or unsupported provider `{provider_name}` for data_source `{source_name}`"
+        )
+
+def __init_data_sources(
+        config: dict
+):
+    """Init all data sources from config file."""
+    data_source: dict[str, DataSource | ChunkedDataSource] = {}
+    # Initialize all data souces (like )
+    for source_name, source_config in config["data_sources"].items():
+        data_source[source_name]  = __init_single_data_source(source_name, source_config)
+    
+    # Initialize all constituent data sources
+    for source_name, source_config in config["constituents"].items():
+        boundary_conditions = source_config["boundary_conditions"]
+        data_source[f"{source_name}_boundary"] = __init_single_data_source(source_name, boundary_conditions)
+
+        initial_conditions = source_config["initial_conditions"]
+        data_source[f"{source_name}_initial"] = __init_single_data_source(source_name, initial_conditions)
+    return data_source
 
 
 def validate_config(
@@ -30,7 +85,7 @@ def validate_constituents(config):
                 return (key, constituent)
     return None
 
-def parse_config(
+def read_config(
     config_filepath: str | Path,
 ):
     with open(config_filepath, 'r') as file:

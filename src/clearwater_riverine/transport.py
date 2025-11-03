@@ -42,7 +42,7 @@ from clearwater_riverine.variables import (
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
 from clearwater_riverine.io.hdf import RASHDFDataSource
-from clearwater_riverine.io.config import parse_config
+from clearwater_riverine.io.config import init_from_config
 from clearwater_riverine.constituents import Constituent
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -91,10 +91,10 @@ class ClearwaterRiverine:
 
     def __init__(
         self,
+        config_filepath: Optional[str] = None,
         flow_field_file_path: Optional[str | Path] = None,
         diffusion_coefficient_input: Optional[float] = None,
         constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
-        config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
         start_datetime: Optional[datetime] = None,
         end_datetime: Optional[datetime] = None,
@@ -115,11 +115,12 @@ class ClearwaterRiverine:
         self.__end_datetime = end_datetime
         self.__data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         
-        ## TODO: update this later and thin out init (parse config -- follow example from CW-M)
         if config_filepath:
-            model_config = parse_config(config_filepath=config_filepath)
-            if diffusion_coefficient_input is None:
-                diffusion_coefficient_input = model_config['diffusion_coefficient']
+            model, data_sources, consitutents = init_from_config(config_filepath)
+            flow_field_file_path = model.get("file_path", None)
+            chunk_size = model.get("chunk_size", None)
+
+            diffusion_coefficient_input = model_config['diffusion_coefficient']
             if not flow_field_file_path:
                 flow_field_file_path = model_config['flow_field_filepath']
             self.constituents = list(model_config['constituents'].keys())
