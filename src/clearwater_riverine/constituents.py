@@ -10,7 +10,7 @@ import pandas as pd
 import xarray as xr
 import numpy as np
 
-from clearwater_data.variables import VariableRegistry
+from clearwater_data.variables import VariableRegistry, DataArrayVariable
 from clearwater_riverine.linalg import RHS
 from clearwater_riverine.variables import NUMBER_OF_REAL_CELLS, VOLUME
 
@@ -41,9 +41,11 @@ class Constituent:
         ## Initialize 
         variable_registry.register(
             constituent_name,
-            xr.full_like(
-                variable_registry.get(VOLUME),
-                np.nan
+            DataArrayVariable(
+                xr.full_like(
+                    variable_registry.get(VOLUME),
+                    np.nan
+                ).rename(constituent_name)  # TODO: remove attributes // update from config
             )
         )
 
