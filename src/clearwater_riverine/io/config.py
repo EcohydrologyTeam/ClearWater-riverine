@@ -1,16 +1,15 @@
 import yaml
 from pathlib import Path
 from typing import Dict
-from clearwater_riverine.transport import ClearwaterRiverine
 from clearwater_data.variables import VariableRegistry
 from clearwater_data.io.zarr import ZarrDataStore, ZarrDataSource
 from clearwater_data.io.csv import CSVDataSource
 from clearwater_data.io.base import DataSource, ChunkedDataSource
 from clearwater_data.io.float import FloatDataSource
+from clearwater_riverine.variables import DIFFUSION_COEFFICIENT
 
 REQUIRED_CONFIG_KEYS = [
     'model',
-    'data_sources',
     'constituents'
 ]
 
@@ -29,14 +28,11 @@ def init_from_config(
     constituents = list(config['constituents'].keys())
 
     data_sources = __init_data_sources(config)
+    data_sources['variable_data_sources'][DIFFUSION_COEFFICIENT] = FloatDataSource(**{
+        "value": model["diffusion_coefficient"]
+    })
 
-    return ClearwaterRiverine(
-        flow_field_filepath=model.get("file_path"),
-        start_datetime=model.get("start_datetime", None),
-        end_datetime=model.get("end_datetime", None),
-        VariableRegistry=VariableRegistry(),
-    )
-
+    return model, data_sources, constituents
 
 def __init_single_data_source(source_name: str, source_config: dict) -> "DataSource":
     """Helper to initialize a single data source from its config."""
@@ -60,18 +56,18 @@ def __init_data_sources(
         config: dict
 ):
     """Init all data sources from config file."""
-    data_source: dict[str, DataSource | ChunkedDataSource] = {}
-    # Initialize all data souces (like )
-    for source_name, source_config in config["data_sources"].items():
-        data_source[source_name]  = __init_single_data_source(source_name, source_config)
-    
+    data_source: dict[str, DataSource | ChunkedDataSource] = {
+        'boundary_conditions': {},
+        'initial_conditions': {},
+        'variable_data_sources': {},
+    }    
     # Initialize all constituent data sources
     for source_name, source_config in config["constituents"].items():
         boundary_conditions = source_config["boundary_conditions"]
-        data_source[f"{source_name}_boundary"] = __init_single_data_source(source_name, boundary_conditions)
+        data_source['boundary_conditions'][source_name] = __init_single_data_source(source_name, boundary_conditions)
 
         initial_conditions = source_config["initial_conditions"]
-        data_source[f"{source_name}_initial"] = __init_single_data_source(source_name, initial_conditions)
+        data_source['initial_conditions'][source_name] = __init_single_data_source(source_name, initial_conditions)
 
     return data_source
 

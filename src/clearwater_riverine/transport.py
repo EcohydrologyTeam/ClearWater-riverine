@@ -20,6 +20,7 @@ import warnings
 import inspect
 from datetime import datetime, timedelta
 
+from clearwater_data.io.base import DataSource, ChunkedDataSource
 from clearwater_data.variables import VariableRegistry
 
 from clearwater_riverine.mesh import (
@@ -112,6 +113,15 @@ class ClearwaterRiverine:
         # self.time_step = 0
 
         self.registry = variable_registry if variable_registry is not None else VariableRegistry()
+        self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
+        self.__initial_condition_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
+        self.__boundary_condition_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
+        self.__category_attr_map = {
+            "boundary_conditions": self.__boundary_condition_data_sources,
+            "initial_conditions": self.__initial_condition_data_sources,
+            "variable_data_sources": self.__variable_data_sources
+        }
+        self.__constituents: dict[str: Constituent] = {}
 
         if config_filepath:
             model, data_sources, constituents = init_from_config(config_filepath)
@@ -119,9 +129,8 @@ class ClearwaterRiverine:
             self.__chunk_size = model.get("chunk_size", None)
             self.__start_datetime = model.get("start_datetime", None)
             self.__end_datetime = model.get("end_datetime", None)
-            for name, data_source in data_sources.items():
-                self.__variable_data_sources[name] = data_source
-            self.__consituents: list[str] = constituents
+            for category, data_sources_dict in data_sources.items():
+                self.__category_attr_map[category].update(data_sources_dict)    
         else:
             self.__flow_field_file_path = flow_field_file_path
             self.__start_datetime = start_datetime
@@ -129,13 +138,13 @@ class ClearwaterRiverine:
             self.__chunk_size
             self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         
-        self.__init_model()
+        self.__init_model(constituents)
 
 
-    def __init_model(self):        
+    def __init_model(self, constituents: list[str]):        
         # Register configured information
         # For now this should include diffusion coefficient, initial conditions, boundary conditions
-        for variable_name, data_source in self.__data_sources:
+        for variable_name, data_source in self.__variable_data_sources.items():
             if isinstance(data_source, ChunkedDataSource):
                 data = data_source.read_chunk(
                     variable_name,
@@ -144,34 +153,49 @@ class ClearwaterRiverine:
             else:
                 data = data_source.read(variable_name)
             
-            self.variable_registry.register(
+            self.registry.register(
                 variable_name,
                 data,
             )
 
         # Register hydrodynamic data
-        self.__data_sources['hydrodynamic_model'] = RASHDFDataSource(
+        self.__variable_data_sources['hydrodynamic_model'] = RASHDFDataSource(
             ras_hdf_path=self.__flow_field_file_path,
             start_datetime=self.__start_datetime,
             end_datetime=self.__end_datetime,
         )
         
         ## TODO: add chunking
-        for variable_name in self.__data_sources['hydrodynamic_model'].temporal_variables:
-            data = self.__data_sources['hydrodynamic_model'].read(variable_name)
+        for variable_name in self.__variable_data_sources['hydrodynamic_model'].temporal_variables:
+            data = self.__variable_data_sources['hydrodynamic_model'].read(variable_name)
             self.registry.register(
                 variable_name,
                 data
                 # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
             )
-        for variable_name in self.__data_sources['hydrodynamic_model'].static_variables:
+        for variable_name in self.__variable_data_sources['hydrodynamic_model'].static_variables:
             ## TODO: deal with these separately outside of the mesh
             if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
                 self.registry.register(
                     variable_name,
-                    self.__data_sources['hydrodynamic_model'].mesh[variable_name]
+                    self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name]
             )
-            
+    
+        for constituent_name in constituents:
+            self.__init_constituents(constituent_name)
+        
+    
+    def __init_constituents(self, constituent_name: str):
+        initial_conditions = self.__initial_condition_data_sources[constituent_name].read(constituent_name)
+        boundary_conditions = self.__boundary_condition_data_sources[constituent_name].read(constituent_name)
+
+        self.__constituents[constituent_name] = Constituent(
+            constituent_name=constituent_name,
+            variable_registry=self.registry,
+            initial_conditions=initial_conditions,
+            boundary_conditions=boundary_conditions
+        )
+
             
     
         # else:

@@ -10,69 +10,93 @@ import pandas as pd
 import xarray as xr
 import numpy as np
 
+from clearwater_data.variables import VariableRegistry
 from clearwater_riverine.linalg import RHS
-from clearwater_riverine.variables import NUMBER_OF_REAL_CELLS
+from clearwater_riverine.variables import NUMBER_OF_REAL_CELLS, VOLUME
 
 
 class Constituent:
     """Constituent class."""
     def __init__(
         self,
-        name: str,
-        mesh: xr.Dataset,
-        flow_field_boundaries: Optional[pd.DataFrame] = None,
-        constituent_config: Optional[Dict] = None,
-        method: Optional[Literal['initialize', 'load']] = 'initialize',
+        constituent_name: str,
+        variable_registry: VariableRegistry,
+        initial_conditions,
+        boundary_conditions,
+        # mesh: xr.Dataset,
+        # flow_field_boundaries: Optional[pd.DataFrame] = None,
+        # constituent_config: Optional[Dict] = None,
+        # method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
-        self.name = name
-        self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
-        # TODO: make units optional
-        if method == 'initialize':
-            self.units = constituent_config['units']
-            self.max_value = None
-            self.min_value = None
+        self.name = constituent_name
+        variable_registry.register(
+            f"{constituent_name}_initial",
+            initial_conditions,
+        )
+        variable_registry.register(
+            f"{constituent_name}_boundary",
+            boundary_conditions,
+        )
 
-            # add to model mesh
-            mesh[self.name] = xr.DataArray(
-                np.full(
-                    (len(mesh.time), len(mesh.nface)),
-                    np.nan
-                ),
-                dims = ('time', 'nface'),
-                attrs = {
-                    'Units': f'{self.units}'
-                }
+        ## Initialize 
+        variable_registry.register(
+            constituent_name,
+            xr.full_like(
+                variable_registry.get(VOLUME),
+                np.nan
             )
+        )
 
-            # define initial and boundary conditions
-            self.set_initial_conditions(
-                filepath=constituent_config['initial_conditions'],
-                mesh=mesh,
-            )
-            self.set_boundary_conditions(
-                filepath=constituent_config['boundary_conditions'],
-                mesh=mesh,
-                flow_field_boundaries=flow_field_boundaries,
-            )
+        # self.set_initial_conditions()
+        # self.set_boundary_conditions()
 
-            # set up RHS matrix
-            self.b = RHS(
-                mesh=mesh,
-                input_array=self.input_array,
-            )
-        elif method == 'load':
-            try:
-                self.units = mesh[name].Units
-            except AttributeError as err:
-                warnings.warn(
-                    f'Constituent {self.name} does not have units defined',
-                    UserWarning       
-                )
+        # self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        # self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        # self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        # self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
+        # # TODO: make units optional
+        # if method == 'initialize':
+        #     self.units = constituent_config['units']
+        #     self.max_value = None
+        #     self.min_value = None
 
-            self.set_value_range(mesh)
+            # # add to model mesh
+            # mesh[self.name] = xr.DataArray(
+            #     np.full(
+            #         (len(mesh.time), len(mesh.nface)),
+            #         np.nan
+            #     ),
+            #     dims = ('time', 'nface'),
+            #     attrs = {
+            #         'Units': f'{self.units}'
+            #     }
+            # )
+        #     # define initial and boundary conditions
+        #     self.set_initial_conditions(
+        #         filepath=constituent_config['initial_conditions'],
+        #         mesh=mesh,
+        #     )
+        #     self.set_boundary_conditions(
+        #         filepath=constituent_config['boundary_conditions'],
+        #         mesh=mesh,
+        #         flow_field_boundaries=flow_field_boundaries,
+        #     )
+
+        #     # set up RHS matrix
+        #     self.b = RHS(
+        #         mesh=mesh,
+        #         input_array=self.input_array,
+        #     )
+        # elif method == 'load':
+        #     try:
+        #         self.units = mesh[name].Units
+        #     except AttributeError as err:
+        #         warnings.warn(
+        #             f'Constituent {self.name} does not have units defined',
+        #             UserWarning       
+        #         )
+
+        #     self.set_value_range(mesh)
 
 
     def set_initial_conditions(

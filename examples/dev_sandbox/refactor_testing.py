@@ -8,14 +8,11 @@ import pandas as pd
 # read config
 working_dir = Path.cwd()
 network_path = working_dir / 'examples/data_temp/sumwere_creek_coarse_p48'
-config_file = network_path / 'demo_config.yml'
+config_file = network_path / 'example_config_refactor.yml'
 
 # instantiate model
 transport_model = cwr.ClearwaterRiverine(
     config_filepath=config_file,
-    verbose=True,
-    start_datetime=pd.to_datetime('2022-05-13 08:00:00'),
-    end_datetime=pd.to_datetime('2022-05-13 10:00:00'),
 )
 
-transport_model.registry.get('volume')
+transport_model.registry.get('water_temperature_boundary')
