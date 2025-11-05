@@ -9,93 +9,135 @@ import warnings
 import pandas as pd
 import xarray as xr
 import numpy as np
+from datetime import datetime
 
+from clearwater_data.variables import VariableRegistry, DataArrayVariable
 from clearwater_riverine.linalg import RHS
-from clearwater_riverine.variables import NUMBER_OF_REAL_CELLS
+from clearwater_riverine.variables import NUMBER_OF_REAL_CELLS, VOLUME
 
 
 class Constituent:
     """Constituent class."""
     def __init__(
         self,
-        name: str,
-        mesh: xr.Dataset,
-        flow_field_boundaries: Optional[pd.DataFrame] = None,
-        constituent_config: Optional[Dict] = None,
-        method: Optional[Literal['initialize', 'load']] = 'initialize',
+        constituent_name: str,
+        registry: VariableRegistry,
+        initial_conditions: xr.DataArray,
+        boundary_conditions: xr.DataArray,
+        constituent_config: dict,
+        start_datetime: datetime,
+        # mesh: xr.Dataset,
+        # flow_field_boundaries: Optional[pd.DataFrame] = None,
+        # constituent_config: Optional[Dict] = None,
+        # method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
-        self.name = name
-        self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
-        # TODO: make units optional
-        if method == 'initialize':
-            self.units = constituent_config['units']
-            self.max_value = None
-            self.min_value = None
+        self._name = constituent_name
+        self.__units = constituent_config.get("units", None)
+        self.__initial_condition_spatial_field = constituent_config["initial_conditions"]["data"].get(
+            "spatial_field", "Cell_Index"  # Default to old config requriement
+        )
+        self.__boundary_condition_spatial_field = constituent_config["boundary_conditions"]["data"].get(
+            "spatial_field", "RAS2D_TS_Name"  # Default to old config requriement
+        )
+        registry.register(
+            f"{self._name}_initial",
+            initial_conditions,
+        )
+        registry.register(
+            f"{self._name}_boundary",
+            boundary_conditions,
+        )
 
-            # add to model mesh
-            mesh[self.name] = xr.DataArray(
-                np.full(
-                    (len(mesh.time), len(mesh.nface)),
+        ## Initialize 
+        registry.register(
+            self._name,
+            DataArrayVariable(
+                xr.full_like(
+                    registry.get(VOLUME),
                     np.nan
-                ),
-                dims = ('time', 'nface'),
-                attrs = {
-                    'Units': f'{self.units}'
-                }
-            )
-
-            # define initial and boundary conditions
-            self.set_initial_conditions(
-                filepath=constituent_config['initial_conditions'],
-                mesh=mesh,
-            )
-            self.set_boundary_conditions(
-                filepath=constituent_config['boundary_conditions'],
-                mesh=mesh,
-                flow_field_boundaries=flow_field_boundaries,
-            )
-
-            # set up RHS matrix
-            self.b = RHS(
-                mesh=mesh,
-                input_array=self.input_array,
-            )
-        elif method == 'load':
-            try:
-                self.units = mesh[name].Units
-            except AttributeError as err:
-                warnings.warn(
-                    f'Constituent {self.name} does not have units defined',
-                    UserWarning       
                 )
+                .rename(self._name)
+                .assign_attrs({
+                    'units': self.__units
+                })
+            )
+        )
 
-            self.set_value_range(mesh)
+        self.set_initial_conditions(
+            registry=registry,
+            start_datetime=start_datetime,
+        )
+        # self.set_boundary_conditions()
+
+        # self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        # self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        # self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
+        # self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
+        # # TODO: make units optional
+        # if method == 'initialize':
+        #     self.units = constituent_config['units']
+        #     self.max_value = None
+        #     self.min_value = None
+
+            # # add to model mesh
+            # mesh[self.name] = xr.DataArray(
+            #     np.full(
+            #         (len(mesh.time), len(mesh.nface)),
+            #         np.nan
+            #     ),
+            #     dims = ('time', 'nface'),
+            #     attrs = {
+            #         'Units': f'{self.units}'
+            #     }
+            # )
+        #     # define initial and boundary conditions
+        #     self.set_initial_conditions(
+        #         filepath=constituent_config['initial_conditions'],
+        #         mesh=mesh,
+        #     )
+        #     self.set_boundary_conditions(
+        #         filepath=constituent_config['boundary_conditions'],
+        #         mesh=mesh,
+        #         flow_field_boundaries=flow_field_boundaries,
+        #     )
+
+        #     # set up RHS matrix
+        #     self.b = RHS(
+        #         mesh=mesh,
+        #         input_array=self.input_array,
+        #     )
+        # elif method == 'load':
+        #     try:
+        #         self.units = mesh[name].Units
+        #     except AttributeError as err:
+        #         warnings.warn(
+        #             f'Constituent {self.name} does not have units defined',
+        #             UserWarning       
+        #         )
+
+        #     self.set_value_range(mesh)
 
 
     def set_initial_conditions(
         self,
-        filepath: str | Path,
-        mesh: xr.Dataset
-    ):
-        """Define initial conditions for costituents from CSV file. 
+        registry: VariableRegistry,
+        start_datetime: datetime,
 
-        Args:
-            filepath (str): Filepath to a CSV containing initial conditions.
-                The CSV should have two columns: one called `Cell_Index` and
-                one called `Concentration`. The file should the concentration
-                in each cell within the model domain at the first timestep. 
-        """
-        initial_condition_df = pd.read_csv(filepath)
-        initial_condition_df['Cell_Index'] = initial_condition_df.Cell_Index.astype(int)
-        self.input_array[0, [initial_condition_df['Cell_Index']]] =  initial_condition_df['Concentration']
-        mesh[self.name].loc[
-            {
-                'time': mesh['time'][0],
-            }
-        ] = self.input_array[0]
+    ):
+        """Define cosntituetn initial conditions."""
+        constituent = registry.get_at_time(self._name, start_datetime)
+        initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
+
+        if isinstance(initial, xr.DataArray):
+            constituent[:] =  (
+                initial
+                .rename({self.__initial_condition_spatial_field: 'nface'})  # Align to mesh coords
+                .reindex(nface=constituent.nface)
+                .data
+            )
+        elif isinstance(initial, (float, int)):
+            constituent[:] = initial
+        
 
     def set_boundary_conditions(
         self,
