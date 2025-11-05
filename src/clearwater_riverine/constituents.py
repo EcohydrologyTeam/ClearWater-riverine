@@ -9,6 +9,7 @@ import warnings
 import pandas as pd
 import xarray as xr
 import numpy as np
+from datetime import datetime
 
 from clearwater_data.variables import VariableRegistry, DataArrayVariable
 from clearwater_riverine.linalg import RHS
@@ -20,42 +21,46 @@ class Constituent:
     def __init__(
         self,
         constituent_name: str,
-        variable_registry: VariableRegistry,
+        registry: VariableRegistry,
         initial_conditions: xr.DataArray,
         boundary_conditions: xr.DataArray,
         constituent_config: dict,
+        start_datetime: datetime,
         # mesh: xr.Dataset,
         # flow_field_boundaries: Optional[pd.DataFrame] = None,
         # constituent_config: Optional[Dict] = None,
         # method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
-        self.__name = constituent_name
+        self._name = constituent_name
         self.__units = constituent_config.get("units", None)
-        variable_registry.register(
-            f"{self.__name}_initial",
+        registry.register(
+            f"{self._name}_initial",
             initial_conditions,
         )
-        variable_registry.register(
-            f"{self.__name}_boundary",
+        registry.register(
+            f"{self._name}_boundary",
             boundary_conditions,
         )
 
         ## Initialize 
-        variable_registry.register(
-            self.__name,
+        registry.register(
+            self._name,
             DataArrayVariable(
                 xr.full_like(
-                    variable_registry.get(VOLUME),
+                    registry.get(VOLUME),
                     np.nan
                 )
-                .rename(self.__name)
+                .rename(self._name)
                 .assign_attrs({
                     'units': self.__units
                 })
             )
         )
 
-        # self.set_initial_conditions()
+        self.set_initial_conditions(
+            registry=registry,
+            start_datetime=start_datetime,
+        )
         # self.set_boundary_conditions()
 
         # self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
@@ -109,8 +114,10 @@ class Constituent:
 
     def set_initial_conditions(
         self,
-        filepath: str | Path,
-        mesh: xr.Dataset
+        registry: VariableRegistry,
+        start_datetime: datetime,
+        # filepath: str | Path,
+        # mesh: xr.Dataset
     ):
         """Define initial conditions for costituents from CSV file. 
 
@@ -120,14 +127,26 @@ class Constituent:
                 one called `Concentration`. The file should the concentration
                 in each cell within the model domain at the first timestep. 
         """
-        initial_condition_df = pd.read_csv(filepath)
-        initial_condition_df['Cell_Index'] = initial_condition_df.Cell_Index.astype(int)
-        self.input_array[0, [initial_condition_df['Cell_Index']]] =  initial_condition_df['Concentration']
-        mesh[self.name].loc[
-            {
-                'time': mesh['time'][0],
-            }
-        ] = self.input_array[0]
+        # initial_condition_df = pd.read_csv(filepath)
+        # initial_condition_df['Cell_Index'] = initial_condition_df.Cell_Index.astype(int)
+        # self.input_array[0, [initial_condition_df['Cell_Index']]] =  initial_condition_df['Concentration']
+        
+        constituent = registry.get_at_time(self._name, start_datetime)
+        initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
+
+        constituent[:] =  (
+            initial
+            .rename({'Cell_Index': 'nface'})   ## TODO: handle variable names for spatial data differently
+            .reindex(nface=constituent.nface)
+            .data
+        )
+
+        
+        # mesh[self.name].loc[
+        #     {
+        #         'time': mesh['time'][0],
+        #     }
+        # ] = self.input_array[0]
 
     def set_boundary_conditions(
         self,

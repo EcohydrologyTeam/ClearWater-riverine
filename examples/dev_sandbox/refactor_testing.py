@@ -14,3 +14,5 @@ config_file = network_path / 'example_config_refactor.yml'
 transport_model = cwr.ClearwaterRiverine(
     config_filepath=config_file,
 )
+
+transport_model.get('water_temperature')

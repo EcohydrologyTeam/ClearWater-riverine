@@ -127,8 +127,8 @@ class ClearwaterRiverine:
             model, data_sources, constituents = init_from_config(config_filepath)
             self.__flow_field_file_path = model.get("file_path", None)
             self.__chunk_size = model.get("chunk_size", None)
-            self.__start_datetime = model.get("start_datetime", None)
-            self.__end_datetime = model.get("end_datetime", None)
+            self.__start_datetime = pd.to_datetime(model.get("start_datetime", None))
+            self.__end_datetime = pd.to_datetime(model.get("end_datetime", None))
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)    
         else:
@@ -191,8 +191,7 @@ class ClearwaterRiverine:
     def __init_constituents(
             self,
             constituent_name: str,
-            constituent_config; dict,
-
+            constituent_config: dict,
     ):
         """Initalize model constituents."""
         initial_conditions = self.__initial_condition_data_sources[constituent_name].read(constituent_name)
@@ -200,10 +199,11 @@ class ClearwaterRiverine:
 
         self.__constituents[constituent_name] = Constituent(
             constituent_name=constituent_name,
-            variable_registry=self.registry,
+            registry=self.registry,
             initial_conditions=initial_conditions,
-            boundary_conditions=boundary_conditions
+            boundary_conditions=boundary_conditions,
             constituent_config=constituent_config,
+            start_datetime=self.__start_datetime
         )
 
             
