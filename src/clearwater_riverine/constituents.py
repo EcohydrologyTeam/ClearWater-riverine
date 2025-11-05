@@ -21,31 +21,37 @@ class Constituent:
         self,
         constituent_name: str,
         variable_registry: VariableRegistry,
-        initial_conditions,
-        boundary_conditions,
+        initial_conditions: xr.DataArray,
+        boundary_conditions: xr.DataArray,
+        constituent_config: dict,
         # mesh: xr.Dataset,
         # flow_field_boundaries: Optional[pd.DataFrame] = None,
         # constituent_config: Optional[Dict] = None,
         # method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
-        self.name = constituent_name
+        self.__name = constituent_name
+        self.__units = constituent_config.get("units", None)
         variable_registry.register(
-            f"{constituent_name}_initial",
+            f"{self.__name}_initial",
             initial_conditions,
         )
         variable_registry.register(
-            f"{constituent_name}_boundary",
+            f"{self.__name}_boundary",
             boundary_conditions,
         )
 
         ## Initialize 
         variable_registry.register(
-            constituent_name,
+            self.__name,
             DataArrayVariable(
                 xr.full_like(
                     variable_registry.get(VOLUME),
                     np.nan
-                ).rename(constituent_name)  # TODO: remove attributes // update from config
+                )
+                .rename(self.__name)
+                .assign_attrs({
+                    'units': self.__units
+                })
             )
         )
 

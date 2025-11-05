@@ -141,9 +141,9 @@ class ClearwaterRiverine:
         self.__init_model(constituents)
 
 
-    def __init_model(self, constituents: list[str]):        
+    def __init_model(self, constituents: dict):        
         # Register configured information
-        # For now this should include diffusion coefficient, initial conditions, boundary conditions
+        # For now this should just be the diffusion coefficient
         for variable_name, data_source in self.__variable_data_sources.items():
             if isinstance(data_source, ChunkedDataSource):
                 data = data_source.read_chunk(
@@ -181,11 +181,20 @@ class ClearwaterRiverine:
                     self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name]
             )
     
-        for constituent_name in constituents:
-            self.__init_constituents(constituent_name)
+        for constituent_name in list(constituents.keys()):
+            self.__init_constituents(
+                constituent_name=constituent_name, 
+                constituent_config=constituents[constituent_name]
+            )
         
     
-    def __init_constituents(self, constituent_name: str):
+    def __init_constituents(
+            self,
+            constituent_name: str,
+            constituent_config; dict,
+
+    ):
+        """Initalize model constituents."""
         initial_conditions = self.__initial_condition_data_sources[constituent_name].read(constituent_name)
         boundary_conditions = self.__boundary_condition_data_sources[constituent_name].read(constituent_name)
 
@@ -194,6 +203,7 @@ class ClearwaterRiverine:
             variable_registry=self.registry,
             initial_conditions=initial_conditions,
             boundary_conditions=boundary_conditions
+            constituent_config=constituent_config,
         )
 
             

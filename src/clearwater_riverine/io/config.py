@@ -25,7 +25,7 @@ def init_from_config(
     config = read_config(config_filepath)
 
     model = config['model']
-    constituents = list(config['constituents'].keys())
+    constituents = config['constituents']
 
     data_sources = __init_data_sources(config)
     data_sources['variable_data_sources'][DIFFUSION_COEFFICIENT] = FloatDataSource(**{
