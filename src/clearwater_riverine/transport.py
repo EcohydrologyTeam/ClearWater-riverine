@@ -23,9 +23,8 @@ from datetime import datetime, timedelta
 from clearwater_data.io.base import DataSource, ChunkedDataSource
 from clearwater_data.variables import VariableRegistry
 
-from clearwater_riverine.mesh import (
-    instantiate_model_mesh,
-    load_model_mesh
+from clearwater_riverine.utilities import(
+    CALCULATED_VARIABLE_MAP,
 )
 import clearwater_riverine.variables
 from clearwater_riverine.variables import (
@@ -164,14 +163,21 @@ class ClearwaterRiverine:
                 data
                 # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
             )
-        for variable_name in self.__variable_data_sources['hydrodynamic_model'].static_variables:
+        
+        non_temporal_variables = list(self.__variable_data_sources['hydrodynamic_model'].static_variables.keys()) \
+            + list(self.__variable_data_sources['hydrodynamic_model'].topology_variables.keys())
+        for variable_name in non_temporal_variables:
             ## TODO: deal with these separately outside of the mesh
             if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
                 self.registry.register(
                     variable_name,
                     self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name]
             )
-    
+                
+        # Calculate intermediate variables
+        self.__init_calculated_variables()
+
+        # initialize constituents
         for constituent_name in list(constituents.keys()):
             self.__init_constituents(
                 constituent_name=constituent_name, 
@@ -196,6 +202,20 @@ class ClearwaterRiverine:
             constituent_config=constituent_config,
             start_datetime=self.__start_datetime
         )
+
+
+    def __init_calculated_variables(self):
+        for calculated_variable in self.__variable_data_sources["hydrodynamic_model"].calculated_variables:
+            calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
+            calculated_result = calculation_method(
+                registry=self.registry,
+            )
+            self.registry.register(
+                calculated_variable,
+                calculated_result
+            )
+    
+            
 
             
     
@@ -243,49 +263,6 @@ class ClearwaterRiverine:
             #     method='initialize'
             # )
 
-
-    def initialize_constituents(
-        self,
-        model_config: Optional[Dict] = None,
-        method: Optional[Literal['initialize', 'load']] = 'initialize',
-    ):
-        """Initializes model, developed to be BMI-adjacent.
-
-        Args:
-            initial_conditon_path: Filepath to a CSV containing initial conditions. 
-                The CSV should have two columns: one called `Cell_Index` and one called
-                `Concentration`. The file should the concentration in each cell within 
-                the modeldomain at the first timestep. If not provided, no initial conditions
-                will be set up as part of the initialize call.
-            boundary_condition_path: Filepath to a CSV containing boundary conditions. 
-                The CSV should have the following columns: `RAS2D_TS_Name` (the timeseries
-                name, as labeled in the HEC-RAS model), `Datetime`, `Concentration`. 
-                This file should contain the concentration for all relevant boundary cells
-                at every RAS timestep. If a timestep / boundary cell is not included in this
-                CSV file, the concentration will be set to 0 in the Clearwater Riverine model.
-                If not provided no boundary condtiions will be set up as part of the initialize
-                call. 
-            units: the units of the concentration timeseries. If not provided, defaults to
-                'Unknown.'
-        """
-        self.time_step = 0
-        self.constituent_dict = {}
-
-        if method == 'initialize':
-            for constituent in self.constituents:
-                self.constituent_dict[constituent] = Constituent(
-                    name=constituent,
-                    mesh=self.mesh,
-                    constituent_config=model_config['constituents'][constituent],
-                    flow_field_boundaries=self.boundary_data,
-                )
-        else:
-            for constituent in self.constituents:
-                self.constituent_dict[constituent] = Constituent(
-                    name=constituent,
-                    mesh=self.mesh,
-                    method=method,
-                )
     
     def update(
         self,

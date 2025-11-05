@@ -19,6 +19,9 @@ from clearwater_riverine.mesh import (
     load_model_mesh
 )
 from clearwater_riverine.variables import (
+    CHANGE_IN_TIME,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+    DIFFUSION_COEFFICIENT,
     NODE_X,
     NODE_Y,
     TIME,
@@ -28,10 +31,12 @@ from clearwater_riverine.variables import (
     FACE_X,
     FACE_Y,
     FACE_SURFACE_AREA,
+    FACE_TO_FACE_DISTANCE,
     GATE_CONNECTIVITY,
     GATE_FLOW,
-    EDGE_VELOCITY,
     EDGE_LENGTH,
+    EDGE_VELOCITY,
+    EDGE_VERTICAL_AREA,
     WATER_SURFACE_ELEVATION,
     FLOW_ACROSS_FACE,
     VOLUME,
@@ -120,6 +125,17 @@ class RASHDFDataSource:
             VOLUME_ELEVATION_INFO: None,
             VOLUME_ELEVATION_VALUES: None,
         }
+        self.calculated_variables = {
+            EDGE_VERTICAL_AREA: ('time', 'nedge'),
+            FACE_TO_FACE_DISTANCE: ('nedge'),
+            COEFFICIENT_TO_DIFFUSION_TERM: ('time', 'nedge'),
+            CHANGE_IN_TIME: ('time'),
+        }
+        self.topology_variables = [
+            FACE_X,
+            FACE_Y,
+            EDGE_FACE_CONNECTIVITY,
+        ]
         
         ## TODO: add datetime validation somewhere
         # self.__validate_datetime_range()
