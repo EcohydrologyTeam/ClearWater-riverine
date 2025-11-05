@@ -15,4 +15,4 @@ transport_model = cwr.ClearwaterRiverine(
     config_filepath=config_file,
 )
 
-transport_model.get('water_temperature')
+transport_model.registry.get('water_temperature')

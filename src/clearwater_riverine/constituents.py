@@ -134,13 +134,16 @@ class Constituent:
         constituent = registry.get_at_time(self._name, start_datetime)
         initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
 
-        constituent[:] =  (
-            initial
-            .rename({'Cell_Index': 'nface'})   ## TODO: handle variable names for spatial data differently
-            .reindex(nface=constituent.nface)
-            .data
-        )
-
+        if isinstance(initial, xr.DataArray):
+            constituent[:] =  (
+                initial
+                .rename({'Cell_Index': 'nface'})   ## TODO: handle variable names for spatial data differently
+                .reindex(nface=constituent.nface)
+                .data
+            )
+        elif isinstance(initial, (float, int)):
+            constituent[:] = initial
+        
         
         # mesh[self.name].loc[
         #     {
