@@ -7,7 +7,7 @@ import holoviews as hv
 import geoviews as gv
 import geopandas as gpd
 from shapely.geometry import Polygon
-hv.extension("bokeh")
+# hv.extension("bokeh")
 from typing import (
     Any,
     Dict,
@@ -18,6 +18,9 @@ from typing import (
 from pathlib import Path
 import warnings
 import inspect
+from datetime import datetime, timedelta
+
+from clearwater_data.variables import VariableRegistry
 
 from clearwater_riverine.mesh import (
     instantiate_model_mesh,
@@ -33,10 +36,12 @@ from clearwater_riverine.variables import (
     CHANGE_IN_TIME,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
+    VOLUME_ELEVATION_INFO,
+    VOLUME_ELEVATION_VALUES
 )
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
-from clearwater_riverine.io.hdf import _hdf_to_xarray
+from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import parse_config
 from clearwater_riverine.constituents import Constituent
 
@@ -91,16 +96,26 @@ class ClearwaterRiverine:
         constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
         config_filepath: Optional[str] = None,
         verbose: Optional[bool] = False,
-        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None,
+        start_datetime: Optional[datetime] = None,
+        end_datetime: Optional[datetime] = None,
+        variable_registry: Optional[VariableRegistry] = None,
+        # datetime_range: Optional[Tuple[int, int] | Tuple[datetime, datetime]] = None,
         mesh_file_path: Optional[str | Path] = None,
     ) -> None:
         """
         Initialize a Clearwater Riverine WQ model mesh
         reading HDF output from a RAS2D model to an xarray.
         """
+        ## TODO: probably get rid of these?
         self.gdf = None
         self.time_step = 0
-
+        self.registry = variable_registry if variable_registry is not None else VariableRegistry()
+        
+        self.__start_datetime = start_datetime
+        self.__end_datetime = end_datetime
+        self.__data_sources: dict[str, DataSource | ChunkedDataSource] = {}
+        
+        ## TODO: update this later and thin out init (parse config -- follow example from CW-M)
         if config_filepath:
             model_config = parse_config(config_filepath=config_filepath)
             if diffusion_coefficient_input is None:
@@ -122,6 +137,7 @@ class ClearwaterRiverine:
                     'Missing a `config_filepath` or a `constituent_dict` and `flow_field_file_path` to run the model.'
                 )
            
+        ## TODO: update this later (loading mesh)
         # define model mesh
         if mesh_file_path:
             self.mesh = load_model_mesh(mesh_file_path)
@@ -138,22 +154,44 @@ class ClearwaterRiverine:
                 """
             )
         else:
-            self.mesh = instantiate_model_mesh(diffusion_coefficient_input)
-            if verbose: print("Populating Model Mesh...")
-            self.mesh = self.mesh.cwr.read_ras(
-                flow_field_file_path,
-                datetime_range=datetime_range
+            # Read HEC RAS HDF
+            ## In the future, if we adapt to additional models, make this configurable
+            ## For now, there is only one option so we can call the data souce directly
+            ## TODO: move to config scripts, mirroring modules
+            if verbose: print("Populating Model Mesh...")  ## TODO: Add to logging
+            self.__data_sources['hydrodynamic_model'] = RASHDFDataSource(
+                ras_hdf_path=flow_field_file_path,
+                start_datetime=self.__start_datetime,
+                end_datetime=self.__end_datetime,
             )
-            self.boundary_data = self.mesh.attrs['boundary_data']
+            ## TODO: add chunking
+            for variable_name in self.__data_sources['hydrodynamic_model'].temporal_variables:
+                data = self.__data_sources['hydrodynamic_model'].read(variable_name)
+                self.registry.register(
+                    variable_name,
+                    data
+                    # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
+                )
+            for variable_name in self.__data_sources['hydrodynamic_model'].static_variables:
+                ## TODO: deal with these separately outside of the mesh
+                if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
+                    self.registry.register(
+                        variable_name,
+                        self.__data_sources['hydrodynamic_model'].mesh[variable_name]
+                )
 
-            if verbose: print("Calculating Required Parameters...")
-            self.mesh = self.mesh.cwr.calculate_required_parameters()
+            ## TODO: adapt all of this to use the registry
+            # self.boundary_data = self.mesh.attrs['boundary_data']
+
+            # if verbose: print("Calculating Required Parameters...")
+            # self.mesh = self.mesh.cwr.calculate_required_parameters()
         
-            self.lhs = LHS(self.mesh)
-            self.initialize_constituents(
-                model_config=model_config,
-                method='initialize'
-            )
+            # self.lhs = LHS(self.mesh)
+            # self.initialize_constituents(
+            #     model_config=model_config,
+            #     method='initialize'
+            # )
+
 
     def initialize_constituents(
         self,
