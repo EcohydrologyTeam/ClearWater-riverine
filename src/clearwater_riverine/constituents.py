@@ -122,8 +122,7 @@ class Constituent:
         self,
         registry: VariableRegistry,
         start_datetime: datetime,
-        # filepath: str | Path,
-        # mesh: xr.Dataset
+
     ):
         """Define cosntituetn initial conditions."""
         constituent = registry.get_at_time(self._name, start_datetime)

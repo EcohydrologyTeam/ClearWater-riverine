@@ -76,24 +76,16 @@ class ClearwaterRiverine:
 
     Clearwater Riverine is a water quality model that calculates advection and diffusion of constituents
     by leveraging hydrodynamic output from HEC-RAS 2D. The Clearwater Riverine model mesh is an xarray
-    following UGRID conventions. 
+    following UGRID conventions.
 
     Args:
-        ras_file_path (str):  Filepath to HEC-RAS output
-        diffusion_coefficient_input (float): User-defined diffusion coefficient for entire modeling domain. 
-        verbose (bool, optional): Boolean indicating whether or not to print model progress. 
-
-    Attributes:
-        mesh (xr.Dataset): Unstructured model mesh containing relevant HEC-RAS outputs, calculated parameters
-            required for advection-diffusion calculations, and water quality ouptuts (e.g., concentration). 
-            The unstructured mesh follows UGRID CF Conventions. 
-        boundary_data (pd.DataFrame): Information on RAS model boundaries, extracted directly from HEC-RAS 2D output. 
+        config_filepath: path to configuration file for Clearwater-Riverine.
     """
     ## TODO: Discuss- will anyone init the model except with a config?
     # Can we delete all other inputs to CW-R?
     def __init__(
         self,
-        config_filepath: Optional[str] = None,
+        config_filepath: Optional[str | Path] = None,
         flow_field_file_path: Optional[str | Path] = None,
         # diffusion_coefficient_input: Optional[float] = None,
         constituent_dict: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -105,10 +97,9 @@ class ClearwaterRiverine:
         # mesh_file_path: Optional[str | Path] = None,
     ) -> None:
         """
-        Initialize a Clearwater Riverine WQ model mesh
-        reading HDF output from a RAS2D model to an xarray.
+        Initialize a Clearwater Riverine water quality model from hydrodynamic model (e.g., HEC RAS) output.
         """
-        ## TODO: probably get rid of these?
+        ## TODO: probably get rid of these
         # self.gdf = None
         # self.time_step = 0
 
