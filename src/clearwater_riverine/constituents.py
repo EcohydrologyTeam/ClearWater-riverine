@@ -33,6 +33,12 @@ class Constituent:
     ):
         self._name = constituent_name
         self.__units = constituent_config.get("units", None)
+        self.__initial_condition_spatial_field = constituent_config["initial_conditions"]["data"].get(
+            "spatial_field", "Cell_Index"  # Default to old config requriement
+        )
+        self.__boundary_condition_spatial_field = constituent_config["boundary_conditions"]["data"].get(
+            "spatial_field", "RAS2D_TS_Name"  # Default to old config requriement
+        )
         registry.register(
             f"{self._name}_initial",
             initial_conditions,
@@ -119,37 +125,20 @@ class Constituent:
         # filepath: str | Path,
         # mesh: xr.Dataset
     ):
-        """Define initial conditions for costituents from CSV file. 
-
-        Args:
-            filepath (str): Filepath to a CSV containing initial conditions.
-                The CSV should have two columns: one called `Cell_Index` and
-                one called `Concentration`. The file should the concentration
-                in each cell within the model domain at the first timestep. 
-        """
-        # initial_condition_df = pd.read_csv(filepath)
-        # initial_condition_df['Cell_Index'] = initial_condition_df.Cell_Index.astype(int)
-        # self.input_array[0, [initial_condition_df['Cell_Index']]] =  initial_condition_df['Concentration']
-        
+        """Define cosntituetn initial conditions."""
         constituent = registry.get_at_time(self._name, start_datetime)
         initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
 
         if isinstance(initial, xr.DataArray):
             constituent[:] =  (
                 initial
-                .rename({'Cell_Index': 'nface'})   ## TODO: handle variable names for spatial data differently
+                .rename({self.__initial_condition_spatial_field: 'nface'})  # Align to mesh coords
                 .reindex(nface=constituent.nface)
                 .data
             )
         elif isinstance(initial, (float, int)):
             constituent[:] = initial
         
-        
-        # mesh[self.name].loc[
-        #     {
-        #         'time': mesh['time'][0],
-        #     }
-        # ] = self.input_array[0]
 
     def set_boundary_conditions(
         self,
