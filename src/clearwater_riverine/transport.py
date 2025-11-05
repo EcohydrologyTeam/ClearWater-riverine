@@ -161,7 +161,6 @@ class ClearwaterRiverine:
             self.registry.register(
                 variable_name,
                 data
-                # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
             )
         
         non_temporal_variables = list(self.__variable_data_sources['hydrodynamic_model'].static_variables.keys()) \
@@ -173,6 +172,13 @@ class ClearwaterRiverine:
                     variable_name,
                     self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name]
             )
+
+        # register additional variables
+        self.registry.register(
+            NUMBER_OF_REAL_CELLS,
+            self.__variable_data_sources['hydrodynamic_model'].real_cell_count
+
+        )
                 
         # Calculate intermediate variables
         self.__init_calculated_variables()

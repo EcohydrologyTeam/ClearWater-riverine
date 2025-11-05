@@ -154,6 +154,9 @@ class RASHDFDataSource:
             self.__define_topology(infile)
             self.__define_boundary_hydrodynamics(infile)
             self.__read_static_variables(infile)
+            
+            # gather additional data
+            self.real_cell_count = self.mesh[EDGE_FACE_CONNECTIVITY].T[0].values.max() + 1
 
 
     def __identify_gates(
