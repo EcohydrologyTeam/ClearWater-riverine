@@ -37,7 +37,8 @@ from clearwater_riverine.variables import (
     NUMBER_OF_REAL_CELLS,
     VOLUME,
     VOLUME_ELEVATION_INFO,
-    VOLUME_ELEVATION_VALUES
+    VOLUME_ELEVATION_VALUES,
+    VOLUME_ELEVATION_LOOKUP,
 )
 from clearwater_riverine.utilities import UnitConverter
 from clearwater_riverine.linalg import LHS, RHS
@@ -177,7 +178,11 @@ class ClearwaterRiverine:
         self.registry.register(
             NUMBER_OF_REAL_CELLS,
             self.__variable_data_sources['hydrodynamic_model'].real_cell_count
+        )
 
+        self.registry.register(
+            VOLUME_ELEVATION_LOOKUP,
+            self.__variable_data_sources['hydrodynamic_model'].volume_elevation_lookup
         )
                 
         # Calculate intermediate variables

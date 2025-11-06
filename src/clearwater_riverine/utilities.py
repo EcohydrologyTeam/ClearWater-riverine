@@ -21,6 +21,7 @@ from clearwater_riverine.variables import (
     FLOW_ACROSS_FACE,
     MAXIMUM_DEPTH,
     TIME,
+    FACE_SURFACE_AREA,
     VOLUME,
     VOLUME_ELEVATION_LOOKUP,
     WATER_SURFACE_ELEVATION,
@@ -92,19 +93,24 @@ def calculate_change_in_time(
     dt = np.ediff1d(times)
     dt = dt / np.timedelta64(1, 's')
     dt = np.insert(dt, len(dt), np.nan)
+    if np.all(dt[:-1] == dt[0]):
+        return dt[0]
+    else:
+        return dt
     # mesh[variables.CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
-    return dt
+
 
 
 def calculate_wetted_surface_area(
-    mesh: xr.Dataset
+    registry: VariableRegistry
 ):
     """
     Calculate wetted surface area based on elevation-volume lookup table.
     """
     # Define required dimensions for lookup xarray
-    nface = len(mesh[FACES])
-    surface_area_lookup = mesh.attrs[VOLUME_ELEVATION_LOOKUP]
+    nface = len(registry.get(FACE_SURFACE_AREA)[FACES])
+    ntime = len(registry.get(VOLUME)["time"])
+    surface_area_lookup = registry.get(VOLUME_ELEVATION_LOOKUP) 
     lookup_max = surface_area_lookup.groupby(
         'Cell').count()['Wetted Surface Area'].max()
 
@@ -130,7 +136,7 @@ def calculate_wetted_surface_area(
             ),
         },
         coords={
-            'nface':  mesh[FACES].values,
+            'nface':  np.arange(nface),
             'lookup': np.arange(lookup_max)
         }
     )
@@ -144,17 +150,17 @@ def calculate_wetted_surface_area(
 
     # Preallocate output array
     result = xr.DataArray(
-        np.full((mesh.sizes[TIME], mesh.sizes[FACES]), np.nan),
+        np.full((ntime, nface), np.nan),
         dims=[TIME, FACES],
         coords={
-            TIME: mesh[TIME],
-            FACES: mesh[FACES],
+            TIME: registry.get(VOLUME)["time"],
+            FACES:np.arange(nface),
         }
     )
 
     # Loop through faces, get wetted surface area for all timesteps
-    for nf in mesh[FACES].values:
-        volumes = mesh[VOLUME].sel(nface=nf).values
+    for nf in np.arange(nface).values:
+        volumes = registry.get(VOLUME).sel(nface=nf).values
         lookup_volumes = lookup_dataset[VOLUME].sel(nface=nf).values
         lookup_wetted_surface_area = \
             lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values
@@ -168,40 +174,47 @@ def calculate_wetted_surface_area(
         )
 
     # Convert result back to xarray.DataArray
-    mesh[WETTED_SURFACE_AREA] = result
+    return result
 
 def calculate_average_depth(
-    mesh: xr.Dataset     
+    registry: VariableRegistry   
 ):
     """Calculate average depth based on volume and wetted surface area."""
     # If wetted surface area does not exist, calculate it.
-    if WETTED_SURFACE_AREA not in mesh.data_vars:
-        calculate_wetted_surface_area(mesh)
+    if WETTED_SURFACE_AREA not in registry:
+        wetted_surface_area = calculate_wetted_surface_area(registry)
+        registry.register(
+            WETTED_SURFACE_AREA,
+            wetted_surface_area,
+        )
     
     # Calculate average depth
-    mesh[AVERAGE_DEPTH] = xr.where(
-        mesh[WETTED_SURFACE_AREA] > 0,
-        mesh[VOLUME] / mesh[WETTED_SURFACE_AREA],
+    average_depth = xr.where(
+        registry.get(WETTED_SURFACE_AREA) > 0,
+        registry.get(VOLUME) / registry.get(WETTED_SURFACE_AREA),
         0
     )
 
+    return average_depth
+
 
 def calculate_maximum_depth(
-    mesh: xr.Dataset,
+    registry: VariableRegistry
 ):
     """Calculate the maximum depth based on water surface elevation."""
 
     minimum_elevation = (
-        mesh.attrs[VOLUME_ELEVATION_LOOKUP]
+        registry.get(VOLUME_ELEVATION_LOOKUP)
         .groupby("Cell")["Elevation"]
         .min()
         .to_xarray()
         .rename({"Cell": "nface"})
-        .reindex(nface=mesh.nface) # volume elevation lookup only has real cells
+        .reindex(nface=np.arange(len(registry.get(FACE_X)))) # volume elevation lookup only has real cells
     )
 
-    mesh[MAXIMUM_DEPTH] = mesh[WATER_SURFACE_ELEVATION] - minimum_elevation
-
+    maxiumum_depth = registry.get(WATER_SURFACE_ELEVATION) - minimum_elevation
+    
+    return maxiumum_depth
 
 
 CALCULATED_VARIABLE_MAP = {
@@ -209,5 +222,7 @@ CALCULATED_VARIABLE_MAP = {
     EDGE_VERTICAL_AREA: calculate_edge_vertical_area,
     COEFFICIENT_TO_DIFFUSION_TERM: calculate_coeff_to_diffusion_term,
     CHANGE_IN_TIME: calculate_change_in_time,
-    # WETTED_SURFACE_AREA: _calc_wetted_surface_area,
+    WETTED_SURFACE_AREA: calculate_wetted_surface_area,
+    AVERAGE_DEPTH: calculate_average_depth,
+    MAXIMUM_DEPTH: calculate_maximum_depth,
 }

@@ -409,10 +409,8 @@ class RASHDFDataSource:
             infile[self.paths[EDGE_LENGTH]][:, 2],
             ('nedge'),
         )
-        
-        # TODO: don't save this as an xarray attribute. Register separate variable to registry?
-        # TODO: Maybe just read the necessary data and don't do extra calcs until later?
-        self.mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self.__create_lookup_df(infile)
+
+        self.volume_elevation_lookup = self.__create_lookup_df(infile)
 
     def __read_temporal_variables(
         self,
