@@ -112,6 +112,8 @@ class RASHDFDataSource:
         self.start_datetime: datetime = kwargs.pop("start_datetime", None)
         self.end_datetime: datetime = kwargs.pop("end_datetime", None)
         self.datetime_range = (self.start_datetime, self.end_datetime)
+        self.calculated_variables = kwargs.pop("calculated_variables", {})
+
         self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
             VOLUME: 'nface',
@@ -125,18 +127,20 @@ class RASHDFDataSource:
             VOLUME_ELEVATION_INFO: None,
             VOLUME_ELEVATION_VALUES: None,
         }
-        self.calculated_variables = {
-            EDGE_VERTICAL_AREA: ('time', 'nedge'),
-            FACE_TO_FACE_DISTANCE: ('nedge'),
-            COEFFICIENT_TO_DIFFUSION_TERM: ('time', 'nedge'),
-            CHANGE_IN_TIME: ('time'),
-        }
         self.topology_variables = [
             FACE_X,
             FACE_Y,
             EDGE_FACE_CONNECTIVITY,
         ]
-        
+
+        # Add internal ones or modify as needed
+        self.calculated_variables.update({
+            EDGE_VERTICAL_AREA: True,
+            FACE_TO_FACE_DISTANCE: True,
+            COEFFICIENT_TO_DIFFUSION_TERM: True,
+            CHANGE_IN_TIME: True,
+        })
+
         ## TODO: add datetime validation somewhere
         # self.__validate_datetime_range()
 

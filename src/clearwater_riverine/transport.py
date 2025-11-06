@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 
 from clearwater_data.io.base import DataSource, ChunkedDataSource
 from clearwater_data.variables import VariableRegistry
+from clearwater_data.variables.xarray import DataArrayVariable
 
 from clearwater_riverine.utilities import(
     CALCULATED_VARIABLE_MAP,
@@ -40,8 +41,7 @@ from clearwater_riverine.variables import (
     VOLUME_ELEVATION_VALUES,
     VOLUME_ELEVATION_LOOKUP,
 )
-from clearwater_riverine.utilities import UnitConverter
-from clearwater_riverine.linalg import LHS, RHS
+from clearwater_riverine.linalg import LHS
 from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import init_from_config
 from clearwater_riverine.constituents import Constituent
@@ -120,8 +120,9 @@ class ClearwaterRiverine:
             self.__chunk_size = model.get("chunk_size", None)
             self.__start_datetime = pd.to_datetime(model.get("start_datetime", None))
             self.__end_datetime = pd.to_datetime(model.get("end_datetime", None))
+            self.__calculated_variables = model.get("calculated_variables", None)
             for category, data_sources_dict in data_sources.items():
-                self.__category_attr_map[category].update(data_sources_dict)    
+                self.__category_attr_map[category].update(data_sources_dict)
         else:
             self.__flow_field_file_path = flow_field_file_path
             self.__start_datetime = start_datetime
@@ -154,6 +155,7 @@ class ClearwaterRiverine:
             ras_hdf_path=self.__flow_field_file_path,
             start_datetime=self.__start_datetime,
             end_datetime=self.__end_datetime,
+            calculated_variables=self.__calculated_variables,
         )
         
         ## TODO: add chunking
@@ -165,13 +167,13 @@ class ClearwaterRiverine:
             )
         
         non_temporal_variables = list(self.__variable_data_sources['hydrodynamic_model'].static_variables.keys()) \
-            + list(self.__variable_data_sources['hydrodynamic_model'].topology_variables.keys())
+            + list(self.__variable_data_sources['hydrodynamic_model'].topology_variables)
         for variable_name in non_temporal_variables:
             ## TODO: deal with these separately outside of the mesh
             if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
                 self.registry.register(
                     variable_name,
-                    self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name]
+                    DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name])
             )
 
         # register additional variables
@@ -179,13 +181,12 @@ class ClearwaterRiverine:
             NUMBER_OF_REAL_CELLS,
             self.__variable_data_sources['hydrodynamic_model'].real_cell_count
         )
-
         self.registry.register(
             VOLUME_ELEVATION_LOOKUP,
             self.__variable_data_sources['hydrodynamic_model'].volume_elevation_lookup
         )
-                
-        # Calculate intermediate variables
+        
+        # calculate intermediate variables
         self.__init_calculated_variables()
 
         # initialize constituents
@@ -194,8 +195,8 @@ class ClearwaterRiverine:
                 constituent_name=constituent_name, 
                 constituent_config=constituents[constituent_name]
             )
-        
-    
+
+
     def __init_constituents(
             self,
             constituent_name: str,
@@ -216,19 +217,18 @@ class ClearwaterRiverine:
 
 
     def __init_calculated_variables(self):
-        for calculated_variable in self.__variable_data_sources["hydrodynamic_model"].calculated_variables:
-            calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
-            calculated_result = calculation_method(
-                registry=self.registry,
-            )
-            self.registry.register(
-                calculated_variable,
-                calculated_result
-            )
-    
-            
+        """Initialize calculated variables."""
+        for calculated_variable in self.__calculated_variables:
+            if calculated_variable not in self.registry:
+                calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
+                calculated_result = calculation_method(
+                    registry=self.registry,
+                )
+                self.registry.register(
+                    calculated_variable,
+                    calculated_result
+                )
 
-            
     
         # else:
         #     if flow_field_file_path:

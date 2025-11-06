@@ -15,7 +15,6 @@ import pandas as pd
 #     ClearWaterRiverineLoader,
 # )
 from clearwater_riverine.io.outputs import ClearWaterRiverineOutput, ClearWaterRiverineWriter
-from clearwater_riverine.utilities import WQVariableCalculator
 
 def instantiate_model_mesh() -> xr.Dataset:
     """ Initialize the Clearwater Model Mesh
