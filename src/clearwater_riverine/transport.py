@@ -225,16 +225,17 @@ class ClearwaterRiverine:
 
     def __init_calculated_variables(self):
         """Initialize calculated variables."""
-        for calculated_variable in self.__calculated_variables:
-            if calculated_variable not in self.registry:
-                calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
-                calculated_result = calculation_method(
-                    registry=self.registry,
-                )
-                self.registry.register(
-                    calculated_variable,
-                    calculated_result
-                )
+        for calculated_variable, calculate in self.__calculated_variables.items():
+            if calculate:
+                if calculated_variable not in self.registry:
+                    calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
+                    calculated_result = calculation_method(
+                        registry=self.registry,
+                    )
+                    self.registry.register(
+                        calculated_variable,
+                        calculated_result
+                    )
 
     
         # else:

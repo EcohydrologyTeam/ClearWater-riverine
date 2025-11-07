@@ -124,53 +124,13 @@ def calculate_wetted_surface_area(
     ntime = len(registry.get(VOLUME)["time"])
     lookup_volumes = registry.get(LOOKUP_VOLUME)
     lookup_areas = registry.get(LOOKUP_WETTED_SURFACE_AREA)
-    # lookup_elevation = registry.get(LOOKUP_ELEVATION)
-    
-    # surface_area_lookup = registry.get(VOLUME_ELEVATION_LOOKUP) 
-    # fill missing values iwht 
-
-    # lookup_max = lookup_areas.index.max()
-    # # surface_area_lookup.groupby(
-    #     # 'Cell').count()['Wetted Surface Area'].max()
-
-    # surface_area_lookup['lookup'] = \
-    #     surface_area_lookup.groupby('Cell').cumcount()
-
-    # # Pivot to wide format
-    # volume_wide = surface_area_lookup.pivot(
-    #     index='Cell', columns='lookup', values='Volume'
-    #     ).reindex(range(nface))
-    # area_wide = surface_area_lookup.pivot(
-    #     index='Cell', columns='lookup', values='Wetted Surface Area'
-    #     ).reindex(range(nface))
-
-    # Convert to xarray.DataArray, filling missing values with nan
-    # Within an xarray dataset
-    # lookup_dataset = xr.Dataset(
-    #     {
-    #         VOLUME: xr.DataArray(volume_wide.values, dims=('nface', 'lookup')),
-    #         WETTED_SURFACE_AREA: xr.DataArray(
-    #             area_wide.values,
-    #             dims=('nface', 'lookup')
-    #         ),
-    #     },
-    #     coords={
-    #         'nface':  np.arange(nface),
-    #         'lookup': np.arange(lookup_max)
-    #     }
-    # )
 
     # fill null lookup values with the maximum
     # this will help the interpolation function work correctly for large values
     lookup_volumes = lookup_volumes.fillna(lookup_volumes.max(dim='index', skipna=True))
     lookup_areas = lookup_areas.fillna(lookup_areas.max(dim='index', skipna=True))
 
-    # for variable in [VOLUME, WETTED_SURFACE_AREA]:
-    #     lookup_dataset[variable] = lookup_dataset[variable].fillna(
-    #         lookup_dataset[variable].max(dim='lookup', skipna=True)
-    #     )
-
-    # Preallocate output array
+    # preallocate output array
     result = xr.DataArray(
         np.full((ntime, nface), np.nan),
         dims=[TIME, FACES],
@@ -180,13 +140,9 @@ def calculate_wetted_surface_area(
         }
     )
 
-    # Loop through real faces, get wetted surface area for all timesteps
+    # loop through real faces, get wetted surface area for all timesteps
     for nf in lookup_areas.nface:
         volumes = registry.get(VOLUME).sel(nface=nf).values
-        # lookup_volumes = lookup_volumes.sel(nface=nf).values
-        # lookup_wetted_surface_area = \
-        #     lookup_areas.sel(nface=nf).values
-
         result[:,  nf] = np.interp(
             volumes,
             lookup_volumes.sel(nface=nf).values,
@@ -224,16 +180,9 @@ def calculate_maximum_depth(
     registry: VariableRegistry
 ):
     """Calculate the maximum depth based on water surface elevation."""
-
-    minimum_elevation = (
-        registry.get(VOLUME_ELEVATION_LOOKUP)
-        .groupby("Cell")["Elevation"]
-        .min()
-        .to_xarray()
-        .rename({"Cell": "nface"})
-        .reindex(nface=np.arange(len(registry.get(FACE_X)))) # volume elevation lookup only has real cells
-    )
-
+    minimum_elevation = registry.get(LOOKUP_ELEVATION)
+    # volume elevation lookup only has real cells: expand dimensions to include all cells
+    minimum_elevation = minimum_elevation.reindex(nface=np.arange(len(registry.get(FACE_X))))
     maxiumum_depth = registry.get(WATER_SURFACE_ELEVATION) - minimum_elevation
     
     return DataArrayVariable(maxiumum_depth)
