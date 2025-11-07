@@ -170,11 +170,18 @@ class ClearwaterRiverine:
             + list(self.__variable_data_sources['hydrodynamic_model'].topology_variables)
         for variable_name in non_temporal_variables:
             ## TODO: deal with these separately outside of the mesh
-            if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
-                self.registry.register(
-                    variable_name,
-                    DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name])
+            # if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
+            self.registry.register(
+                variable_name,
+                DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name])
             )
+        
+        for variable_name in self.__variable_data_sources['hydrodynamic_model'].lookup_variables:
+            self.registry.register(
+                variable_name,
+                DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].volume_elevation_lookup[variable_name])
+            )
+
 
         # register additional variables
         self.registry.register(
