@@ -22,10 +22,10 @@ from datetime import datetime, timedelta
 
 from clearwater_data.io.base import DataSource, ChunkedDataSource
 from clearwater_data.variables import VariableRegistry
+from clearwater_data.variables.xarray import DataArrayVariable
 
-from clearwater_riverine.mesh import (
-    instantiate_model_mesh,
-    load_model_mesh
+from clearwater_riverine.utilities import(
+    CALCULATED_VARIABLE_MAP,
 )
 import clearwater_riverine.variables
 from clearwater_riverine.variables import (
@@ -38,10 +38,10 @@ from clearwater_riverine.variables import (
     NUMBER_OF_REAL_CELLS,
     VOLUME,
     VOLUME_ELEVATION_INFO,
-    VOLUME_ELEVATION_VALUES
+    VOLUME_ELEVATION_VALUES,
+    VOLUME_ELEVATION_LOOKUP,
 )
-from clearwater_riverine.utilities import UnitConverter
-from clearwater_riverine.linalg import LHS, RHS
+from clearwater_riverine.linalg import LHS
 from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import init_from_config
 from clearwater_riverine.constituents import Constituent
@@ -120,8 +120,9 @@ class ClearwaterRiverine:
             self.__chunk_size = model.get("chunk_size", None)
             self.__start_datetime = pd.to_datetime(model.get("start_datetime", None))
             self.__end_datetime = pd.to_datetime(model.get("end_datetime", None))
+            self.__calculated_variables = model.get("calculated_variables", None)
             for category, data_sources_dict in data_sources.items():
-                self.__category_attr_map[category].update(data_sources_dict)    
+                self.__category_attr_map[category].update(data_sources_dict)
         else:
             self.__flow_field_file_path = flow_field_file_path
             self.__start_datetime = start_datetime
@@ -154,6 +155,7 @@ class ClearwaterRiverine:
             ras_hdf_path=self.__flow_field_file_path,
             start_datetime=self.__start_datetime,
             end_datetime=self.__end_datetime,
+            calculated_variables=self.__calculated_variables,
         )
         
         ## TODO: add chunking
@@ -162,23 +164,46 @@ class ClearwaterRiverine:
             self.registry.register(
                 variable_name,
                 data
-                # self.__data_sources['hydrodynamic_model'].mesh[variable_name]
             )
-        for variable_name in self.__variable_data_sources['hydrodynamic_model'].static_variables:
+        
+        non_temporal_variables = list(self.__variable_data_sources['hydrodynamic_model'].static_variables.keys()) \
+            + list(self.__variable_data_sources['hydrodynamic_model'].topology_variables)
+        for variable_name in non_temporal_variables:
             ## TODO: deal with these separately outside of the mesh
-            if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
-                self.registry.register(
-                    variable_name,
-                    self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name]
+            # if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
+            self.registry.register(
+                variable_name,
+                DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name])
             )
-    
+        
+        for variable_name in self.__variable_data_sources['hydrodynamic_model'].lookup_variables:
+            self.registry.register(
+                variable_name,
+                DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].volume_elevation_lookup[variable_name])
+            )
+
+
+        # register additional variables
+        self.registry.register(
+            NUMBER_OF_REAL_CELLS,
+            self.__variable_data_sources['hydrodynamic_model'].real_cell_count
+        )
+        self.registry.register(
+            VOLUME_ELEVATION_LOOKUP,
+            self.__variable_data_sources['hydrodynamic_model'].volume_elevation_lookup
+        )
+        
+        # calculate intermediate variables
+        self.__init_calculated_variables()
+
+        # initialize constituents
         for constituent_name in list(constituents.keys()):
             self.__init_constituents(
                 constituent_name=constituent_name, 
                 constituent_config=constituents[constituent_name]
             )
-        
-    
+
+
     def __init_constituents(
             self,
             constituent_name: str,
@@ -197,7 +222,21 @@ class ClearwaterRiverine:
             start_datetime=self.__start_datetime
         )
 
-            
+
+    def __init_calculated_variables(self):
+        """Initialize calculated variables."""
+        for calculated_variable, calculate in self.__calculated_variables.items():
+            if calculate:
+                if calculated_variable not in self.registry:
+                    calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
+                    calculated_result = calculation_method(
+                        registry=self.registry,
+                    )
+                    self.registry.register(
+                        calculated_variable,
+                        calculated_result
+                    )
+
     
         # else:
         #     if flow_field_file_path:
@@ -243,49 +282,6 @@ class ClearwaterRiverine:
             #     method='initialize'
             # )
 
-
-    def initialize_constituents(
-        self,
-        model_config: Optional[Dict] = None,
-        method: Optional[Literal['initialize', 'load']] = 'initialize',
-    ):
-        """Initializes model, developed to be BMI-adjacent.
-
-        Args:
-            initial_conditon_path: Filepath to a CSV containing initial conditions. 
-                The CSV should have two columns: one called `Cell_Index` and one called
-                `Concentration`. The file should the concentration in each cell within 
-                the modeldomain at the first timestep. If not provided, no initial conditions
-                will be set up as part of the initialize call.
-            boundary_condition_path: Filepath to a CSV containing boundary conditions. 
-                The CSV should have the following columns: `RAS2D_TS_Name` (the timeseries
-                name, as labeled in the HEC-RAS model), `Datetime`, `Concentration`. 
-                This file should contain the concentration for all relevant boundary cells
-                at every RAS timestep. If a timestep / boundary cell is not included in this
-                CSV file, the concentration will be set to 0 in the Clearwater Riverine model.
-                If not provided no boundary condtiions will be set up as part of the initialize
-                call. 
-            units: the units of the concentration timeseries. If not provided, defaults to
-                'Unknown.'
-        """
-        self.time_step = 0
-        self.constituent_dict = {}
-
-        if method == 'initialize':
-            for constituent in self.constituents:
-                self.constituent_dict[constituent] = Constituent(
-                    name=constituent,
-                    mesh=self.mesh,
-                    constituent_config=model_config['constituents'][constituent],
-                    flow_field_boundaries=self.boundary_data,
-                )
-        else:
-            for constituent in self.constituents:
-                self.constituent_dict[constituent] = Constituent(
-                    name=constituent,
-                    mesh=self.mesh,
-                    method=method,
-                )
     
     def update(
         self,

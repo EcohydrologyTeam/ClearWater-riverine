@@ -19,6 +19,9 @@ from clearwater_riverine.mesh import (
     load_model_mesh
 )
 from clearwater_riverine.variables import (
+    CHANGE_IN_TIME,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+    DIFFUSION_COEFFICIENT,
     NODE_X,
     NODE_Y,
     TIME,
@@ -28,10 +31,15 @@ from clearwater_riverine.variables import (
     FACE_X,
     FACE_Y,
     FACE_SURFACE_AREA,
+    FACE_TO_FACE_DISTANCE,
     GATE_CONNECTIVITY,
     GATE_FLOW,
-    EDGE_VELOCITY,
     EDGE_LENGTH,
+    EDGE_VELOCITY,
+    EDGE_VERTICAL_AREA,
+    LOOKUP_ELEVATION,
+    LOOKUP_VOLUME,
+    LOOKUP_WETTED_SURFACE_AREA,
     WATER_SURFACE_ELEVATION,
     FLOW_ACROSS_FACE,
     VOLUME,
@@ -107,6 +115,8 @@ class RASHDFDataSource:
         self.start_datetime: datetime = kwargs.pop("start_datetime", None)
         self.end_datetime: datetime = kwargs.pop("end_datetime", None)
         self.datetime_range = (self.start_datetime, self.end_datetime)
+        self.calculated_variables = kwargs.pop("calculated_variables", {})
+
         self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
             VOLUME: 'nface',
@@ -117,10 +127,26 @@ class RASHDFDataSource:
         self.static_variables = {
             FACE_SURFACE_AREA: 'nface',
             EDGE_LENGTH: 'nedge',
-            VOLUME_ELEVATION_INFO: None,
-            VOLUME_ELEVATION_VALUES: None,
         }
-        
+        self.topology_variables = [
+            FACE_X,
+            FACE_Y,
+            EDGE_FACE_CONNECTIVITY,
+        ]
+        self.lookup_variables = [
+            LOOKUP_ELEVATION,
+            LOOKUP_VOLUME,
+            LOOKUP_WETTED_SURFACE_AREA,
+        ]
+
+        # Add internal ones or modify as needed
+        self.calculated_variables.update({
+            EDGE_VERTICAL_AREA: True,
+            FACE_TO_FACE_DISTANCE: True,
+            COEFFICIENT_TO_DIFFUSION_TERM: True,
+            CHANGE_IN_TIME: True,
+        })
+
         ## TODO: add datetime validation somewhere
         # self.__validate_datetime_range()
 
@@ -138,6 +164,12 @@ class RASHDFDataSource:
             self.__define_topology(infile)
             self.__define_boundary_hydrodynamics(infile)
             self.__read_static_variables(infile)
+            
+            # populate lookup table
+            self.volume_elevation_lookup = self.__create_lookup_xarray(infile)
+
+            # gather additional data
+            self.real_cell_count = self.mesh[EDGE_FACE_CONNECTIVITY].T[0].values.max() + 1
 
 
     def __identify_gates(
@@ -390,10 +422,6 @@ class RASHDFDataSource:
             infile[self.paths[EDGE_LENGTH]][:, 2],
             ('nedge'),
         )
-        
-        # TODO: don't save this as an xarray attribute. Register separate variable to registry?
-        # TODO: Maybe just read the necessary data and don't do extra calcs until later?
-        self.mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self.__create_lookup_df(infile)
 
     def __read_temporal_variables(
         self,
@@ -426,11 +454,11 @@ class RASHDFDataSource:
                 }
             )
 
-    def __create_lookup_df(
+    def __create_lookup_xarray(
         self,
         infile: h5py.File
     ):
-        """Create volume elevation lookup dataframe."""
+        """Create volume elevation lookup xarray dataset."""
         volume_elevation_info_df = _hdf_to_dataframe(
             infile[self.paths[VOLUME_ELEVATION_INFO]]
             )
@@ -448,8 +476,8 @@ class RASHDFDataSource:
             ]
         )
 
-        # Create lookup table
-        df_ls = []
+        # Create lookup dataset
+        lookup_datasets = []
 
         for cell in volume_elevation_vals_df['Cell'].unique():
             cell_df = self.__create_cell_lookup_table(
@@ -457,9 +485,18 @@ class RASHDFDataSource:
                 volume_elevation_vals_df,
                 infile,
             )
-            df_ls.append(cell_df)
+            cell_df = cell_df.rename(
+                columns = {
+                    "Elevation": LOOKUP_ELEVATION,
+                    "Volume": LOOKUP_VOLUME,
+                    "Wetted Surface Area": LOOKUP_WETTED_SURFACE_AREA,
+                }
+            )
+            ds_cell = xr.Dataset.from_dataframe(cell_df)
+            ds_cell = ds_cell.expand_dims({"nface": [cell]})
+            lookup_datasets.append(ds_cell)
 
-        return pd.concat(df_ls)
+        return xr.concat(lookup_datasets, dim="nface")
 
     def __create_cell_lookup_table(
         self,

@@ -5,651 +5,195 @@ import pandas as pd
 import numpy as np
 import xarray as xr 
 
-from clearwater_riverine import variables
+from clearwater_data.variables import VariableRegistry
+from clearwater_data.variables.xarray import DataArrayVariable
+from clearwater_data.variables.float import FloatVariable
+
 from clearwater_riverine.variables import (
     AVERAGE_DEPTH,
+    CHANGE_IN_TIME,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+    DIFFUSION_COEFFICIENT,
+    EDGE_FACE_CONNECTIVITY,
+    EDGE_VERTICAL_AREA,
+    EDGE_VELOCITY,
     FACES,
+    FACE_TO_FACE_DISTANCE,
+    FACE_X,
+    FACE_Y,
+    FLOW_ACROSS_FACE,
+    LOOKUP_ELEVATION,
+    LOOKUP_VOLUME,
+    LOOKUP_WETTED_SURFACE_AREA,
     MAXIMUM_DEPTH,
     TIME,
+    FACE_SURFACE_AREA,
     VOLUME,
     VOLUME_ELEVATION_LOOKUP,
     WATER_SURFACE_ELEVATION,
     WETTED_SURFACE_AREA,
 )
 
-UNIT_DETAILS = {'Metric': {'Length': 'm',
-                            'Velocity': 'm/s',
-                            'Area': 'm2', 
-                            'Volume' : 'm3',
-                            'Load': 'm3/s',
-                            },
-                'Imperial': {'Length': 'ft', 
-                            'Velocity': 'ft/s', 
-                            'Area': 'ft2', 
-                            'Volume': 'ft3',
-                            'Load': 'ft3/s',
-                            },
-                'Unknown': {'Length': 'L', 
-                            'Velocity': 'L/t', 
-                            'Area': 'L^2', 
-                            'Volume': 'L^3',
-                            'Load': 'L^3/t',
-                            },
-                }
 
-CONVERSIONS = {'Metric': {'Liters': 0.001},
-            'Imperial': {'Liters': 0.0353147},
-            'Unknown': {'Liters': 0.001},
-            }
-
-
-def _determine_units(mesh) -> str:
-    """ Determines units of RAS output file. 
-
-    Returns:
-        units (str):         Either 'Metric' or 'Imperial'
-
-    """ 
-    u = mesh[variables.EDGE_VELOCITY].Units
-    if u == 'm/s':
-        units = 'Metric'
-    elif u == 'ft/s':
-        units = 'Imperial'
-    else:
-        warnings.warn(f'Unknown units ({u}). Generic units will be stored in xarray.')
-        units = 'Unknown'
-    return units
-
-
-
-class UnitConverter:
-    """Handles unit conversions for concentration."""
-    def __init__(self,
-        mesh: xr.Dataset,
-        input_mass_units: str,
-        input_volume_units: str,
-        input_liter_conversion: float
-    ):
-        """Determine the units and print unit assumptions for user.
-
-        Args:
-            input_mass_units (str): User-defined mass units for concentration timeseries used in model set-up. Assumes mg if no value
-                is specified. 
-            input_volume_units (str): User-defined volume units for concentration timeseries. Assumes L if no value
-                is specified.
-            input_liter_conversion (float): If concentration inputs are not in mass/L, supply the conversion factor to 
-                convert the volume unit to liters.
-        """
-        self.mesh = mesh
-        self.input_mass_units = input_mass_units
-        self.input_volume_units = input_volume_units
-        self.input_liter_conversion = input_liter_conversion
-        self.units = _determine_units(mesh)
-        self._print_assumptions()
-    
-    def _print_assumptions(self):
-        print(f" Assuming concentration input has units of {self.input_mass_units}/{self.input_volume_units}...")
-        print("     If this is not true, please re-run the wq simulation with input_mass_units, input_volume_units, and liter_conversion parameters filled in appropriately.")
-
-    def _conversion_factor(self):
-        """Determine conversion factor. If the input volume units are the same
-            as the model units, then there is no conversion necessary. 
-            If the input_volume_units are liters, then we know the conversion factor,
-            stored in a dictionary. If any other unit, the user must define the conversion factor.
-        """
-        if self.input_volume_units == UNIT_DETAILS[self.units]['Volume']:
-            self.conversion_factor = 1 
-        elif self.input_volume_units == 'L':
-            self.conversion_factor = CONVERSIONS[self.units]['Liters']
-        else:
-            self.conversion_factor = self.input_liter_conversion * CONVERSIONS[self.units]['Liters']
-    
-    def _convert_units(
-        self,
-        input_array: np.ndarray,
-        convert_to: bool = True
-    ) -> np.ndarray:
-        """Converts an array from input units to model units or vice versa
-        
-        Args:
-            input_array (np.ndarray): array to be converted
-            convert_to (bool): True if converting from input units to model units, 
-                otherwise False 
-        Returns:
-            np.ndarray: converted array
-        """
-        self._conversion_factor()
-        if convert_to:
-            return input_array * self.conversion_factor
-        else:
-            return input_array / self.conversion_factor
-
-
-@numba.njit
-def _linear_interpolate(x0: float, x1: float, y0: float, y1: float, xi: float):
-    """ Linear interpolation:
-    
-    Args:
-        x0 (float): Lower x value
-        x1 (float): Upper x value
-        y0 (float): Lower y value
-        y1 (float): Upper y value
-        xi (float): x value to interpolate
-    Returns:
-        y1 (float): interpolated y value
-    """
-    m = (y1 - y0)/(x1 - x0)
-    yi = m * (xi - x0) + y0
-    return yi
-
-@numba.njit
-def _compute_cell_volumes(
-    water_surface_elev_arr: np.ndarray,
-    cells_surface_area_arr: np.ndarray,
-    starting_index_arr: np.ndarray,
-    count_arr: np.ndarray,
-    elev_arr: np.ndarray,
-    vol_arr: np.ndarray,
-    ) -> np.ndarray:
-    """Compute the volumes of the RAS cells using lookup tables"""
-    ntimes, ncells = water_surface_elev_arr.shape
-    cell_volumes = np.zeros((ntimes, ncells))
-
-    for time in range(ntimes):
-        for cell in range(ncells):
-            water_surface_elev = water_surface_elev_arr[time, cell]
-            surface_area = cells_surface_area_arr[cell]
-            index = starting_index_arr[cell] # Start index in the volume-elevation table for this cell
-            count = count_arr[cell] # Number of points in the table for this cell
-
-            # A number of cells have an index that is just past the end of the array. According to Mark Jensen, 
-            # these are ghost cells and have a volume of 0.0. The count for these cells should also always be zero. 
-            # The code checks for either condition.
-            if index >= len(elev_arr) or count == 0:
-                cell_volumes[time, cell] = 0.0
-            else:
-                elev = elev_arr[index:index + count] # Get the water surface elevation array for this cell
-                vol = vol_arr[index:index + count] # Get the volume array for this cell
-
-                if water_surface_elev > elev[-1]:
-                    '''
-                    Compute the net volume: the max volume in the lookup table plus the volume of the water above the max 
-                    elevation in the lookup table.
-                    
-                    Note: this assumes a horizontal water surface, i.e., that the slope of the water surface across a cell
-                    is negligible. The error increases with cell size.
-                    
-                    The validity of this method was confirmed by Mark Jensen on Jul 29, 2022.
-                    '''
-                    cell_volumes[time, cell] = vol[-1] + (water_surface_elev - elev[-1]) * surface_area
-                elif water_surface_elev == elev[-1]:
-                    cell_volumes[time, cell] = vol[-1]
-                elif water_surface_elev <= elev[0]:
-                    cell_volumes[time, cell] = vol[0]
-                else:
-                    # Interpolate
-                    cell_volumes[time, cell] = 0.0 # Default
-                    npts = len(elev)
-                    for i in range(npts-1, -1, -1):
-                        if elev[i] < water_surface_elev:
-                            cell_volumes[time, cell] = _linear_interpolate(elev[i], elev[i+1], vol[i], vol[i+1], water_surface_elev)
-
-    return cell_volumes
-
-@numba.njit
-def _compute_face_areas(
-    water_surface_elev_arr: np.ndarray,
-    faces_lengths_arr: np.ndarray,
-    faces_cell_indexes_arr: np.ndarray,
-    starting_index_arr: np.ndarray,
-    count_arr: np.ndarray,
-    elev_arr: np.ndarray,
-    area_arr: np.ndarray,
-    ) -> np.ndarray:
-    """Compute the areas of the RAS cell faces using lookup tables"""
-    ntimes, _ = water_surface_elev_arr.shape
-    nfaces = len(faces_lengths_arr)
-    face_areas = np.zeros((ntimes, nfaces))
-    for time in range(ntimes):
-        for face in range(nfaces):
-            cell = faces_cell_indexes_arr[face]
-            water_surface_elev = water_surface_elev_arr[time, cell]
-            index = starting_index_arr[face] # Start index in the area-elevation table for this cell (note: this is indexed by faces)
-            count = count_arr[face] # Number of points in the table for this cell (note: this is indexed by faces)
-
-            # A number of cells have an index that is just past the end of the array. According to Mark Jensen, 
-            # these are ghost cells and have a volume of 0.0. The count for these cells should also always be zero. 
-            # The code checks for either condition.
-            if index >= len(elev_arr) or count == 0:
-                face_areas[time, face] = 0.0
-            else:
-                elev = elev_arr[index:index + count] # Get the water surface elevation (Z) array for this face
-                area = area_arr[index:index + count] # Get the face area array for this face
-
-                if water_surface_elev > elev[-1]:
-                    """
-                    Compute the net face surface area: the max face area in the lookup table plus the face area of 
-                    the water above the max elevation in the lookup table.
-                    
-                    Note: this assumes a horizontal water surface, i.e., that the slope of the water surface across a cell face
-                    is negligible. The error increases with cell size.
-                    
-                    The validity of this method was confirmed by Mark Jensen on Jul 29, 2022.
-                    """
-                    face_areas[time, face] = area[-1] + (water_surface_elev - elev[-1]) * faces_lengths_arr[face]
-                elif water_surface_elev == elev[-1]:
-                    face_areas[time, face] = area[-1]
-                elif water_surface_elev <= elev[0]:
-                    face_areas[time, face] = area[0]
-                else:
-                    # Interpolate
-                    face_areas[time, face] = 0.0 # Default
-                    npts = len(elev)
-                    for i in range(npts-1, -1, -1):
-                        if elev[i] < water_surface_elev:
-                            x = water_surface_elev
-                            face_areas[time, face] = _linear_interpolate(elev[i], elev[i+1], area[i], area[i+1], water_surface_elev)
-                            # print('i, x, m, x1, y1, y: ', i, x, m, x1, y1, y)
-                            if face_areas[time, face] < 0:
-                                print('Computed face area = ', face_areas[time, face])
-                                print('Time Step: ', time)
-                                print('Cell number: ', cell)
-                                print('Face number: ', face)
-                                print('water_surface_elev: ', water_surface_elev)
-                                print('elev: ', elev)
-                                print('area: ', area)
-                                # msg = 'Negative face area: computed face area = ' + str(face_areas[time, face])
-                                raise(ValueError('Negative face area'))
-
-    return face_areas
-
-
-def _calc_distances_cell_centroids(mesh: xr.Dataset) -> np.array:
+def calculate_distances_cell_centroids(
+        registry: VariableRegistry,
+    ) -> np.array:
     """ Calculate the distance between cell centroids
 
     Args:
-        mesh (xr.Dataset): Clearwater Model mesh
+        registry: VariableRegistry 
 
     Returns:
         dist_data (np.array):   Array of distances between all cell centroids 
     """
     # Get northings and eastings of relevant faces 
-    x1_coords = mesh['face_x'][mesh['edges_face1']]
-    y1_coords = mesh['face_y'][mesh['edges_face1']]
-    x2_coords = mesh['face_x'][mesh['edges_face2']]
-    y2_coords = mesh['face_y'][mesh['edges_face2']]
+    face_x = registry.get(FACE_X)
+    face_y = registry.get(FACE_Y)
+    edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
+    edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+
+    x1_coords = face_x[edges_face1]  #mesh['face_x'][mesh['edges_face1']]
+    y1_coords = face_y[edges_face1]
+    x2_coords = face_x[edges_face2] 
+    y2_coords = face_y[edges_face2]
 
     # calculate distance 
-    dist_data = np.sqrt((x1_coords - x2_coords)**2 + (y1_coords - y2_coords)**2)
-    return dist_data
+    dist_data = xr.DataArray(
+        np.sqrt((x1_coords - x2_coords)**2 + (y1_coords - y2_coords)**2),
+        dims = ('nedge'),  ## TODO: add unit management
+    )
+    return DataArrayVariable(dist_data)
 
-def _calc_coeff_to_diffusion_term(mesh: xr.Dataset) -> np.array:
+
+def calculate_edge_vertical_area(
+    registry: VariableRegistry
+):
+    vertical_area = registry.get(FLOW_ACROSS_FACE) / registry.get(EDGE_VELOCITY)
+    return DataArrayVariable(vertical_area)
+
+
+def calculate_coeff_to_diffusion_term(
+        registry: VariableRegistry,
+    ) -> np.array:
     """ Calculate the coefficient to the diffusion term. 
 
     For each edge, this is calculated as:
     (Edge vertical area * diffusion coefficient) / (distance between cells) 
     
     Args:
-        mesh (xr.Dataset):   Mesh created by the populate_ugrid function
+        registry: VariableRegistry
 
     Returns:
         diffusion_array (np.array):     Array of diffusion coefficients associated with each edge
 
     """
-    # diffusion coefficient: ignore diffusion between cells in the mesh and ghost cells
-    diffusion_coefficient = np.zeros(len(mesh['nedge']))
+    edge_vertical_area = registry.get(EDGE_VERTICAL_AREA)
+    face_to_face_distance = registry.get(FACE_TO_FACE_DISTANCE)
+    diffusion_coefficient = registry.get(DIFFUSION_COEFFICIENT)
 
-    # identify ghost cells: 
-    # ghost cells are only in the second element of a pair or cell indices that denote an edge together
-    f2_ghost = np.where(mesh['edges_face2'] <= mesh.attrs['nreal'])
+    diffusion_array = edge_vertical_area * diffusion_coefficient / face_to_face_distance
+    return DataArrayVariable(diffusion_array)
 
-    # set diffusion coefficients where NOT pseusdo cell 
-    diffusion_coefficient[np.array(f2_ghost)] = mesh.attrs['diffusion_coefficient']
 
-    # diffusion_array =  mesh['edge_vertical_area'] * diffusion_coefficient / mesh['face_to_face_dist']
-    diffusion_array =  mesh['edge_vertical_area'] * mesh.attrs['diffusion_coefficient'] / mesh['face_to_face_dist']
-    return diffusion_array
-
-def _sum_vals(mesh: xr.Dataset, face: np.array, time_index: float, sum_array: np.array) -> np.array:
-    """ Sums values associated with a given cell. 
-    
-    Developed this function with help from the following Stack Overflow thread:  
-    https://stackoverflow.com/questions/67108215/how-to-get-sum-of-values-in-a-numpy-array-based-on-another-array-with-repetitive
-    
-    Args:
-        mesh (xr.Dataset):      Clearwater Riverine model mesh
-        face (np.array):        Array containing all cells on one side of an edge connection
-        time_index (float):     Timestep for calculation 
-        sum_array (np.array):   Empty array to populate with sum values
-
-    Returns:
-        sum_array (np.array):   Array populated with sum values     
-    """
-    # _, idx, _ = np.unique(face, return_counts=True, return_inverse=True)
-    nodal_values = np.bincount(face.values, mesh['coeff_to_diffusion'][time_index])
-    sum_array[0:len(nodal_values)] = nodal_values
-    return sum_array
-
-def _sum_values_by_indices(
-    indices: np.ndarray,
-    weights: np.ndarray,
-    max_index: int
-) -> np.ndarray:
-    """Sums weights based on indices into new array."""
-    result = np.zeros((weights.shape[0], max_index + 1))
-    np.add.at(
-        result,
-        (slice(None), indices),
-        weights,
-    )
-
-    return result
-
-def _calc_sum_coeff_to_diffusion_term(
-    mesh: xr.Dataset
-) -> np.array:
-    """Calculates the sum of all coefficients to diffusion terms. 
-
-    Sums all coefficient to the diffusion term values associated with each individual cell
-    (i.e., transfers values associated with EDGES to relevant CELLS)
-    These values fall on the diagonal of the LHS matrix when solving the transport equation. 
-
-    Args:
-        mesh (xr.Dataset):  Clearwater Riverine model mesh
-
-    Returns:
-        sum_diffusion_array: Array containing the sum of all diffusion coefficients 
-                                associated with each cell. 
-    """
-    # initialize array
-    maximum_index_value = mesh.nface.values.max()
-
-    face1_sums = _sum_values_by_indices(
-        mesh.edges_face1.values,
-        mesh.coeff_to_diffusion.values,
-        maximum_index_value
-    )
-
-    face2_sums = _sum_values_by_indices(
-        mesh.edges_face2.values,
-        mesh.coeff_to_diffusion.values,
-        maximum_index_value
-    )
-
-    sum_diffusion_array = face1_sums + face2_sums
-
-    return sum_diffusion_array
-
-def _calc_ghost_cell_volumes(mesh: xr.Dataset) -> np.array:
-    """
-    In RAS2D output, all ghost cells (boundary cells) have a volume of 0. 
-    However, this results in an error in the sparse matrix solver
-    because nothing can leave the mesh. 
-    Therefore, we must calculate the 'volume' in the ghost cells as 
-    the total flow across the face in a given timestep.
-
-    Args:
-        mesh (xr.Dataset):   Clearwater Riverine model mesh
-
-    Returns:
-        ghost_vols_in:       Volume entering the domain from ghost cells
-        ghost_vols_out:      Volume leaving the domain to ghost cells
-    """
-    f2_ghost = np.where(mesh['edges_face2'] > mesh.attrs['nreal'])[0]  
-    ghost_vels = np.zeros((len(mesh['time']), len(mesh['nedge'])))
-
-    # volume leaving 
-    for t in range(len(mesh['time'])):
-        # positive velocities 
-        positive_velocity_indices = np.where(mesh['edge_velocity'][t] > 0 )[0]
-
-        # get intersection - this is where water is flowing OUT to a ghost cell
-        index_list = np.intersect1d(positive_velocity_indices, f2_ghost)
-
-        if len(index_list) != 0:
-            ghost_vels[t][index_list] = mesh['edge_velocity'][t][index_list]
-
-    # calculate volume
-    ghost_flux_vols = ghost_vels * mesh['edge_vertical_area'] * mesh['dt']
-
-    # transfer values (acssociated with EDGES) to corresponding CELLS (FACES)
-    ghost_vols_out = np.zeros((len(mesh['time']), len(mesh['nface'])))
-    for t in range(len(mesh['time'])):
-        indices = np.where(ghost_flux_vols[t] > 0)[0]
-        cell_ind = mesh['edges_face2'][indices]
-        vals = ghost_flux_vols[t][indices]
-        if len(cell_ind) > 0:
-            ghost_vols_out[t][np.array(cell_ind)] = vals 
-    
-    # # volume coming in
-    ghost_vels_in = np.zeros((len(mesh['time']), len(mesh['nedge'])))
-
-    for t in range(len(mesh['time'])):
-        # negative velocities
-        negative_velocity_indices = np.where(mesh['edge_velocity'][t] < 0 )[0]
-
-        # get intersection - this is where water is flowing IN from a ghost cell
-        index_list = np.intersect1d(negative_velocity_indices, f2_ghost)
-
-        if len(index_list) != 0:
-            ghost_vels_in[t][index_list] = mesh['edge_velocity'][t][index_list]
-
-    # ghost_flux_in_vols = ghost_vels_in * mesh['edge_vertical_area'] * mesh['dt'] * -1 
-    seconds = mesh['dt']
-    ghost_flux_in_vols = np.sign(ghost_vels_in) * mesh['face_flow'] * seconds
-
-    ghost_vols_in = np.zeros((len(mesh['time']), len(mesh['nface'])))
-    for t in range(1, len(mesh['time'])):
-        indices = np.where(ghost_flux_in_vols[t] > 0)[0]
-        cell_ind = mesh['edges_face2'][indices]
-        vals = ghost_flux_in_vols[t][indices]
-        if len(cell_ind) > 0:
-            ghost_vols_in[t-1][np.array(cell_ind)] = vals # shifts this back a timestep
-        else:
-            pass
-
-        # all_ghost_vols = ghost_vols_out + ghost_vols_in
-    return ghost_vols_in, ghost_vols_out
-
-class WQVariableCalculator:
-    """Calculates all parameters required for advection-diffusion equations"""
-    def __init__(self, mesh: xr.Dataset):
-        """Determine the units 
-        Args:
-            mesh (xr.Dataset):   Clearwater Riverine model mesh
-        """
-        mesh.attrs['units'] = _determine_units(mesh)
-    
-    def calculate(self, mesh: xr.Dataset):
-        """Calculate required values for advection-diffusion transport equation
-        Args:
-            mesh (xr.Dataset):  Clearwater Riverine model mesh
-
-        """
-        if mesh.attrs['volume_calculation_required']:
-            print( """
-                Warning! Cell volumes are being manually calculated. 
-                This functionality is not fully tested. 
-                For best results, please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.
-                """)
-            cell_volumes = _compute_cell_volumes(
-                mesh[variables.WATER_SURFACE_ELEVATION].values,
-                mesh[variables.FACE_SURFACE_AREA].values,
-                mesh.attrs['face_area_elevation_info']['Starting Index'].values,
-                mesh.attrs['face_area_elevation_info']['Count'].values,
-                mesh.attrs['face_area_elevation_values']['Elevation'].values,
-                mesh.attrs['face_area_elevation_values']['Volume'].values,
-            )
-            mesh[variables.VOLUME] = xr.DataArray(
-                cell_volumes,
-                dims =  ('time', 'ncell'),
-                attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Volume']}
-            )
-        
-        if mesh.attrs['face_area_calculation_required']:
-            print("""
-                Warning! Flows across the face are being manually calculated.
-                This functionality is not fully tested!
-                For best results, please re-run the RAS model with optional outputs Cell Volume, Face Flow, and Eddy Viscosity selected.
-                """)
-            # should we be using 0 or 1 ?
-            face_areas = _compute_face_areas(
-                mesh[variables.WATER_SURFACE_ELEVATION].values,
-                mesh.attrs['face_normalunitvector_and_length']['Face Length'].values,
-                mesh.attrs['face_cell_indexes_df']['Cell 0'].values,
-                mesh.attrs['face_area_elevation_values']['Starting Index'].values,
-                mesh.attrs['face_area_elevation_info']['Count'].values,
-                mesh.attrs['face_area_elevation_values']['Z'].values,
-                mesh.attrs['face_area_elevation_values']['Area'].values,
-            )
-            mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
-                face_areas,
-                dims =  ('time', 'nedge'),
-                attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']}
-            )
-            advection_coefficient = mesh[variables.EDGE_VERTICAL_AREA] * mesh[variables.EDGE_VELOCITY] 
-            mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
-                advection_coefficient,
-                dims = ('time', 'nedge'),
-                attrs = {'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
-            mesh[variables.FLOW_ACROSS_FACE] = xr.DataArray(
-                abs(advection_coefficient),
-                dims = ('time', 'nedge'),
-                attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
-        else:
-            mesh[variables.ADVECTION_COEFFICIENT] = xr.DataArray(
-                mesh[variables.FLOW_ACROSS_FACE] * np.sign(abs(mesh[variables.EDGE_VELOCITY])),
-                dims = ('time', 'nedge'),
-                attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']})
-            
-            vertical_area = mesh['advection_coeff'] / mesh['edge_velocity']
-            mesh[variables.EDGE_VERTICAL_AREA] = xr.DataArray(
-                vertical_area.fillna(0),
-                dims = ('time', 'nedge'),
-                attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Area']})
-        
-        mesh[variables.FACE_TO_FACE_DISTANCE] = xr.DataArray(
-            _calc_distances_cell_centroids(mesh),
-            dims = ('nedge'),
-            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Length']}
+def calculate_change_in_time(
+    registry: VariableRegistry
+):
+    times = registry.get(VOLUME).time
+    dt = np.ediff1d(times)
+    dt = dt / np.timedelta64(1, 's')
+    dt = np.insert(dt, len(dt), np.nan)
+    if np.all(dt[:-1] == dt[0]):
+        return FloatVariable(dt[0])
+    else:
+        dt = xr.DataArray(
+            dt,
+            dims=('time'),
+            attrs={'Units': 's'}
         )
-
-        mesh[variables.COEFFICIENT_TO_DIFFUSION_TERM] = xr.DataArray(
-            _calc_coeff_to_diffusion_term(mesh),
-            dims = ("time", "nedge"),
-            attrs={'Units': UNIT_DETAILS[mesh.attrs['units']]['Load']}
-        )
-
-        # dt
-        dt = np.ediff1d(mesh['time'])
-        dt = dt / np.timedelta64(1, 's')
-        dt = np.insert(dt, len(dt), np.nan)
-        mesh[variables.CHANGE_IN_TIME] = xr.DataArray(dt, dims=('time'), attrs={'Units': 's'})
+        return DataArrayVariable(dt)
 
 
 def calculate_wetted_surface_area(
-    mesh: xr.Dataset
+    registry: VariableRegistry
 ):
     """
     Calculate wetted surface area based on elevation-volume lookup table.
     """
     # Define required dimensions for lookup xarray
-    nface = len(mesh[FACES])
-    surface_area_lookup = mesh.attrs[VOLUME_ELEVATION_LOOKUP]
-    lookup_max = surface_area_lookup.groupby(
-        'Cell').count()['Wetted Surface Area'].max()
-
-    surface_area_lookup['lookup'] = \
-        surface_area_lookup.groupby('Cell').cumcount()
-
-    # Pivot to wide format
-    volume_wide = surface_area_lookup.pivot(
-        index='Cell', columns='lookup', values='Volume'
-        ).reindex(range(nface))
-    area_wide = surface_area_lookup.pivot(
-        index='Cell', columns='lookup', values='Wetted Surface Area'
-        ).reindex(range(nface))
-
-    # Convert to xarray.DataArray, filling missing values with nan
-    # Within an xarray dataset
-    lookup_dataset = xr.Dataset(
-        {
-            VOLUME: xr.DataArray(volume_wide.values, dims=('nface', 'lookup')),
-            WETTED_SURFACE_AREA: xr.DataArray(
-                area_wide.values,
-                dims=('nface', 'lookup')
-            ),
-        },
-        coords={
-            'nface':  mesh[FACES].values,
-            'lookup': np.arange(lookup_max)
-        }
-    )
+    nface = len(registry.get(FACE_SURFACE_AREA)[FACES])
+    ntime = len(registry.get(VOLUME)["time"])
+    lookup_volumes = registry.get(LOOKUP_VOLUME)
+    lookup_areas = registry.get(LOOKUP_WETTED_SURFACE_AREA)
 
     # fill null lookup values with the maximum
     # this will help the interpolation function work correctly for large values
-    for variable in [VOLUME, WETTED_SURFACE_AREA]:
-        lookup_dataset[variable] = lookup_dataset[variable].fillna(
-            lookup_dataset[variable].max(dim='lookup', skipna=True)
-        )
+    lookup_volumes = lookup_volumes.fillna(lookup_volumes.max(dim='index', skipna=True))
+    lookup_areas = lookup_areas.fillna(lookup_areas.max(dim='index', skipna=True))
 
-    # Preallocate output array
+    # preallocate output array
     result = xr.DataArray(
-        np.full((mesh.sizes[TIME], mesh.sizes[FACES]), np.nan),
+        np.full((ntime, nface), np.nan),
         dims=[TIME, FACES],
         coords={
-            TIME: mesh[TIME],
-            FACES: mesh[FACES],
+            TIME: registry.get(VOLUME)["time"],
+            FACES:np.arange(nface),
         }
     )
 
-    # Loop through faces, get wetted surface area for all timesteps
-    for nf in mesh[FACES].values:
-        volumes = mesh[VOLUME].sel(nface=nf).values
-        lookup_volumes = lookup_dataset[VOLUME].sel(nface=nf).values
-        lookup_wetted_surface_area = \
-            lookup_dataset[WETTED_SURFACE_AREA].sel(nface=nf).values
-
+    # loop through real faces, get wetted surface area for all timesteps
+    for nf in lookup_areas.nface:
+        volumes = registry.get(VOLUME).sel(nface=nf).values
         result[:,  nf] = np.interp(
             volumes,
-            lookup_volumes,
-            lookup_wetted_surface_area,
-            left=lookup_wetted_surface_area[0],  # interp to lowermost value
-            right=lookup_wetted_surface_area[-1],  # interp to largest value
+            lookup_volumes.sel(nface=nf).values,
+            lookup_areas.sel(nface=nf).values,
+            left=lookup_areas.sel(nface=nf).values[0],  # interp to lowermost value
+            right=lookup_areas.sel(nface=nf).values[-1],  # interp to largest value
         )
 
     # Convert result back to xarray.DataArray
-    mesh[WETTED_SURFACE_AREA] = result
+    return DataArrayVariable(result)
 
 def calculate_average_depth(
-    mesh: xr.Dataset     
+    registry: VariableRegistry   
 ):
     """Calculate average depth based on volume and wetted surface area."""
     # If wetted surface area does not exist, calculate it.
-    if WETTED_SURFACE_AREA not in mesh.data_vars:
-        calculate_wetted_surface_area(mesh)
+    if WETTED_SURFACE_AREA not in registry:
+        wetted_surface_area = calculate_wetted_surface_area(registry)
+        registry.register(
+            WETTED_SURFACE_AREA,
+            wetted_surface_area,
+        )
     
     # Calculate average depth
-    mesh[AVERAGE_DEPTH] = xr.where(
-        mesh[WETTED_SURFACE_AREA] > 0,
-        mesh[VOLUME] / mesh[WETTED_SURFACE_AREA],
+    average_depth = xr.where(
+        registry.get(WETTED_SURFACE_AREA) > 0,
+        registry.get(VOLUME) / registry.get(WETTED_SURFACE_AREA),
         0
     )
 
+    return DataArrayVariable(average_depth)
+
 
 def calculate_maximum_depth(
-    mesh: xr.Dataset,
+    registry: VariableRegistry
 ):
     """Calculate the maximum depth based on water surface elevation."""
+    minimum_elevation = registry.get(LOOKUP_ELEVATION)
+    # volume elevation lookup only has real cells: expand dimensions to include all cells
+    minimum_elevation = minimum_elevation.reindex(nface=np.arange(len(registry.get(FACE_X))))
+    maxiumum_depth = registry.get(WATER_SURFACE_ELEVATION) - minimum_elevation
+    
+    return DataArrayVariable(maxiumum_depth)
 
-    minimum_elevation = (
-        mesh.attrs[VOLUME_ELEVATION_LOOKUP]
-        .groupby("Cell")["Elevation"]
-        .min()
-        .to_xarray()
-        .rename({"Cell": "nface"})
-        .reindex(nface=mesh.nface) # volume elevation lookup only has real cells
-    )
 
-    mesh[MAXIMUM_DEPTH] = mesh[WATER_SURFACE_ELEVATION] - minimum_elevation
-
+CALCULATED_VARIABLE_MAP = {
+    FACE_TO_FACE_DISTANCE: calculate_distances_cell_centroids,
+    EDGE_VERTICAL_AREA: calculate_edge_vertical_area,
+    COEFFICIENT_TO_DIFFUSION_TERM: calculate_coeff_to_diffusion_term,
+    CHANGE_IN_TIME: calculate_change_in_time,
+    WETTED_SURFACE_AREA: calculate_wetted_surface_area,
+    AVERAGE_DEPTH: calculate_average_depth,
+    MAXIMUM_DEPTH: calculate_maximum_depth,
+}

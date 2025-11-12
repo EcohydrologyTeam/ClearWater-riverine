@@ -45,3 +45,8 @@ MAXIMUM_DEPTH = 'maximum_depth'
 # Structures
 GATE_CONNECTIVITY = 'gate_connectivity'
 GATE_FLOW = 'gate_flow'
+
+# Lookup tables
+LOOKUP_VOLUME = 'lookup_volume'
+LOOKUP_ELEVATION = 'lookup_elevation'
+LOOKUP_WETTED_SURFACE_AREA = 'lookup_wetted_surface_area'
