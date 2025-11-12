@@ -19,6 +19,9 @@ from clearwater_riverine.mesh import (
     load_model_mesh
 )
 from clearwater_riverine.variables import (
+    BOUNDARY_CONDITION_LINE_ID,
+    BOUNDARY_FACE_INDEX,
+    BOUNDARY_NAME,
     CHANGE_IN_TIME,
     COEFFICIENT_TO_DIFFUSION_TERM,
     DIFFUSION_COEFFICIENT,
@@ -137,6 +140,11 @@ class RASHDFDataSource:
             LOOKUP_ELEVATION,
             LOOKUP_VOLUME,
             LOOKUP_WETTED_SURFACE_AREA,
+        ]
+        self.boundary_variables = [
+            BOUNDARY_CONDITION_LINE_ID,
+            BOUNDARY_FACE_INDEX,
+            BOUNDARY_NAME,
         ]
 
         # Add internal ones or modify as needed
@@ -588,9 +596,12 @@ class RASHDFDataSource:
             boundary_data,
             infile
         )
-        # add to the mesh
-        ## TODO: store elsewhere in the registry?
-        self.mesh.attrs['boundary_data'] = boundary_data
+        # store as boundary data
+        self.boundary_data = (
+            xr.Dataset.from_dataframe(boundary_data)
+            # .set_coords(BOUNDARY_NAME)
+            # .rename({BOUNDARY_NAME: 'RAS2D_TS_Name'})
+        )
 
     def __fix_boundary_hydrodynamics(
         self,

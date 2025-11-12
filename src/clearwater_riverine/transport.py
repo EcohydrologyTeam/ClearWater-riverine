@@ -169,8 +169,6 @@ class ClearwaterRiverine:
         non_temporal_variables = list(self.__variable_data_sources['hydrodynamic_model'].static_variables.keys()) \
             + list(self.__variable_data_sources['hydrodynamic_model'].topology_variables)
         for variable_name in non_temporal_variables:
-            ## TODO: deal with these separately outside of the mesh
-            # if variable_name not in [VOLUME_ELEVATION_INFO, VOLUME_ELEVATION_VALUES]:
             self.registry.register(
                 variable_name,
                 DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name])
@@ -181,16 +179,17 @@ class ClearwaterRiverine:
                 variable_name,
                 DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].volume_elevation_lookup[variable_name])
             )
-
+        
+        for variable_name in self.__variable_data_sources['hydrodynamic_model'].boundary_variables:
+            self.registry.register(
+                variable_name,
+                DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].boundary_data[variable_name])
+            )
 
         # register additional variables
         self.registry.register(
             NUMBER_OF_REAL_CELLS,
             self.__variable_data_sources['hydrodynamic_model'].real_cell_count
-        )
-        self.registry.register(
-            VOLUME_ELEVATION_LOOKUP,
-            self.__variable_data_sources['hydrodynamic_model'].volume_elevation_lookup
         )
         
         # calculate intermediate variables
