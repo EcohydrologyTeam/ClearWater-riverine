@@ -162,19 +162,37 @@ class Constituent:
         edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
         edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
 
-        # linear interpolation over time
-        boundary = boundary.interp(
-            time=target_time,
-            method="linear"
-        )
-        # boundary = xr.merge([boundary, boundary_index])
+        # find cells associated with each cell
         ghost_cells = edges_face2[boundary_index]
-        domain_cells = edges_face1[boundary[BOUNDARY_FACE_INDEX]]
 
+        # linear interpolation over time
+        if isinstance(boundary, xr.DataArray):
+            boundary = boundary.interp(
+                time=target_time,
+                method="linear"
+            )
+            # reshape from (time, boundary_name) to (time, boundary_index)
+            # then map boundary indices to their associated ghost cells
+            boundary = boundary.sel(
+                RAS2D_TS_Name=boundary_names
+            ). assign_coords(
+                nface = ghost_cells
+            ).groupby(
+                "nface"
+            ).first()
 
-        # Assign to appropriate position in array
-        constituent[[boundary_df['Time Index']], [boundary['Ghost Cell']]] = boundary[self._name]
-    
+            # reshape to the shape of our constituent array
+            boundary_reindexed = boundary.reindex(nface=constituent.nface)
+
+            # place the boundary conditions into the constituent array
+            constituent[:] = xr.where(
+                boundary_reindexed.notnull(),
+                boundary_reindexed,
+                constituent
+            )
+        elif isinstance(boundary, (float, int)):
+            constituent.loc[dict(nface=ghost_cells)] = boundary
+
     ## TODO: probably a more elegant way to do this
     def set_value_range(
         self,
