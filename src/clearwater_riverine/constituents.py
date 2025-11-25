@@ -13,7 +13,14 @@ from datetime import datetime
 
 from clearwater_data.variables import VariableRegistry, DataArrayVariable
 from clearwater_riverine.linalg import RHS
-from clearwater_riverine.variables import NUMBER_OF_REAL_CELLS, VOLUME
+from clearwater_riverine.variables import (
+    BOUNDARY_CONDITION_LINE_ID,
+    BOUNDARY_FACE_INDEX,
+    BOUNDARY_NAME,
+    EDGE_FACE_CONNECTIVITY,
+    NUMBER_OF_REAL_CELLS,
+    VOLUME,
+)
 
 
 class Constituent:
@@ -67,7 +74,9 @@ class Constituent:
             registry=registry,
             start_datetime=start_datetime,
         )
-        # self.set_boundary_conditions()
+        self.initialize_boundary_conditions(
+            registry=registry,
+        )
 
         # self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
         # self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
@@ -139,72 +148,51 @@ class Constituent:
             constituent[:] = initial
         
 
-    def set_boundary_conditions(
+    def initialize_boundary_conditions(
         self,
-        filepath: str | Path,
-        mesh: xr.Dataset,
-        flow_field_boundaries: pd.DataFrame
+        registry,
     ):
-        """Define boundary conditions for Clearwater Riverine model from a CSV file. 
+        """Define boundary conditions for the Constituent."""
+        # retrieve necessary variables
+        boundary = registry.get(f"{self._name}_boundary")
+        constituent = registry.get(self._name)
+        target_time = registry.get(self._name).time
+        boundary_index = registry.get(BOUNDARY_FACE_INDEX)
+        boundary_names = registry.get(BOUNDARY_NAME)
+        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
+        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
 
-        Args:
-            filepath (str): Filepath to a CSV containing boundary conditions. 
-                The CSV should have the following columns: `RAS2D_TS_Name` 
-                (the timeseries name, as labeled in the HEC-RAS model), `Datetime`,
-                `Concentration`. This file should contain the concentration for all
-                relevant boundary cells at every RAS timestep. If a timestep / boundary
-                cell is not included in this CSV file, the concentration will be set to 0
-                in the Clearwater Riverine model. 
-            mesh (xr.Dataset): Unstructured model mesh.
-            flow_field_boundaries (pd.DataFrame): pandas dataframe definining how the 
-                boundaries are configured within the flow field.
-        """
-        # Read in boundary condition data from user
-        bc_df = pd.read_csv(
-            filepath,
-            parse_dates=['Datetime']
-        )
+        # find cells associated with each cell
+        ghost_cells = edges_face2[boundary_index]
 
-        xarray_time_index = pd.DatetimeIndex(
-            mesh.time.values
-        )
-        model_dataframe = pd.DataFrame({
-            'Datetime': xarray_time_index,
-            'Time Index': range(len(xarray_time_index))
-        })
-
-        result_df = pd.DataFrame()
-        for boundary, group_df in bc_df.groupby('RAS2D_TS_Name'):
-            # Merge with model timestep
-            merged_group = pd.merge_asof(
-                model_dataframe,
-                group_df,
-                on='Datetime'
+        # linear interpolation over time
+        if isinstance(boundary, xr.DataArray):
+            boundary = boundary.interp(
+                time=target_time,
+                method="linear"
             )
-            # Interpolate
-            merged_group['Concentration'] = merged_group['Concentration'].interpolate(
-                method='linear'
-            )
-            # Append to dataframe
-            result_df = pd.concat(
-                [result_df, merged_group], 
-                ignore_index=True
-            )
-        
-        # Merge with boundary data
-        boundary_df = pd.merge(
-            result_df,
-            flow_field_boundaries,
-            left_on = 'RAS2D_TS_Name',
-            right_on = 'Name',
-            how='left'
-        )
-        boundary_df['Ghost Cell'] = mesh.edges_face2[boundary_df['Face Index'].to_list()]
-        boundary_df['Domain Cell'] = mesh.edges_face1[boundary_df['Face Index'].to_list()]
+            # reshape from (time, boundary_name) to (time, boundary_index)
+            # then map boundary indices to their associated ghost cells
+            boundary = boundary.sel(
+                RAS2D_TS_Name=boundary_names
+            ). assign_coords(
+                nface = ghost_cells
+            ).groupby(
+                "nface"
+            ).first()
 
-        # Assign to appropriate position in array
-        self.input_array[[boundary_df['Time Index']], [boundary_df['Ghost Cell']]] = boundary_df['Concentration']
-    
+            # reshape to the shape of our constituent array
+            boundary_reindexed = boundary.reindex(nface=constituent.nface)
+
+            # place the boundary conditions into the constituent array
+            constituent[:] = xr.where(
+                boundary_reindexed.notnull(),
+                boundary_reindexed,
+                constituent
+            )
+        elif isinstance(boundary, (float, int)):
+            constituent.loc[dict(nface=ghost_cells)] = boundary
+
     ## TODO: probably a more elegant way to do this
     def set_value_range(
         self,

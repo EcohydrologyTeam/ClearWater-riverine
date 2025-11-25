@@ -50,3 +50,8 @@ GATE_FLOW = 'gate_flow'
 LOOKUP_VOLUME = 'lookup_volume'
 LOOKUP_ELEVATION = 'lookup_elevation'
 LOOKUP_WETTED_SURFACE_AREA = 'lookup_wetted_surface_area'
+
+# Boundary conditions
+BOUNDARY_CONDITION_LINE_ID = 'BC Line ID'
+BOUNDARY_FACE_INDEX = 'Face Index'
+BOUNDARY_NAME = 'Name'
