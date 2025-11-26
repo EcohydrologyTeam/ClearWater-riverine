@@ -21,6 +21,7 @@ import inspect
 from datetime import datetime, timedelta
 
 from clearwater_data.io.base import DataSource, ChunkedDataSource
+from clearwater_data.io.zarr import ZarrDataStore, ChunkedZarrDataStore
 from clearwater_data.variables import VariableRegistry
 from clearwater_data.variables.xarray import DataArrayVariable
 
@@ -116,21 +117,41 @@ class ClearwaterRiverine:
 
         if config_filepath:
             model, data_sources, constituents = init_from_config(config_filepath)
-            self.__flow_field_file_path = model.get("file_path", None)
-            self.__chunk_size = model.get("chunk_size", None)
+            self.__root_directory = Path(model.get("root_directory", "./"))
+            self.__hydrodynamic_input = model["hydrodynamic_input"]
+            self.__flow_field_file_path = self.__root_directory / self.__hydrodynamic_input
+            raw_chunk = model.get("chunk_size", None)
+            self.__chunk_size = pd.Timedelta(raw_chunk) if raw_chunk is not None else None
             self.__start_datetime = pd.to_datetime(model.get("start_datetime", None))
             self.__end_datetime = pd.to_datetime(model.get("end_datetime", None))
             self.__calculated_variables = model.get("calculated_variables", None)
+            self.__output_variables = model.get("output_variables", constituents)
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)
         else:
             self.__flow_field_file_path = flow_field_file_path
             self.__start_datetime = start_datetime
             self.__end_datetime = end_datetime
-            self.__chunk_size
             self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         
+        self.__chunked_mode: bool = self.__chunk_size is not None
+
         self.__init_model(constituents)
+        self.__init_output_store()
+        self.__init_chunks()
+
+    
+    # def run(self) -> None:
+    #     if self.__chunked_mode:
+    #         self.__transport_loop_chunked()
+    #     else:
+    #         self.__transport_loop_full()
+    
+    # def update(self) -> None:
+    #     if self.__chunked_mode:
+    #         self.__transport_chunked()
+    #     else:
+    #         self.__transport()
 
 
     def __init_model(self, constituents: dict):        
@@ -140,7 +161,7 @@ class ClearwaterRiverine:
             if isinstance(data_source, ChunkedDataSource):
                 data = data_source.read_chunk(
                     variable_name,
-                    self.__start_datetime, self.__end_datetime + self.__chunk_size
+                    self.__start_datetime, self.__start_datetime + self.__chunk_size
                 )
             else:
                 data = data_source.read(variable_name)
@@ -236,6 +257,55 @@ class ClearwaterRiverine:
                         calculated_result
                     )
 
+
+    def __init_output_store(self):
+        if self.__chunked_mode:
+            self.__output_data_store = ChunkedZarrDataStore(
+                store_path=self.__root_directory / "model_outputs.zarr",
+                start_date=self.__start_datetime,
+                end_date=self.__end_datetime,
+                time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
+                variables=self.__output_variables,
+                chunk_size=self.__chunk_size,
+                spatial_field="nface",
+                spatial_field_values=self.registry.get(VOLUME).nface               
+            )
+        else:
+            self.__output_data_store = ZarrDataStore(
+                store_path=self.__root_directory / "model_outputs.zarr",
+                start_date=self.__start_datetime,
+                end_date=self.__end_datetime,
+                time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
+                variables=self.__output_variables,
+                spatial_field="nface",
+                spatial_field_values=self.registry.get(VOLUME).nface
+            )
+
+
+    def __init_chunks(self):
+        """Define the end of each chunk."""
+        self.__chunk_ends = pd.date_range(
+            self.__start_datetime,
+            self.__end_datetime,
+            freq=self.__chunk_size
+        )
+
+    
+    # def __transport_loop_chunked(self):
+    #     current_time = self.__start_datetime
+    #     while current_time < self.__end_datetime:
+    #         current_time += self.__time_step  # change in time
+    #     self.__save_output_model()
+    
+
+    # def __transport_loop_full(self):
+    #     current_time = self.__start_datetime
+    #     while current_time < self.__end_datetime:
+    #         current_time += self.__time_step
+    #     self.__save_output_model()
+
+
+
     
         # else:
         #     if flow_field_file_path:
@@ -282,82 +352,82 @@ class ClearwaterRiverine:
             # )
 
     
-    def update(
-        self,
-        update_concentration: Optional[dict[str, xr.DataArray]] = None,
-    ):
-        """Update a single timestep."""
+    # def update(
+    #     self,
+    #     update_concentration: Optional[dict[str, xr.DataArray]] = None,
+    # ):
+    #     """Update a single timestep."""
 
-        # Update the left hand side of the matrix
-        # This is the same for all constituents
-        self.lhs.update_values(
-            self.mesh,
-            self.time_step
-        )
+    #     # Update the left hand side of the matrix
+    #     # This is the same for all constituents
+    #     self.lhs.update_values(
+    #         self.mesh,
+    #         self.time_step
+    #     )
 
-        # Define compressed sparse row matrix for LHS
-        A = csr_matrix(
-            (self.lhs.coef, (self.lhs.rows, self.lhs.cols)),
-            shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
-        )
+    #     # Define compressed sparse row matrix for LHS
+    #     A = csr_matrix(
+    #         (self.lhs.coef, (self.lhs.rows, self.lhs.cols)),
+    #         shape=(self.mesh.nreal + 1, self.mesh.nreal + 1)
+    #     )
 
-        # Check if constituent_name from update_concentration dict is one
-        # of the constituents in the model
+    #     # Check if constituent_name from update_concentration dict is one
+    #     # of the constituents in the model
         
-        if isinstance(update_concentration, dict):
-            for update_constituent_name, _ in update_concentration.items():
-                if update_constituent_name in self.constituent_dict:
-                    pass
-                else:
-                    print(f"WARNING: {update_constituent_name} is not being used in the model.")
-                    print("Please review the constituent names in the update dictionary")
+    #     if isinstance(update_concentration, dict):
+    #         for update_constituent_name, _ in update_concentration.items():
+    #             if update_constituent_name in self.constituent_dict:
+    #                 pass
+    #             else:
+    #                 print(f"WARNING: {update_constituent_name} is not being used in the model.")
+    #                 print("Please review the constituent names in the update dictionary")
 
-        for constituent_name, constituent in self.constituent_dict.items():
-            # Allow users to override concentration
-            if isinstance(update_concentration, dict) and constituent_name in update_concentration.keys():
-                self.mesh[constituent_name][self.time_step][0: self.mesh.nreal + 1] = \
-                    update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
-                x = update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
-            else:
-                x = self.mesh[constituent_name][self.time_step][0:self.mesh.nreal + 1]
+    #     for constituent_name, constituent in self.constituent_dict.items():
+    #         # Allow users to override concentration
+    #         if isinstance(update_concentration, dict) and constituent_name in update_concentration.keys():
+    #             self.mesh[constituent_name][self.time_step][0: self.mesh.nreal + 1] = \
+    #                 update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
+    #             x = update_concentration[constituent_name].values[0:self.mesh.nreal + 1]
+    #         else:
+    #             x = self.mesh[constituent_name][self.time_step][0:self.mesh.nreal + 1]
         
-            # Update the right hand side of the matrix 
-            constituent.b.update_values(
-                solution=x,
-                mesh=self.mesh,
-                t=self.time_step,
-                name=constituent_name,
-            )
+    #         # Update the right hand side of the matrix 
+    #         constituent.b.update_values(
+    #             solution=x,
+    #             mesh=self.mesh,
+    #             t=self.time_step,
+    #             name=constituent_name,
+    #         )
 
-            # Solve
-            x = linalg.spsolve(A, constituent.b.vals)
+    #         # Solve
+    #         x = linalg.spsolve(A, constituent.b.vals)
 
-            # Update timestep and save data
-            self.mesh[constituent_name].loc[
-                {
-                    'time': self.mesh.time[self.time_step + 1],
-                    'nface': self.mesh.nface.values[0:self.mesh.nreal+1]
-                }
-            ] = x
-            nonzero_indices = np.nonzero(constituent.input_array[self.time_step + 1])
-            self.mesh[constituent_name].loc[
-                {
-                    'time': self.mesh.time[self.time_step + 1],
-                    'nface': nonzero_indices[0]
-                }
-            ] = constituent.input_array[self.time_step + 1][nonzero_indices]
+    #         # Update timestep and save data
+    #         self.mesh[constituent_name].loc[
+    #             {
+    #                 'time': self.mesh.time[self.time_step + 1],
+    #                 'nface': self.mesh.nface.values[0:self.mesh.nreal+1]
+    #             }
+    #         ] = x
+    #         nonzero_indices = np.nonzero(constituent.input_array[self.time_step + 1])
+    #         self.mesh[constituent_name].loc[
+    #             {
+    #                 'time': self.mesh.time[self.time_step + 1],
+    #                 'nface': nonzero_indices[0]
+    #             }
+    #         ] = constituent.input_array[self.time_step + 1][nonzero_indices]
 
-            # Calculate mass flux
-            self._mass_flux(
-                self.mesh[constituent_name],
-                constituent.advection_mass_flux,
-                constituent.diffusion_mass_flux,
-                constituent.total_mass_flux,
-                self.time_step
-                )
+    #         # Calculate mass flux
+    #         self._mass_flux(
+    #             self.mesh[constituent_name],
+    #             constituent.advection_mass_flux,
+    #             constituent.diffusion_mass_flux,
+    #             constituent.total_mass_flux,
+    #             self.time_step
+    #             )
 
-        # increment timestep
-        self.time_step += 1
+    #     # increment timestep
+    #     self.time_step += 1
 
 
     def simulate_wq(
