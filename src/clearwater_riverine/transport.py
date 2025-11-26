@@ -141,20 +141,29 @@ class ClearwaterRiverine:
         self.__init_chunks()
 
     
-    # def run(self) -> None:
-    #     if self.__chunked_mode:
-    #         self.__transport_loop_chunked()
-    #     else:
-    #         self.__transport_loop_full()
-    
-    # def update(self) -> None:
-    #     if self.__chunked_mode:
-    #         self.__transport_chunked()
-    #     else:
-    #         self.__transport()
+    def run(self) -> None:
+        while self.__current_time < self.__end_datetime:
+            self.update()
 
 
-    def __init_model(self, constituents: dict):        
+    def update(self) -> None:
+        # transport
+        if self.__chunked_mode:
+            self.__transport_chunked()
+        else:
+            self.__transport()
+
+        # update timestep
+        self.__increment_timestep()
+
+
+    def __increment_timestep(self):
+        """Increment the model timestep."""
+        self.__current_time += timedelta(seconds=self.registry.get(CHANGE_IN_TIME)) 
+
+
+    def __init_model(self, constituents: dict):
+        """Initialize the Clearwater-Riverine Model"""      
         # Register configured information
         # For now this should just be the diffusion coefficient
         for variable_name, data_source in self.__variable_data_sources.items():
@@ -178,10 +187,17 @@ class ClearwaterRiverine:
             end_datetime=self.__end_datetime,
             calculated_variables=self.__calculated_variables,
         )
-        
-        ## TODO: add chunking
+
         for variable_name in self.__variable_data_sources['hydrodynamic_model'].temporal_variables:
-            data = self.__variable_data_sources['hydrodynamic_model'].read(variable_name)
+            if self.__chunked_mode:
+                data = self.__variable_data_sources['hydrodynamic_model'].read_chunk(
+                    variable_name,
+                    start_time = self.__start_datetime,
+                    end_time=self.__start_datetime + self.__chunk_size
+                )
+            else:
+                data = self.__variable_data_sources['hydrodynamic_model'].read(variable_name)
+    
             self.registry.register(
                 variable_name,
                 data
@@ -214,7 +230,7 @@ class ClearwaterRiverine:
         )
         
         # calculate intermediate variables
-        self.__init_calculated_variables()
+        self.__update_calculated_variables()
 
         # initialize constituents
         for constituent_name in list(constituents.keys()):
@@ -222,6 +238,9 @@ class ClearwaterRiverine:
                 constituent_name=constituent_name, 
                 constituent_config=constituents[constituent_name]
             )
+        
+        # set current timestep
+        self.__current_time = self.__start_datetime
 
 
     def __init_constituents(
@@ -243,19 +262,20 @@ class ClearwaterRiverine:
         )
 
 
-    def __init_calculated_variables(self):
+    def __update_calculated_variables(self):
         """Initialize calculated variables."""
         for calculated_variable, calculate in self.__calculated_variables.items():
             if calculate:
-                if calculated_variable not in self.registry:
-                    calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
-                    calculated_result = calculation_method(
-                        registry=self.registry,
-                    )
-                    self.registry.register(
-                        calculated_variable,
-                        calculated_result
-                    )
+                # if calculated_variable not in self.registry:
+                # TODO: add logic to set calculated variables in order of dependencies
+                calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
+                calculated_result = calculation_method(
+                    registry=self.registry,
+                )
+                self.registry.register(
+                    calculated_variable,
+                    calculated_result
+                )
 
 
     def __init_output_store(self):
@@ -288,23 +308,48 @@ class ClearwaterRiverine:
             self.__start_datetime,
             self.__end_datetime,
             freq=self.__chunk_size
-        )
+        )[1:-1]
+    
+    def __load_new_chunk(self):
+        """Load new chunk."""
+        for variable_name in self.__variable_data_sources['hydrodynamic_model'].temporal_variables:
+            data = self.__variable_data_sources['hydrodynamic_model'].read_chunk(
+                variable_name,
+                start_time = self.__start_datetime,
+                end_time=self.__start_datetime + self.__chunk_size
+            )
+            self.registry.register(
+                variable_name,
+                data
+            )
+
+        self.__update_calculated_variables()
+        for _, constituent in self.__constituents.items():
+            constituent.register_constituent(self.registry)
+            constituent.set_boundary_conditions()        
 
     
-    # def __transport_loop_chunked(self):
-    #     current_time = self.__start_datetime
-    #     while current_time < self.__end_datetime:
-    #         current_time += self.__time_step  # change in time
-    #     self.__save_output_model()
+    def __transport_chunked(self):
+        if self.__current_time in self.__chunk_ends:
+            for variable_name in self.__output_variables:
+                variable = self.registry.get(variable_name)
+                self.__output_data_store.write_chunk(
+                    data=variable,
+                    parameter_name=variable_name,
+                    start_time=variable.time[0],
+                    end_time=variable.time[-1]
+                )
+            self.__load_new_chunk()
+        self.__transport()
+
     
-
-    # def __transport_loop_full(self):
-    #     current_time = self.__start_datetime
-    #     while current_time < self.__end_datetime:
-    #         current_time += self.__time_step
-    #     self.__save_output_model()
-
-
+    def __transport(self):
+        """Call transport process"""
+        # TODO: actual transport. 
+        # For now, dummy logic for testing
+        for constituent_name, _ in self.__constituents.items():
+            constituent = self.registry.get_at_time(constituent_name, self.__current_time)
+            constituent[:] = 10
 
     
         # else:

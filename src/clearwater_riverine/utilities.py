@@ -197,3 +197,7 @@ CALCULATED_VARIABLE_MAP = {
     AVERAGE_DEPTH: calculate_average_depth,
     MAXIMUM_DEPTH: calculate_maximum_depth,
 }
+
+CALCULATED_VARIABLE_DEPENDENCIES = {
+    AVERAGE_DEPTH: [WETTED_SURFACE_AREA],
+}
