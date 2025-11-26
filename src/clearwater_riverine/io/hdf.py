@@ -361,7 +361,7 @@ class RASHDFDataSource:
             and (self.mesh.time[-1] == end_time)
             and (parameter_name in self.mesh.data_vars)
         ):
-            return DataArrayVariable(self.mesh[parameter_name])
+            return self.mesh[parameter_name]
         else:
             self.__subset_datetimes(
                 start_time,
@@ -369,7 +369,7 @@ class RASHDFDataSource:
             )
             self.__update_time_coordinate()
             self.__update_mesh()
-            return DataArrayVariable(self.mesh[parameter_name])
+            return self.mesh[parameter_name]
         
     
     def __update_mesh(

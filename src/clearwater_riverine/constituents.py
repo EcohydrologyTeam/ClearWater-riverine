@@ -56,7 +56,7 @@ class Constituent:
         )
 
         ## Initialize 
-        self.register_constituent()
+        self.register_constituent(registry)
 
         self.set_initial_conditions(
             registry=registry,

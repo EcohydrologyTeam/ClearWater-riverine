@@ -309,7 +309,8 @@ class ClearwaterRiverine:
             self.__end_datetime,
             freq=self.__chunk_size
         )[1:-1]
-    
+
+
     def __load_new_chunk(self):
         """Load new chunk."""
         for variable_name in self.__variable_data_sources['hydrodynamic_model'].temporal_variables:
@@ -336,8 +337,8 @@ class ClearwaterRiverine:
                 self.__output_data_store.write_chunk(
                     data=variable,
                     parameter_name=variable_name,
-                    start_time=variable.time[0],
-                    end_time=variable.time[-1]
+                    start_time=variable.time[0].values,
+                    end_time=variable.time[-1].values,
                 )
             self.__load_new_chunk()
         self.__transport()
