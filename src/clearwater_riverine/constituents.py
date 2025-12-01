@@ -117,8 +117,12 @@ class Constituent:
     def register_constituent(
         self,
         registry):
-        
-        ## Initialize 
+        """Register constituent to variable registry."""
+        # unregister if it already exists
+        if self._name in registry:
+            registry.unregister(self._name)
+
+        # initialize
         registry.register(
             self._name,
             DataArrayVariable(
@@ -130,7 +134,7 @@ class Constituent:
                 .assign_attrs({
                     'units': self.__units
                 })
-            )
+            ),
         )
 
 
@@ -140,7 +144,7 @@ class Constituent:
         start_datetime: datetime,
 
     ):
-        """Define cosntituent initial conditions."""
+        """Define constituent initial conditions."""
         constituent = registry.get_at_time(self._name, start_datetime)
         initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
 

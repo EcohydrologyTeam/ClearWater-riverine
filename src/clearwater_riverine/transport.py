@@ -144,7 +144,7 @@ class ClearwaterRiverine:
     def run(self) -> None:
         while self.__current_time < self.__end_datetime:
             self.update()
-
+        self.finalize()
 
     def update(self) -> None:
         # transport
@@ -155,6 +155,10 @@ class ClearwaterRiverine:
 
         # update timestep
         self.__increment_timestep()
+
+
+    def finalize(self) -> None:
+        self.__finalize_chunk()
 
 
     def __increment_timestep(self):
@@ -200,7 +204,7 @@ class ClearwaterRiverine:
     
             self.registry.register(
                 variable_name,
-                data
+                data,
             )
         
         non_temporal_variables = list(self.__variable_data_sources['hydrodynamic_model'].static_variables.keys()) \
@@ -272,9 +276,11 @@ class ClearwaterRiverine:
                 calculated_result = calculation_method(
                     registry=self.registry,
                 )
+                if calculated_variable in self.registry:
+                    self.registry.unregister(calculated_variable)
                 self.registry.register(
                     calculated_variable,
-                    calculated_result
+                    calculated_result,
                 )
 
 
@@ -314,35 +320,39 @@ class ClearwaterRiverine:
     def __load_new_chunk(self):
         """Load new chunk."""
         for variable_name in self.__variable_data_sources['hydrodynamic_model'].temporal_variables:
+            self.registry.unregister(variable_name)
             data = self.__variable_data_sources['hydrodynamic_model'].read_chunk(
                 variable_name,
-                start_time = self.__start_datetime,
-                end_time=self.__start_datetime + self.__chunk_size
+                start_time = self.__current_time,
+                end_time=self.__current_time + self.__chunk_size
             )
             self.registry.register(
                 variable_name,
-                data
+                data,
             )
-
         self.__update_calculated_variables()
         for _, constituent in self.__constituents.items():
             constituent.register_constituent(self.registry)
-            constituent.set_boundary_conditions()        
+            constituent.set_boundary_conditions(self.registry)        
 
     
     def __transport_chunked(self):
         if self.__current_time in self.__chunk_ends:
-            for variable_name in self.__output_variables:
-                variable = self.registry.get(variable_name)
-                self.__output_data_store.write_chunk(
-                    data=variable,
-                    parameter_name=variable_name,
-                    start_time=variable.time[0].values,
-                    end_time=variable.time[-1].values,
-                )
+            self.__finalize_chunk()
             self.__load_new_chunk()
         self.__transport()
 
+
+    def __finalize_chunk(self):
+        for variable_name in self.__output_variables:
+            # TODO: clean up chunk indexing
+            variable = self.registry.get(variable_name).isel(time=slice(0, -1))
+            self.__output_data_store.write_chunk(
+                data=variable,
+                parameter_name=variable_name,
+                start_time=variable.time[0].values,
+                end_time=variable.time[-1].values,
+            )
     
     def __transport(self):
         """Call transport process"""
@@ -582,17 +592,17 @@ class ClearwaterRiverine:
             for _, constituent in self.constituent_dict.items():
                 constituent.set_value_range(self.mesh)  
 
-    def finalize(
-        self,
-        save: Optional[bool] = False,
-        output_filepath: Optional[str] = None
-    ):
-        self.set_value_range()          
+    # def finalize(
+    #     self,
+    #     save: Optional[bool] = False,
+    #     output_filepath: Optional[str] = None
+    # ):
+    #     self.set_value_range()          
 
-        if save == True:
-            self.mesh.cwr.save_clearwater_xarray(output_filepath)
-            output_path = Path(output_filepath)
-            self.boundary_data.to_csv(f'{output_path.parent}/{output_path.stem}_boundary_data.csv')
+    #     if save == True:
+    #         self.mesh.cwr.save_clearwater_xarray(output_filepath)
+    #         output_path = Path(output_filepath)
+    #         self.boundary_data.to_csv(f'{output_path.parent}/{output_path.stem}_boundary_data.csv')
 
 
     def _timer(self, t):
