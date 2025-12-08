@@ -1,6 +1,8 @@
 import numpy as np
 import xarray as xr
+from datetime import datetime, timedelta
 
+from clearwater_data.variables import VariableRegistry
 from clearwater_riverine.variables import(
     ADVECTION_COEFFICIENT,
     CHANGE_IN_TIME,
@@ -10,15 +12,18 @@ from clearwater_riverine.variables import(
     EDGES_FACE2,
     EDGE_VELOCITY,
     FACES,
+    FLOW_ACROSS_FACE,
     GATE_CONNECTIVITY,
     GATE_FLOW,
+    NUMBER_OF_REAL_CELLS,
     VOLUME,
 )
 
 # matrix solver 
 class LHS:
-    def __init__(self, mesh: xr.Dataset):
-        """ Initialize Sparse Matrix used to solve transport equation. 
+    def __init__(self, registry: VariableRegistry):
+        """
+        Initialize Sparse Matrix used to solve transport equation. 
 
         Rather than looping through every single cell at every timestep, we can instead set up a sparse 
         matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
@@ -26,14 +31,30 @@ class LHS:
         concentrations. This discretization produces a linear system of equations that can be represented by 
         a sparse-matrix problem. 
 
+        All constituents will have the same LHS matrix, since this is populated entirely by 
+        hydrodynamic and topological information from the model grid. 
+
         """
-        self.internal_edges = np.where((mesh[EDGES_FACE1] <= mesh.nreal) & (mesh[EDGES_FACE2] <= mesh.nreal))[0]
+        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
+        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+        real_cells = registry.get(NUMBER_OF_REAL_CELLS)
+        self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS) + 1 
+
+        self.internal_edges = np.where(
+            (edges_face1 <= real_cells) & (edges_face2 <= real_cells)
+        )[0]
         self.internal_edge_count = len(self.internal_edges)
-        self.real_edges_face1 = np.where(mesh[EDGES_FACE1] <= mesh.nreal)[0]
-        self.real_edges_face2 = np.where(mesh[EDGES_FACE2] <= mesh.nreal)[0]
-        self.nreal_count = mesh.nreal + 1
+        self.real_edges_face1 = np.where(edges_face1 <= real_cells)[0]
+        self.real_edges_face2 = np.where(edges_face2 <= real_cells)[0]
+        if GATE_FLOW in registry:
+            self.has_gate_flow = True
                 
-    def update_values(self, mesh: xr.Dataset, t: float):
+    def update_values(
+        self,
+        registry: VariableRegistry,
+        time_step: datetime,
+
+    ):
         """ Updates values in the LHS matrix based on the timestep. 
 
         A sparse matrix is a matrix that is mostly zeroes. Here, we will set up an NCELL x NCELL sparse matrix. 
@@ -55,156 +76,392 @@ class LHS:
                     so the coefficient will be off-diagonal. This value will the subtracted from the corresponding reference cell.
 
         Attributes:
-            rows / cols: point to the row and column of each cell
-            coef: value in the specified row, column pair in the matrix 
+            rows / columns: point to the row and column of each cell
+            coefficients: value in the specified row, column pair in the matrix 
         """
-        # define edges where flow is flowing in versus out and find all empty cells
-        # at the t+1 timestep
-        flow_out_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] > 0))[0]
-        flow_out_indices_internal = np.where((mesh[ADVECTION_COEFFICIENT][t] > 0) & \
-                                             (np.isin(mesh.nedge, self.internal_edges)))[0]
-        flow_in_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] < 0) & \
-                                   (np.isin(mesh.nedge, self.internal_edges)))[0]
-        try: 
-            flow_out_gate_indices = np.where((mesh[GATE_FLOW][t] > 0))[0]
-            flow_in_gate_indices = np.where((mesh[GATE_FLOW][t] < 0))[0]
-        except KeyError:
+        # get requried variables from registry
+        flow_across_face = registry.get_at_time(
+            FLOW_ACROSS_FACE,
+            time_step
+        )
+        volume = registry.get_at_time(
+            VOLUME,
+            time_step + timedelta(seconds=self.registry.get(CHANGE_IN_TIME))  # use volume at t+1 timestep
+        ) 
+        coefficient_to_diffusion_term = registry.get_at_Time(
+            COEFFICIENT_TO_DIFFUSION_TERM,
+            time_step
+        )
+
+        # topology information
+        faces = registry.get(VOLUME)[FACES]
+        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
+        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+        real_cells = registry.get(NUMBER_OF_REAL_CELLS)
+
+        if self.has_gate_flow:
+            gate_flow = registry.get(
+                GATE_FLOW,
+                time_step
+            )
+            flow_out_gate_indices = np.where(gate_flow > 0)
+            flow_in_gate_indices = np.where(gate_flow < 0)
+        else:
             flow_out_gate_indices = np.array([])
             flow_in_gate_indices = np.array([])
-        empty_cells = np.where((mesh[VOLUME][t+1] == 0) & (np.arange(len(mesh[VOLUME][t+1])) < self.nreal_count))[0][0:self.nreal_count]
+            
+        
+        # define edges where flow is flowing in versus out at current timestep
+        flow_out_indices = np.where(flow_across_face > 0)
+        flow_out_indices_internal = np.where(
+            flow_across_face > 0 & \
+            np.isin(self.internal_edge_count)  # mesh.nedge needed? 
+        )
+        flow_in_indices = np.where(
+            flow_across_face < 0 & \
+            np.isin(self.internal_edges)  # mesh.nedge needed? 
+        )
+
+        # find empty cells at next timestep
+        empty_cells = np.where(
+            volume == 0 & \
+            (np.arange(volume)) <= real_cells)[0:self.real_cell_count]
+        
 
         # initialize arrays that will define the sparse matrix 
-        len_val = self.internal_edge_count * 2 + self.nreal_count * 2 + \
+        self.start_index = 0
+        self.end_index = 0
+        self.__init_matrix_values()
+
+        # fill in matrix values
+        self.__fill_empty_cells(empty_cells)
+        self.__fill_load_values(volume, faces)
+        self.__fill_diffusion_values(
+            coefficient_to_diffusion_term,
+            edges_face1,
+            edges_face2,
+        )
+        self.__fill_advection_values(
+            flow_across_face,
+            edges_face1,
+            edges_face2,
+            flow_out_indices,
+            flow_out_indices_internal,
+            flow_in_indices,
+        )
+        if self.has_gate_flow:
+            self.__fill_advection_values(
+                flow_across_face,
+                registry.get(GATE_CONNECTIVITY).T[0],
+                registry.get(GATE_CONNECTIVITY).T[1],
+                flow_out_gate_indices,
+                flow_out_gate_indices,
+                flow_in_gate_indices,
+            )
+
+
+    def __init_matrix_values(
+        self,
+        flow_out_indices,
+        flow_in_indices,
+        empty_cells,
+        flow_out_gate_indices,
+        flow_in_gate_indices,
+
+    ):
+        length_of_values = self.internal_edge_count * 2 + self.nreal_count * 2 + \
             len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells) + \
-                len(self.real_edges_face1) + len(self.real_edges_face2) + \
-                len(flow_out_gate_indices) + len(flow_in_gate_indices)
-        self.rows = np.zeros(len_val)
-        self.cols = np.zeros(len_val)
-        self.coef = np.zeros(len_val)
-
+            len(self.real_edges_face1) + len(self.real_edges_face2) + \
+            len(flow_out_gate_indices) + len(flow_in_gate_indices)
+        # create empty placeholders that will be used to fill the CSR
+        # rows and columns have the indices of the row and column (where values go in the matrix)
+        # and coefficients are the values that go in that location within the matrix
+        self.rows = np.zeros(length_of_values)
+        self.columns = np.zeros(length_of_values)
+        self.coefficients = np.zeros(length_of_values)
+    
+    
+    def __fill_empty_cells(self, empty_cells):
+        """
+        Place dummy values in empty cell diagonals so the matrix is invertible.
+        Since there is no volume, these will solve to 0 as desired. 
+        Without filling dummy values on the diagonals, the matrix algebra will fail. 
+        """
         # put dummy values in dry cells
-        start = 0
-        end = len(empty_cells)
-        self.rows[start:end] = empty_cells
-        self.cols[start:end] = empty_cells
-        self.coef[start:end] = 1
+        self.__fill(
+            rows=empty_cells,
+            columns=empty_cells,
+            coefficients=1,
+        )
 
-        ###### diagonal terms - load and sum of diffusion coefficients associated with each cell
-        start = end
-        end = end + self.nreal_count
-        self.rows[start:end] = mesh[FACES][0:self.nreal_count]
-        self.cols[start:end] = mesh[FACES][0:self.nreal_count]
-        seconds = mesh[CHANGE_IN_TIME].values[t] 
-        self.coef[start:end] = mesh[VOLUME][t+1][0:self.nreal_count] / seconds 
 
-        # diagonal terms - sum of diffusion coefficients associated with each cell
-        # Diffusion coefficients for ghost cells will get added to the RHS of the matrix.
-        start = end
-        end = end + len(self.real_edges_face1)
+    def __fill_load_values(self, volume, faces):
+        """
+        Load = (Volume * Concentration) / Change in Time
+        Since concentration is unknown at the n+1 timestep (this is what is being solved for),
+        the coefficient to this term will go on the LHS of the transport equation.      
+        """
+        change_in_time = self.registry.get(CHANGE_IN_TIME)
+        load = volume[0:self.real_cell_count] / change_in_time
+        self.__fill(
+            rows=faces[0:self.real_cell_count],
+            columns=faces[0:self.real_cell_count],
+            coefficients=load
+        )
 
-        self.rows[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
-        self.cols[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
-        self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.real_edges_face1]
 
-        start = end
-        end = end + len(self.real_edges_face2)
-        self.rows[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
-        self.cols[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
-        self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.real_edges_face2]
+    def __fill_diffusion_values(
+        self,
+        coefficient_to_diffusion_term,
+        edges_face1,
+        edges_face2,
+    ):
+        """
+        Sum of coefficient to diffusion terms associated with each cell. 
+        The coefficient to the diffusion term is as follows:
+           (Face vertical area x diffusion coefficient) / (distance between cells)
+        The coefficient to teh diffusion term is summed over all faces, and is multiplied by 
+           the difference between the NEIGHBOR cell (N) and the REFERENCE cell (P);
+           we therefore need to place values both on the diagonal and off-diagonal accordingly.
+        Diffusion coefficients for ghost cells will get added to the RHS of the matrix.
+        """
+        # diagnoal terms
+        self.__fill(
+            rows=edges_face1[self.real_edges_face1],
+            columns=edges_face1[self.real_edges_face1],
+            coefficients=coefficient_to_diffusion_term[self.real_edges_face1]
+        )
+        self.__fill(
+            rows = edges_face2[self.real_edges_face2],
+            columns = edges_face2[self.real_edges_face2],
+            coefficients=coefficient_to_diffusion_term[self.real_edges_face2]  
+        )
 
-        ###### Advection
-        # TODO: Get this into a function to eliminate redundant code
-        # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
+        # off-diagonal terms
+        self.__fill(
+            rows=edges_face1[self.internal_edges],
+            columns=edges_face2[self.internal_edges],
+            coefficients=coefficient_to_diffusion_term[self.internal_edges] * -1
+        )
+
+        self.__fill(
+            rows=edges_face2[self.internal_edges],
+            columns=edges_face1[self.internal_edges], 
+            coefficients=coefficient_to_diffusion_term[self.internal_edges] * -1
+        )
+
+
+    def __fill_advection_values(
+        self,
+        flow_across_face,
+        edges_face1,
+        edges_face2,
+        flow_out_indices,
+        flow_out_indices_internal,
+        flow_in_indices,
+    ):
+        """
+        Advection coefficient values.
+        The advection term coefficient is the flow across the face multiplied by the Concentration across the face (C_f)
+          Where the flow across the face is positive, the concentration across the face (C_f)
+            is the reference cell (C_f = C_P)
+          Where the flow across the face is negative, the concentration across the face (C_f)
+            is the neighbor cell (C_f = C_N)
+        This function places those values in the matrix accordingly and subtracts the value from 
+          the corresponding partner cell (i.e., if C_f = C_P, then the value is placed on the diagonal for C_P
+          and then that same value is subtracted from the neighbor cell (C_N) for mass balance -- or vice versa).
+        """
         if len(flow_out_indices) > 0:
-            start = end
-            end = end + len(flow_out_indices)
-
-            # where advection coefficient is positive, the concentration across the face will be the REFERENCE CELL 
+            # where face flow is positive, the concentration across the face will be the REFERENCE CELL 
             # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
             # Advection coefficient for timestep t is the flow across the face going from t to t+1 
-            self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
-            self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices]
+            self.__fill(
+                rows = edges_face1[flow_out_indices],
+                columns = edges_face1[flow_out_indices],
+                coefficients=flow_across_face[flow_out_indices]
+            )
 
             # subtract from corresponding neighbor cell (off-diagonal)
             # for internal cells only
-            start = end
-            end = end + len(flow_out_indices_internal)
-            self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_out_indices_internal]
-            self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices_internal]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices_internal] * -1  
+            self.__fill(
+                rows = edges_face2[flow_out_indices_internal],
+                columns = edges_face1[flow_out_indices_internal],
+                coefficients=flow_across_face[flow_out_indices_internal] * -1
+        )
 
         if len(flow_in_indices) > 0:
-            # update indices
-            start = end
-            end = end + len(flow_in_indices)
-
-            ## where it is negative, the concentration across the face will be the neighbor cell ("N")
+            ## where face flopw is negative, the concentration across the face will be the neighbor cell ("N")
             ## so the coefficient will be off-diagonal
             ## This is internal cells only; external cells will be handled on the RHS
-            self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_in_indices]
-            self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices] 
+            self.__fill(
+                rows=edges_face1[flow_in_indices],
+                columns=edges_face2[flow_in_indices],
+                coefficients=flow_across_face[flow_in_indices]
+            )
 
-            ## update indices 
-            start = end
-            end = end + len(flow_in_indices)
             ## do the opposite on the corresponding diagonal 
-            self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
-            self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
-            self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices]  * -1
+            self.__fill(
+                rows=edges_face2[flow_in_indices]
+                columns=edges_face2[flow_in_indices]
+                coefficients=flow_across_face[flow_in_indices] * -1
+            )
 
-        # gate advection
-        if len(flow_out_gate_indices) > 0:
-            start = end
-            end = end + len(flow_out_gate_indices)
 
-            # where advection coefficient is positive, the concentration across the face will be the REFERENCE CELL 
-            # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
-            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
-            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
-            self.coef[start:end] = mesh[GATE_FLOW][t][flow_out_gate_indices]  
+    def __fill(self, rows, columns, coefficients):
+        """This function handles the placement of values in the matrix"""
+        self.start_index = self.end_index
+        self.end_index = self.start_index + len(coefficients)
+        self.rows[self.start_index:self.end_index] = rows
+        self.columns[self.start_index:self.end_index] = columns
+        self.coefficients[self.start_index: self.end_index] = coefficients
 
-            # subtract from corresponding neighbor cell (off-diagonal)
-            start = end
-            end = end + len(flow_out_gate_indices)  # len(flow_out_indices_internal) <-- will we have to do this?
-            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_out_gate_indices]
-            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
-            self.coef[start:end] = mesh[GATE_FLOW][t][flow_out_gate_indices] * -1 
+        # # define edges where flow is flowing in versus out and find all empty cells
+        # # at the t+1 timestep
+        # flow_out_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] > 0))[0]
+        # flow_out_indices_internal = np.where((mesh[ADVECTION_COEFFICIENT][t] > 0) & \
+        #                                      (np.isin(mesh.nedge, self.internal_edges)))[0]
+        # flow_in_indices = np.where((mesh[ADVECTION_COEFFICIENT][t] < 0) & \
+        #                            (np.isin(mesh.nedge, self.internal_edges)))[0]
+        # try: 
+        #     flow_out_gate_indices = np.where((mesh[GATE_FLOW][t] > 0))[0]
+        #     flow_in_gate_indices = np.where((mesh[GATE_FLOW][t] < 0))[0]
+        # except KeyError:
+        #     flow_out_gate_indices = np.array([])
+        #     flow_in_gate_indices = np.array([])
+        # empty_cells = np.where((mesh[VOLUME][t+1] == 0) & (np.arange(len(mesh[VOLUME][t+1])) < self.nreal_count))[0][0:self.nreal_count]
+
+        # # initialize arrays that will define the sparse matrix 
+        # len_val = self.internal_edge_count * 2 + self.nreal_count * 2 + \
+        #     len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells) + \
+        #         len(self.real_edges_face1) + len(self.real_edges_face2) + \
+        #         len(flow_out_gate_indices) + len(flow_in_gate_indices)
+        # self.rows = np.zeros(len_val)
+        # self.cols = np.zeros(len_val)
+        # self.coef = np.zeros(len_val)
+
+        # put dummy values in dry cells
+        # start = 0
+        # end = len(empty_cells)
+        # self.rows[start:end] = empty_cells
+        # self.cols[start:end] = empty_cells
+        # self.coef[start:end] = 1
+
+        # ###### diagonal terms - load and sum of diffusion coefficients associated with each cell
+        # start = end
+        # end = end + self.nreal_count
+        # self.rows[start:end] = mesh[FACES][0:self.nreal_count]
+        # self.cols[start:end] = mesh[FACES][0:self.nreal_count]
+        # seconds = mesh[CHANGE_IN_TIME].values[t] 
+        # self.coef[start:end] = mesh[VOLUME][t+1][0:self.nreal_count] / seconds 
+
+        # # diagonal terms - sum of diffusion coefficients associated with each cell
+        # # Diffusion coefficients for ghost cells will get added to the RHS of the matrix.
+        # start = end
+        # end = end + len(self.real_edges_face1)
+
+        # self.rows[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
+        # self.cols[start:end] = mesh[EDGES_FACE1][self.real_edges_face1]
+        # self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.real_edges_face1]
+
+        # start = end
+        # end = end + len(self.real_edges_face2)
+        # self.rows[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
+        # self.cols[start:end] = mesh[EDGES_FACE2][self.real_edges_face2]
+        # self.coef[start:end] = mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.real_edges_face2]
+
+        # ###### Advection
+        # # TODO: Get this into a function to eliminate redundant code
+        # # if statement to prevent errors if flow_out_indices or flow_in_indices have length of 0
+        # if len(flow_out_indices) > 0:
+        #     start = end
+        #     end = end + len(flow_out_indices)
+
+        #     # where advection coefficient is positive, the concentration across the face will be the REFERENCE CELL 
+        #     # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
+        #     # Advection coefficient for timestep t is the flow across the face going from t to t+1 
+        #     self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
+        #     self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices]
+        #     self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices]
+
+        #     # subtract from corresponding neighbor cell (off-diagonal)
+        #     # for internal cells only
+        #     start = end
+        #     end = end + len(flow_out_indices_internal)
+        #     self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_out_indices_internal]
+        #     self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_out_indices_internal]
+        #     self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_out_indices_internal] * -1  
+
+        # if len(flow_in_indices) > 0:
+        #     # update indices
+        #     start = end
+        #     end = end + len(flow_in_indices)
+
+        #     ## where it is negative, the concentration across the face will be the neighbor cell ("N")
+        #     ## so the coefficient will be off-diagonal
+        #     ## This is internal cells only; external cells will be handled on the RHS
+        #     self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[0][flow_in_indices]
+        #     self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
+        #     self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices] 
+
+        #     ## update indices 
+        #     start = end
+        #     end = end + len(flow_in_indices)
+        #     ## do the opposite on the corresponding diagonal 
+        #     self.rows[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
+        #     self.cols[start:end] = mesh[EDGE_FACE_CONNECTIVITY].T[1][flow_in_indices]
+        #     self.coef[start:end] = mesh[ADVECTION_COEFFICIENT][t][flow_in_indices]  * -1
+
+        # # gate advection
+        # if len(flow_out_gate_indices) > 0:
+        #     start = end
+        #     end = end + len(flow_out_gate_indices)
+
+        #     # where advection coefficient is positive, the concentration across the face will be the REFERENCE CELL 
+        #     # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
+        #     self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
+        #     self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
+        #     self.coef[start:end] = mesh[GATE_FLOW][t][flow_out_gate_indices]  
+
+        #     # subtract from corresponding neighbor cell (off-diagonal)
+        #     start = end
+        #     end = end + len(flow_out_gate_indices)  # len(flow_out_indices_internal) <-- will we have to do this?
+        #     self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_out_gate_indices]
+        #     self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_out_gate_indices]
+        #     self.coef[start:end] = mesh[GATE_FLOW][t][flow_out_gate_indices] * -1 
         
-        if len(flow_in_gate_indices) > 0:
-            # update indices
-            start = end
-            end = end + len(flow_in_gate_indices)
+        # if len(flow_in_gate_indices) > 0:
+        #     # update indices
+        #     start = end
+        #     end = end + len(flow_in_gate_indices)
 
-            ## where it is negative, the concentration across the face will be the neighbor cell ("N")
-            ## so the coefficient will be off-diagonal 
-            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_in_gate_indices]
-            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
-            self.coef[start:end] = mesh[GATE_FLOW][t][flow_in_gate_indices] 
+        #     ## where it is negative, the concentration across the face will be the neighbor cell ("N")
+        #     ## so the coefficient will be off-diagonal 
+        #     self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[0][flow_in_gate_indices]
+        #     self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
+        #     self.coef[start:end] = mesh[GATE_FLOW][t][flow_in_gate_indices] 
 
-            ## update indices 
-            start = end
-            end = end + len(flow_in_gate_indices)
-            ## do the opposite on the corresponding diagonal 
-            self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
-            self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
-            self.coef[start:end] = mesh[GATE_FLOW][t][flow_in_gate_indices]  * -1 
+        #     ## update indices 
+        #     start = end
+        #     end = end + len(flow_in_gate_indices)
+        #     ## do the opposite on the corresponding diagonal 
+        #     self.rows[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
+        #     self.cols[start:end] = mesh[GATE_CONNECTIVITY].T[1][flow_in_gate_indices]
+        #     self.coef[start:end] = mesh[GATE_FLOW][t][flow_in_gate_indices]  * -1 
 
         ###### off-diagonal terms - diffusion
-        # update indices
-        start = end
-        end = end + self.internal_edge_count
-        self.rows[start:end] = mesh[EDGES_FACE1][self.internal_edges]
-        self.cols[start:end] = mesh[EDGES_FACE2][self.internal_edges]
-        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]
+        # # update indices
+        # start = end
+        # end = end + self.internal_edge_count
+        # self.rows[start:end] = mesh[EDGES_FACE1][self.internal_edges]
+        # self.cols[start:end] = mesh[EDGES_FACE2][self.internal_edges]
+        # self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]
 
-        # update indices and repeat 
-        start = end
-        end = end + self.internal_edge_count
-        self.rows[start:end] = mesh[EDGES_FACE2][self.internal_edges]
-        self.cols[start:end] = mesh[EDGES_FACE1][self.internal_edges]
-        self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]
+        # # update indices and repeat 
+        # start = end
+        # end = end + self.internal_edge_count
+        # self.rows[start:end] = mesh[EDGES_FACE2][self.internal_edges]
+        # self.cols[start:end] = mesh[EDGES_FACE1][self.internal_edges]
+        # self.coef[start:end] = -1 * mesh[COEFFICIENT_TO_DIFFUSION_TERM][t][self.internal_edges]
 
     
 class RHS:

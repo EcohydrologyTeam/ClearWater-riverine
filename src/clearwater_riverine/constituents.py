@@ -66,6 +66,10 @@ class Constituent:
             registry=registry,
         )
 
+        self.rhs = RHS(
+            registry=registry,
+        )
+
         # self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
         # self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
         # self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
