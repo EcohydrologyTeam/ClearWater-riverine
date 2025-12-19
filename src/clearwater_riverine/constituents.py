@@ -142,6 +142,7 @@ class Constituent:
         )
 
 
+
     def set_initial_conditions(
         self,
         registry: VariableRegistry,

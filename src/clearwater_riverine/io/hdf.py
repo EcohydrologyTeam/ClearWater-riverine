@@ -25,6 +25,8 @@ from clearwater_riverine.variables import (
     CHANGE_IN_TIME,
     COEFFICIENT_TO_DIFFUSION_TERM,
     DIFFUSION_COEFFICIENT,
+    NEDGE,
+    NFACE,
     NODE_X,
     NODE_Y,
     TIME,
@@ -122,14 +124,14 @@ class RASHDFDataSource:
 
         self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
-            VOLUME: 'nface',
-            EDGE_VELOCITY: 'nedge',
-            WATER_SURFACE_ELEVATION: 'nface',
-            FLOW_ACROSS_FACE: 'nedge',
+            VOLUME: NFACE,
+            EDGE_VELOCITY: NEDGE,
+            WATER_SURFACE_ELEVATION: NFACE,
+            FLOW_ACROSS_FACE: NEDGE,
         }
         self.static_variables = {
-            FACE_SURFACE_AREA: 'nface',
-            EDGE_LENGTH: 'nedge',
+            FACE_SURFACE_AREA: NFACE,
+            EDGE_LENGTH: NEDGE,
         }
         self.topology_variables = [
             FACE_X,
@@ -424,12 +426,15 @@ class RASHDFDataSource:
         ## TODO: is this needed?
         self.mesh[FACE_SURFACE_AREA] = _hdf_to_xarray(
             infile[self.paths[FACE_SURFACE_AREA]],
-            ('nface')
+            (NFACE)
         )
+        self.nface = self.mesh[NFACE]
+
         self.mesh[EDGE_LENGTH] = _hdf_to_xarray(
             infile[self.paths[EDGE_LENGTH]][:, 2],
             ('nedge'),
         )
+        self.nedge = self.mesh[NEDGE]
 
     def __read_temporal_variables(
         self,

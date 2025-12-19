@@ -4,7 +4,7 @@ import xarray as xr
 from scipy.sparse import csr_matrix, linalg
 import matplotlib.pyplot as plt
 import holoviews as hv
-import geoviews as gv
+# import geoviews as gv
 import geopandas as gpd
 from shapely.geometry import Polygon
 # hv.extension("bokeh")
@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from clearwater_data.io.base import DataSource, ChunkedDataSource
 from clearwater_data.io.zarr import ZarrDataStore, ChunkedZarrDataStore
 from clearwater_data.variables import VariableRegistry
+from clearwater_data.variables.float import FloatVariable
 from clearwater_data.variables.xarray import DataArrayVariable
 
 from clearwater_riverine.utilities import(
@@ -36,6 +37,8 @@ from clearwater_riverine.variables import (
     EDGES_FACE2,
     FACES,
     CHANGE_IN_TIME,
+    NFACE,
+    NEDGE,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
     VOLUME_ELEVATION_INFO,
@@ -45,7 +48,7 @@ from clearwater_riverine.variables import (
 from clearwater_riverine.linalg import LHS
 from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import init_from_config
-from clearawter_riverine.transport import TransportEngine
+from clearwater_riverine.transport import TransportEngine
 from clearwater_riverine.constituents import Constituent
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
@@ -232,7 +235,15 @@ class ClearwaterRiverine:
         # register additional variables
         self.registry.register(
             NUMBER_OF_REAL_CELLS,
-            self.__variable_data_sources['hydrodynamic_model'].real_cell_count
+            FloatVariable(self.__variable_data_sources['hydrodynamic_model'].real_cell_count)
+        )
+        self.registry.register(
+            NFACE,
+            FloatVariable(self.__variable_data_sources['hydrodynamic_model'].nface)
+        )
+        self.registry.register(
+            NEDGE,
+            FloatVariable(self.__variable_data_sources['hydrodynamic_model'].nedge)
         )
         
         # calculate intermediate variables
@@ -360,10 +371,16 @@ class ClearwaterRiverine:
         """Call transport process"""
         # TODO: actual transport. 
         # For now, dummy logic for testing
+        self.__transport_engine.run(
+            registry=self.registry,
+            current_time=self.__current_time,
+            time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
+            constituents=self.__constituents
+         )
+
         for constituent_name, _ in self.__constituents.items():
             constituent = self.registry.get_at_time(constituent_name, self.__current_time)
             # constituent[:] = 10
-            self.__transport_engine.run(self.registry, self.__current_time)
 
     
         # else:

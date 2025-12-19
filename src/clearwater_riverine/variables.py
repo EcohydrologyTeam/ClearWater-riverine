@@ -9,6 +9,8 @@ FACE_NODES = 'face_nodes'
 EDGE_FACE_CONNECTIVITY = 'edge_face_connectivity'
 FACES = 'nface'
 MESH_2D = 'mesh_2d'
+NEDGE = 'nedge'
+NFACE = 'nface'
 
 # Available Variables
 EDGES_FACE1 = 'edges_face1'
