@@ -428,13 +428,13 @@ class RASHDFDataSource:
             infile[self.paths[FACE_SURFACE_AREA]],
             (NFACE)
         )
-        self.nface = self.mesh[NFACE]
+        self.nface = len(self.mesh[NFACE])
 
         self.mesh[EDGE_LENGTH] = _hdf_to_xarray(
             infile[self.paths[EDGE_LENGTH]][:, 2],
             ('nedge'),
         )
-        self.nedge = self.mesh[NEDGE]
+        self.nedge = len(self.mesh[NEDGE])
 
     def __read_temporal_variables(
         self,

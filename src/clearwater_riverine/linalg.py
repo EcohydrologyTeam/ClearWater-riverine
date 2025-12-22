@@ -40,15 +40,15 @@ class LHS:
         """
         edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
         edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
-        real_cells = registry.get(NUMBER_OF_REAL_CELLS)
-        self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS) + 1 
+        self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
+        self.real_cell_index = registry.get(NUMBER_OF_REAL_CELLS) - 1
 
         self.internal_edges = np.where(
-            (edges_face1 <= real_cells) & (edges_face2 <= real_cells)
+            (edges_face1 <= self.real_cell_index) & (edges_face2 <= self.real_cell_index)
         )[0]
         self.internal_edge_count = len(self.internal_edges)
-        self.real_edges_face1 = np.where(edges_face1 <= real_cells)[0]
-        self.real_edges_face2 = np.where(edges_face2 <= real_cells)[0]
+        self.real_edges_face1 = np.where(edges_face1 <= self.real_cell_index)[0]
+        self.real_edges_face2 = np.where(edges_face2 <= self.real_cell_index)[0]
         self.has_gate_flow = GATE_FLOW in registry
                 
     def update_values(
@@ -100,7 +100,6 @@ class LHS:
         faces = registry.get(VOLUME)[FACES]
         edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
         edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
-        real_cells = registry.get(NUMBER_OF_REAL_CELLS)
 
         if self.has_gate_flow:
             gate_flow = registry.get(
@@ -114,12 +113,18 @@ class LHS:
             flow_in_gate_indices = np.array([])            
 
         # define edges where flow is flowing in versus out at current timestep
-        internal_edges_da = flow_across_face.isel(nedge=self.internal_edges)
-        flow_out_indices = np.where(internal_edges_da.values > 0)[0]
-        flow_in_indices  = np.where(internal_edges_da.values < 0)[0]
+        flow_out_indices = np.where(flow_across_face > 0)[0]
+        flow_out_indices_internal = np.where(
+            (flow_across_face > 0) & \
+            (np.isin(flow_across_face.nedge, self.internal_edges))
+        )[0]
+        flow_in_indices = np.where(
+            (flow_across_face < 0) & \
+            (np.isin(flow_across_face.nedge, self.internal_edges))
+        )
 
         # find empty cells at next timestep
-        vol_subset = volume.isel(nface=slice(0, real_cells))
+        vol_subset = volume.isel(nface=slice(0, self.real_cell_index))
         # get indices of zero-volume cells
         empty_cells = np.where(vol_subset.values == 0)[0]
 
@@ -136,7 +141,7 @@ class LHS:
 
         # fill in matrix values
         self.__fill_empty_cells(empty_cells)
-        self.__fill_load_values(volume, faces)
+        self.__fill_load_values(volume, faces, registry.get(CHANGE_IN_TIME))
         self.__fill_diffusion_values(
             coefficient_to_diffusion_term,
             edges_face1,
@@ -169,7 +174,7 @@ class LHS:
         flow_in_gate_indices,
 
     ):
-        length_of_values = self.internal_edge_count * 2 + self.nreal_count * 2 + \
+        length_of_values = self.internal_edge_count * 2 + self.real_cell_count * 2 + \
             len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells) + \
             len(self.real_edges_face1) + len(self.real_edges_face2) + \
             len(flow_out_gate_indices) + len(flow_in_gate_indices)
@@ -191,17 +196,16 @@ class LHS:
         self.__fill(
             rows=empty_cells,
             columns=empty_cells,
-            coefficients=1,
+            coefficients=np.ones(len(empty_cells)),
         )
 
 
-    def __fill_load_values(self, volume, faces):
+    def __fill_load_values(self, volume, faces, change_in_time):
         """
         Load = (Volume * Concentration) / Change in Time
         Since concentration is unknown at the n+1 timestep (this is what is being solved for),
         the coefficient to this term will go on the LHS of the transport equation.      
         """
-        change_in_time = self.registry.get(CHANGE_IN_TIME)
         load = volume[0:self.real_cell_count] / change_in_time
         self.__fill(
             rows=faces[0:self.real_cell_count],
@@ -313,6 +317,8 @@ class LHS:
         self.end_index = self.start_index + len(coefficients)
         self.rows[self.start_index:self.end_index] = rows
         self.columns[self.start_index:self.end_index] = columns
+        if self.rows.max() > self.real_cell_count:
+            print('here')
         self.coefficients[self.start_index: self.end_index] = coefficients
 
     
@@ -324,12 +330,12 @@ class RHS:
         """
         Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions. 
         """
-        real_cells = registry.get(NUMBER_OF_REAL_CELLS)
-        self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS) + 1
+        self.real_cell_index = registry.get(NUMBER_OF_REAL_CELLS) - 1
+        self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
         edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
 
         self.values = np.zeros(self.real_cell_count)
-        self.ghost_cells = np.where(edges_face2 > real_cells)[0]
+        self.ghost_cells = np.where(edges_face2 > self.real_cell_index)[0]
 
     def update_values(
         self,
