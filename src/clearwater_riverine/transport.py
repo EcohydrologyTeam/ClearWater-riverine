@@ -30,7 +30,7 @@ class TransportEngine:
         )
 
         # define compressed sparse row matrix for LHS
-        real_cell_count = registry.get(NUMBER_OF_REAL_CELLS) + 1
+        real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
         A = csr_matrix(
             (self.lhs.coefficients, (self.lhs.rows, self.lhs.columns)),
             shape = (real_cell_count, real_cell_count)
@@ -51,7 +51,7 @@ class TransportEngine:
             x = linalg.spsolve(A, constituent.rhs.values)
 
             # update the value in the registry
-            mask = np.isnan(constituent_value)
+            mask = np.isnan(constituent_value) & (constituent_value.nface < real_cell_count)
             constituent_value[mask] = x[mask]
 
             # optionally: calculate mass flux

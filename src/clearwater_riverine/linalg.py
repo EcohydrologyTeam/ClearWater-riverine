@@ -317,8 +317,6 @@ class LHS:
         self.end_index = self.start_index + len(coefficients)
         self.rows[self.start_index:self.end_index] = rows
         self.columns[self.start_index:self.end_index] = columns
-        if self.rows.max() > self.real_cell_count:
-            print('here')
         self.coefficients[self.start_index: self.end_index] = coefficients
 
     
