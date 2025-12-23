@@ -408,11 +408,13 @@ class RHS:
             flowing_in=True
         )[0:self.real_cell_count]
         ghost_cells_out[:] = self._ghost_cell(
-            registry,
-            current_time,
-            time_step,
+            registry=registry,
+            current_time=current_time,
+            time_step=time_step,
+            constituent_name=constituent_name,
             flowing_in=False
         )[0:self.real_cell_count]
+
         return ghost_cells_in, ghost_cells_out
     
     def __calculate_rhs(
@@ -483,10 +485,10 @@ class RHS:
         nedge = registry.get(NEDGE) 
 
         if advection:
-            advection_edge = np.zeros(NEDGE)
-            advection_face = np.zeros(NFACE)
-        diffusion_edge = np.zeros(NEDGE)
-        diffusion_face = np.zeros(NFACE)
+            advection_edge = np.zeros(nedge)
+            advection_face = np.zeros(nface)
+        diffusion_edge = np.zeros(nedge)
+        diffusion_face = np.zeros(nface)
         return advection_edge, advection_face, diffusion_edge, diffusion_face
     
     def _edge_to_face(
@@ -543,7 +545,7 @@ class RHS:
         edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
 
         velocity_indices = np.where(condition(edge_velocity, 0))[0]
-        advection_coefficient = registry.get(FLOW_ACROSS_FACE, current_time)
+        advection_coefficient = registry.get_at_time(FLOW_ACROSS_FACE, current_time)
         diffusion_coefficient = registry.get_at_time(DIFFUSION_COEFFICIENT, current_time)
         diffusion_term = registry.get_at_time(COEFFICIENT_TO_DIFFUSION_TERM, current_time)
         index_list = np.intersect1d(velocity_indices, self.ghost_cells)
