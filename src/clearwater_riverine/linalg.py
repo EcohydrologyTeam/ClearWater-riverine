@@ -339,7 +339,7 @@ class RHS:
 
     def update_values(
         self,
-        solution: np.array,
+        # solution: np.array,
         registry: VariableRegistry,
         current_time: datetime,
         time_step: timedelta,

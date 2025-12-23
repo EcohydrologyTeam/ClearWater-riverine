@@ -38,13 +38,13 @@ class TransportEngine:
 
         # loop through all constituents
         for constituent_name, constituent in constituents.items():
-            constituent_value = self.registry.get_at_time(constituent_name, self.__current_time)
+            constituent_value = registry.get_at_time(constituent_name, current_time)
             # update right hand side of the matrix
             constituent.rhs.update_values(
                 registry=registry,
                 current_time=current_time,
                 time_step=time_step,
-                name=constituent_name,
+                constituent_name=constituent_name,
             )
         
             # solve
