@@ -124,9 +124,10 @@ class LHS:
         )
 
         # find empty cells at next timestep
-        vol_subset = volume.isel(nface=slice(0, self.real_cell_index))
-        # get indices of zero-volume cells
-        empty_cells = np.where(vol_subset.values == 0)[0]
+        empty_cells = np.where(
+            (volume.values == 0) & \
+            (np.isin(volume.nface, np.arange(self.real_cell_count)))
+        )[0]
 
         # initialize arrays that will define the sparse matrix 
         self.start_index = 0
@@ -318,8 +319,9 @@ class LHS:
         self.rows[self.start_index:self.end_index] = rows
         self.columns[self.start_index:self.end_index] = columns
         self.coefficients[self.start_index: self.end_index] = coefficients
+        if np.isnan(self.coefficients).sum() > 0:
+            print('here')
 
-    
 class RHS:
     def __init__(
         self,

@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.sparse import csr_matrix, linalg
 from datetime import datetime, timedelta
+import xarray as xr
 
 from clearwater_riverine.linalg import LHS
 from clearwater_riverine.variables import (
@@ -39,6 +40,7 @@ class TransportEngine:
         # loop through all constituents
         for constituent_name, constituent in constituents.items():
             constituent_value = registry.get_at_time(constituent_name, current_time)
+            next_constituent_value = registry.get_at_time(constituent_name, current_time + time_step)
             # update right hand side of the matrix
             constituent.rhs.update_values(
                 registry=registry,
@@ -49,9 +51,11 @@ class TransportEngine:
         
             # solve
             x = linalg.spsolve(A, constituent.rhs.values)
+            x_full = xr.DataArray(np.zeros(constituent_value.shape), coords=constituent_value.coords)
+            x_full[:len(x)] = x
 
             # update the value in the registry
-            mask = np.isnan(constituent_value) & (constituent_value.nface < real_cell_count)
-            constituent_value[mask] = x[mask]
+            mask = np.isnan(next_constituent_value)
+            next_constituent_value[:] = next_constituent_value.where(~mask, other=x_full)
 
             # optionally: calculate mass flux
