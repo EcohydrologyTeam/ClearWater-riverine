@@ -141,7 +141,18 @@ class Constituent:
             ),
         )
 
-
+    def reset_initial_conditions(
+        self,
+        registry: VariableRegistry,
+        initial_conditions: xr.DataArray,
+    ):
+        """Used for chunking mode to reset initial conditions from final calculation."""
+        registry.unregister(f"{self._name}_initial")
+        registry.register(
+            f"{self._name}_initial",
+            DataArrayVariable(initial_conditions),
+        )
+        self.__initial_condition_spatial_field =  'nface'
 
     def set_initial_conditions(
         self,

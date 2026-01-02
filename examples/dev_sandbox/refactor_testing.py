@@ -1,7 +1,6 @@
-import sys
-sys.path.append(r"C:\Users\sjordan\GitHub\ClearWater-data")
-sys.path.append(r"C:\Users\sjordan\GitHub\ClearWater-riverine\src\clearwater_riverine")
-
+# import sys
+# # sys.path.append(r"C:\Users\sjordan\GitHub\ClearWater-data")
+# # sys.path.append(r"C:\Users\sjordan\GitHub\ClearWater-riverine\src\clearwater_riverine")
 
 import clearwater_riverine as cwr
 from pathlib import Path

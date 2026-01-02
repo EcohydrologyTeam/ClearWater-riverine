@@ -35,6 +35,7 @@ dependencies = [
     "jupyterlab>=4",
     "jupyter_bokeh>=4.0.1",
     "pyviz_comms",
+    "clearwater_data",
 ]
 
 [project.optional-dependencies]
@@ -52,7 +53,7 @@ dev = [
     "conda-libmamba-solver",
     "mamba",
     "git",
-    "pip"
+    "pip",
 ]
 
 [tool.setuptools.packages.find]
@@ -61,4 +62,7 @@ where = ["src"]
 [tool.setuptools]
 # This makes editable install possible
 package-dir = {"" = "src"}
+
+[tool.uv.sources]
+clearwater_data = { path = "../ClearWater-data", editable = true}
 

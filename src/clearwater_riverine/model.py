@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import holoviews as hv
 # import geoviews as gv
 import geopandas as gpd
+import gc 
 from shapely.geometry import Polygon
 # hv.extension("bokeh")
 from typing import (
@@ -343,9 +344,15 @@ class ClearwaterRiverine:
                 variable_name,
                 data,
             )
+
         self.__update_calculated_variables()
-        for _, constituent in self.__constituents.items():
+        for constituent_name, constituent in self.__constituents.items():
+            constituent.reset_initial_conditions(
+                self.registry,
+                self.registry.get_at_time(constituent_name, self.__current_time)
+            )
             constituent.register_constituent(self.registry)
+            constituent.set_initial_conditions(self.registry, self.__current_time)
             constituent.set_boundary_conditions(self.registry)        
 
     
@@ -366,7 +373,8 @@ class ClearwaterRiverine:
                 start_time=variable.time[0].values,
                 end_time=variable.time[-1].values,
             )
-    
+
+
     def __transport(self):
         """Call transport process"""
         # TODO: actual transport. 
