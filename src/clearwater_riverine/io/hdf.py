@@ -509,7 +509,7 @@ class RASHDFDataSource:
             ds_cell = ds_cell.expand_dims({"nface": [cell]})
             lookup_datasets.append(ds_cell)
 
-        return xr.concat(lookup_datasets, dim="nface")
+        return xr.concat(lookup_datasets, dim="nface", join="outer")
 
     def __create_cell_lookup_table(
         self,
