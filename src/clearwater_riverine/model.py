@@ -52,6 +52,7 @@ from clearwater_riverine.io.config import init_from_config
 from clearwater_riverine.transport import TransportEngine
 from clearwater_riverine.constituents import Constituent
 from clearwater_riverine.postproc_util import calculate_global_mass_balance
+from clearwater_riverine.plotting import RiverinePlotter
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -133,6 +134,7 @@ class ClearwaterRiverine:
             self.__calculated_variables = model.get("calculated_variables", None)
             self.__output_variables = model.get("output_variables", constituents)
             self.__mass_flux_calculation = model.get("mass_flux_calculation", False)
+            self.crs = model.get("crs", None)
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)
         else:
@@ -147,6 +149,10 @@ class ClearwaterRiverine:
         self.__init_output_store()
         self.__init_chunks()
         self.__transport_engine = TransportEngine(self.registry)
+        self.plotter = RiverinePlotter(self)
+        self.plot = self.plotter.dynamic_plot
+        self.static_plot = self.plotter.static_plot
+        self.quick_plot = self.plotter.quick_plot
 
     
     def run(self) -> None:
