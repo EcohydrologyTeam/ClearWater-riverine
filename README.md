@@ -49,57 +49,21 @@ Place your copy of this repo folder in any convenient location on your computer.
 We recommend creating a custom virtual environment with the [pixi](https://pixi.prefix.dev/latest/) package, dependency, and environment management for any language (i.e. easily install C++ packages such as GDAL).
 
 ##### Production
+Coming soon! For now, see the *Developers* instructions. 
 
 ##### Developers
-`pixi install -e dev`
-`pixi shell -e dev`
+In order to get a development environment working, you'll need to clone ClearWater-data and ClearWater-modules, following the instructions from Step 2 above, but for the [ClearWater-data](https://github.com/EcohydrologyTeam/ClearWater-data) repo and the [Clearwater-modules](https://github.com/EcohydrologyTeam/ClearWater-modules/tree/main/src/clearwater_modules) repo. These should be cloned to the same location where your ClearWater-riverine repo is cloned OR you will need to update the `pixi.toml` so that the [feature.dev.pypi-dependencies] point to the correct location of your local clones. 
 
-
-
-We provide an [`environment.yml`](environment.yml) file that specifies for [Conda](https://conda.io/docs/) how to create a virtual environment that contains the same software dependencies that we've used in development and testing.
-
-Create a `ClearWater-modules` environment using this [conda](https://conda.io/docs/) command in your terminal or Anaconda Prompt console. If necessary, replace `environment.yml` with the full file pathway to the `environment.yml` file in the local cloned repository.
+Next, navigate to the Clearwater-riverine repository and create a `dev` environment:
 
 ```shell
-conda env create --file environment.yml
+pixi install -e dev
 ```
 
-Alternatively, use the faster [`libmamba` solver](https://conda.github.io/conda-libmamba-solver/getting-started/) with:
+To activate this environment in your shell, run the following:
 
 ```shell
-conda env create -f environment.yml --solver=libmamba
-```
-
-If users are experiencing issues with plots NOT displaying in jupyter notebooks once a cell is executed, then we recommend using the `environment_working.yml` file. We have noticed that later versions of some libraries might be creating a conflict, but we have not been able to track down the root cause since no warnings/errors are given when the plot does NOT display:
-
-```shell
-conda env create -f environment_working.yml --solver=libmamba
-```
-
-Activate the environment using the instructions printed by conda after the environment is created successfully.
-
-To update your environment to the latest versions of dependencies and/or add additional dependencies to your environment (by first editting [`environment.yml`](environment.yml)), run the following command:
-
-```shell
-conda env update -f environment.yml --solver=libmamba --prune
-```
-
-or to recreate from scratch:
-
-```shell
-conda env create -f environment.yml --solver=libmamba --force
-```
-
-For additional information on managing conda environments, see [Conda's User Guide on Managing Environments](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html).
-
-#### 4. Add your `ClearWater-riverine` Path to Miniconda/Anaconda sites-packages
-
-To have access to the `clearwater_riverine` module in your Python environments, it is necessary to have a path to your copy of Clearwater Riverine in Anaconda's `sites-packages` directory (i.e. something like `$HOME/path/to/anaconda/lib/pythonX.X/site-packages` or `$HOME/path/to/anaconda/lib/site-packages` similar).
-
-The easiest way to do this is to use the [`conda develop`](https://docs.conda.io/projects/conda-build/en/latest/resources/commands/conda-develop.html) command in the console or terminal like this, replacing '/path/to/module/src' with the full file pathway to the local cloned Clearwater-riverine repository:
-
-```console
-conda develop '/path/to/module/src'
+pixi shell -e dev
 ```
 
 You should now be able to run the examples and create your own Jupyter Notebooks!
