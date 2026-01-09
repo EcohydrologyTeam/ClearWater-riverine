@@ -39,6 +39,7 @@ selenium = "*"
 geckodriver = "*"
 
 # [pypi-dependencies]
+# add later
 # clearwater_data = { git = "https://github.com/EcohydrologyTeam/ClearWater-data.git" }
 # clearwater_modules = { git = "https://github.com/EcohydrologyTeam/ClearWater-modules.git" }
 
@@ -55,7 +56,6 @@ pylsp-mypy = "*"
 jupyterlab-lsp = "*"
 
 [feature.dev.pypi-dependencies]
-# "." refers to the current directory where src/ is located
 clearwater_riverine = { path = ".", editable = true }
 clearwater_data = { path = "../ClearWater-data", editable = true }
 clearwater_modules = { path = "../ClearWater-modules", editable = true }
@@ -64,6 +64,4 @@ clearwater_modules = { path = "../ClearWater-modules", editable = true }
 # Environments
 # ===========================
 [environments]
-# Tell the 'dev' environment to ignore the git versions 
-# and use our local paths instead.
 dev = ["dev"]
