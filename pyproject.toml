@@ -1,68 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "clearwater_riverine"
-version = "0.1.0"
-description = "Clearwater Riverine modeling package"
+dynamic = ["version", "readme"]
+description = "Clearwater Python data manager."
 authors = [
-    { name = "Your Name", email = "you@example.com" }
-]
-readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-    "scipy",
-    "numba",
-    "dask",
-    "xarray",
-    "cf_xarray",
-    "h5py",
-    "hdf5plugin",
-    "gridgeo",
-    "netCDF4",
-    "zarr",
-    "numcodecs",
-    "bottleneck",
-    "geopandas",
-    "spatialpandas",
-    "fastparquet",
-    "xarray-simlab",
-    "hvplot",
-    "panel>=0.14",
-    "cmasher",
-    "selenium",
-    "geckodriver",
-    "param",
-    "ipympl",
-    "ipywidgets",
-    "jupyterlab>=4",
-    "jupyter_bokeh>=4.0.1",
-    "pyviz_comms",
-    "clearwater_data",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-cov",
-    "pyright",
-    "snakeviz",
-    "python-lsp-server",
-    "pylsp-mypy",
-    "jupyterlab-lsp",
-    "nodejs",
-    "conda",
-    "conda-build",
-    "conda-libmamba-solver",
-    "mamba",
-    "git",
-    "pip",
+    {name = "Todd Steissberg", email = "Todd.E.Steissberg@erdc.dren.mil"},
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["clearwater_riverine*"]
 
-[tool.setuptools]
-# This makes editable install possible
-package-dir = {"" = "src"}
-
-[tool.uv.sources]
-clearwater_data = { path = "../ClearWater-data", editable = true}
-
+[tool.setuptools.dynamic]
+version = {attr = "clearwater_riverine.__version__"}
+readme = {file = "README.md"}

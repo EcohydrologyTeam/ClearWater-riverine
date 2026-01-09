@@ -5,6 +5,7 @@
 import clearwater_riverine as cwr
 from pathlib import Path
 import pandas as pd
+import geoviews as gv
 
 # read config
 working_dir = Path.cwd()

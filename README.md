@@ -34,13 +34,9 @@ Clearwater Riverine is designed to run with **Python 3.10**.
 
 Follow these steps to install.
 
-#### 1. Install Miniconda or Anaconda Distribution
+#### 1. Pixi
 
-We recommend installing the light-weight [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) that includes Python, the [conda](https://conda.io/docs/) environment and package management system, and their dependencies.
-
-NOTE: Follow conda defaults to install in your local user director. DO NOT install for all users, to avoid substantial headaches with permissions.
-
-If you have already installed the [**Anaconda Distribution**](https://www.anaconda.com/download), you can use it to complete the next steps, but you may need to [update to the latest version](https://docs.anaconda.com/free/anaconda/install/update-version/).
+We recommend installing [pixi](https://pixi.prefix.dev/latest/), a fast, modern, and reproducible package managment tool. 
 
 #### 2. Clone or Download this `Clearwater-riverine` repository
 
@@ -48,9 +44,17 @@ From this Github site, click on the green "Code" dropdown button near the upper 
 
 Place your copy of this repo folder in any convenient location on your computer.
 
-#### 3. Create a Conda Environment for Clearwater Riverine Modeling 
+#### 3. Create a Virtual Environment for Clearwater Riverine Modeling 
 
-We recommend creating a custom virtual environment with the [Conda](https://conda.io/docs/) package, dependency, and environment management for any language (i.e. easily install C++ packages such as GDAL).
+We recommend creating a custom virtual environment with the [pixi](https://pixi.prefix.dev/latest/) package, dependency, and environment management for any language (i.e. easily install C++ packages such as GDAL).
+
+##### Production
+
+##### Developers
+`pixi install -e dev`
+`pixi shell -e dev`
+
+
 
 We provide an [`environment.yml`](environment.yml) file that specifies for [Conda](https://conda.io/docs/) how to create a virtual environment that contains the same software dependencies that we've used in development and testing.
 
