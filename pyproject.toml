@@ -1,19 +1,89 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "clearwater_riverine"
 dynamic = ["version", "readme"]
-description = "Clearwater Python data manager."
+description = "Clearwater Python transport model"
 authors = [
     {name = "Todd Steissberg", email = "Todd.E.Steissberg@erdc.dren.mil"},
 ]
+requires-python = ">=3.11"
+dependencies = [
+    "scipy",
+    "numba",
+    "dask",
+    "xarray",
+    "cf-xarray",
+    "h5py",
+    "hdf5plugin",
+    "gridgeo",
+    "netCDF4",
+    "zarr",
+    "numcodecs",
+    "bottleneck",
+    "geopandas",
+    "geoviews",
+    "spatialpandas",
+    "fastparquet",
+    "xarray-simlab",
+    "hvplot",
+    "panel>=0.14",
+    "cmasher",
+    "param",
+    "jupyterlab>=4",
+    "ipympl",
+    "ipywidgets",
+    "jupyter_bokeh>=4.0.1",
+    "pyviz_comms",
+    "selenium",
+    "geckodriver",
+    #TODO: restore these install,
+    # clearwater_data = { git = "https://github.com/EcohydrologyTeam/ClearWater-data.git" },
+    # clearwater_modules = { git = "https://github.com/EcohydrologyTeam/ClearWater-modules.git" },
+]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["clearwater_riverine*"]
 
-[tool.setuptools.dynamic]
-version = {attr = "clearwater_riverine.__version__"}
-readme = {file = "README.md"}
+###############
+### Build 
+###############
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "./src/clearwater_riverine/__init__.py"
+
+[tool.hatch.readme]
+path = "./README.md"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+########################
+### Pixi 
+########################
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tool.pixi.pypi-dependencies]
+clearwater_riverine = { path = ".", editable = true }
+
+#############################
+### Pixi Dev Environment
+#############################
+
+[tool.pixi.environments]
+dev = ["dev"]
+
+[tool.pixi.feature.dev.pypi-dependencies]
+pytest = "*"
+pytest-cov = "*"
+pyright = "*"
+snakeviz = "*"
+python-lsp-server = "*"
+pylsp-mypy = "*"
+jupyterlab-lsp = "*"
+clearwater_riverine = { path = ".", editable = true }
+clearwater_data = { path = "../ClearWater-data", editable = true }
+
+[tool.pixi.tasks]
