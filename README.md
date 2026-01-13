@@ -52,7 +52,7 @@ We recommend creating a custom virtual environment with the [pixi](https://pixi.
 Coming soon! For now, see the *Developers* instructions. 
 
 ##### Developers
-In order to get a development environment working, you'll need to clone ClearWater-data and ClearWater-modules, following the instructions from Step 2 above, but for the [ClearWater-data](https://github.com/EcohydrologyTeam/ClearWater-data) repo and the [Clearwater-modules](https://github.com/EcohydrologyTeam/ClearWater-modules/tree/main/src/clearwater_modules) repo. These should be cloned to the same location where your ClearWater-riverine repo is cloned OR you will need to update the `pixi.toml` so that the [feature.dev.pypi-dependencies] point to the correct location of your local clones. 
+In order to get a development environment working, you'll need to clone ClearWater-data and ClearWater-modules, following the instructions from Step 2 above, but for the [ClearWater-data](https://github.com/EcohydrologyTeam/ClearWater-data) repo and the [Clearwater-modules](https://github.com/EcohydrologyTeam/ClearWater-modules/tree/main/src/clearwater_modules) repo. These should be cloned to the same location where your ClearWater-riverine repo is cloned OR you will need to update the `pyproject.toml` so that the [pixi.tool.feature.dev.pypi-dependencies] point to the correct location of your local clones. 
 
 Next, navigate to the Clearwater-riverine repository and create a `dev` environment:
 
@@ -79,7 +79,7 @@ We recommend using [JupyterLab](https://jupyterlab.readthedocs.io/en/stable/) to
 # Contributing
 
 
-# Acknowlgements
+# Acknowledgements
 
 This library is developed by ERDC-EL through funding from the ECOMOD project.
 Dr. Todd E. Steissberg (ERDC-EL) developed the vision for this library as an example of how to couple at water transport model with a water quality reaction model :
