@@ -1,9 +1,11 @@
-import sys
-sys.path.append(r"C:\Users\sjordan\OneDrive - LimnoTech\Documents\GitHub\ClearWater-data")
+# import sys
+# # sys.path.append(r"C:\Users\sjordan\GitHub\ClearWater-data")
+# # sys.path.append(r"C:\Users\sjordan\GitHub\ClearWater-riverine\src\clearwater_riverine")
 
 import clearwater_riverine as cwr
 from pathlib import Path
 import pandas as pd
+import geoviews as gv
 
 # read config
 working_dir = Path.cwd()
