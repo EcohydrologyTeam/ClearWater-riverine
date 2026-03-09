@@ -56,25 +56,13 @@ class Constituent:
         )
 
         ## Initialize 
-        registry.register(
-            self._name,
-            DataArrayVariable(
-                xr.full_like(
-                    registry.get(VOLUME),
-                    np.nan
-                )
-                .rename(self._name)
-                .assign_attrs({
-                    'units': self.__units
-                })
-            )
-        )
+        self.register_constituent(registry)
 
         self.set_initial_conditions(
             registry=registry,
             start_datetime=start_datetime,
         )
-        self.initialize_boundary_conditions(
+        self.set_boundary_conditions(
             registry=registry,
         )
 
@@ -126,6 +114,29 @@ class Constituent:
 
         #     self.set_value_range(mesh)
 
+    def register_constituent(
+        self,
+        registry):
+        """Register constituent to variable registry."""
+        # unregister if it already exists
+        if self._name in registry:
+            registry.unregister(self._name)
+
+        # initialize
+        registry.register(
+            self._name,
+            DataArrayVariable(
+                xr.full_like(
+                    registry.get(VOLUME),
+                    np.nan
+                )
+                .rename(self._name)
+                .assign_attrs({
+                    'units': self.__units
+                })
+            ),
+        )
+
 
     def set_initial_conditions(
         self,
@@ -133,7 +144,7 @@ class Constituent:
         start_datetime: datetime,
 
     ):
-        """Define cosntituetn initial conditions."""
+        """Define constituent initial conditions."""
         constituent = registry.get_at_time(self._name, start_datetime)
         initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
 
@@ -148,7 +159,7 @@ class Constituent:
             constituent[:] = initial
         
 
-    def initialize_boundary_conditions(
+    def set_boundary_conditions(
         self,
         registry,
     ):
@@ -193,11 +204,12 @@ class Constituent:
         elif isinstance(boundary, (float, int)):
             constituent.loc[dict(nface=ghost_cells)] = boundary
 
+
     ## TODO: probably a more elegant way to do this
-    def set_value_range(
-        self,
-        mesh: xr.Dataset
-    ):
-        self.max_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
-        self.min_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
+    # def set_value_range(
+    #     self,
+    #     mesh: xr.Dataset
+    # ):
+    #     self.max_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
+    #     self.min_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
 

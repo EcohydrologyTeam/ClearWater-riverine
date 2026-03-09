@@ -17,3 +17,6 @@ transport_model = cwr.ClearwaterRiverine(
 
 transport_model.registry.get('water_temperature')
 transport_model.registry.get('tracer')
+
+
+transport_model.run()
