@@ -1,18 +1,17 @@
 [project]
 name = "clearwater_riverine"
-version = "0.1.0"
-description = "Clearwater Riverine modeling package"
+dynamic = ["version", "readme"]
+description = "Clearwater Python transport model"
 authors = [
-    { name = "Your Name", email = "you@example.com" }
+    {name = "Todd Steissberg", email = "Todd.E.Steissberg@erdc.dren.mil"},
 ]
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "scipy",
     "numba",
     "dask",
     "xarray",
-    "cf_xarray",
+    "cf-xarray",
     "h5py",
     "hdf5plugin",
     "gridgeo",
@@ -21,48 +20,70 @@ dependencies = [
     "numcodecs",
     "bottleneck",
     "geopandas",
+    "geoviews",
     "spatialpandas",
     "fastparquet",
     "xarray-simlab",
     "hvplot",
     "panel>=0.14",
     "cmasher",
-    "selenium",
-    "geckodriver",
     "param",
+    "jupyterlab>=4",
     "ipympl",
     "ipywidgets",
-    "jupyterlab>=4",
     "jupyter_bokeh>=4.0.1",
     "pyviz_comms",
-    "clearwater_data",
+    "selenium",
+    "geckodriver",
+    #TODO: restore these install,
+    # clearwater_data = { git = "https://github.com/EcohydrologyTeam/ClearWater-data.git" },
+    # clearwater_modules = { git = "https://github.com/EcohydrologyTeam/ClearWater-modules.git" },
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-cov",
-    "pyright",
-    "snakeviz",
-    "python-lsp-server",
-    "pylsp-mypy",
-    "jupyterlab-lsp",
-    "nodejs",
-    "conda",
-    "conda-build",
-    "conda-libmamba-solver",
-    "mamba",
-    "git",
-    "pip",
-]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+###############
+### Build 
+###############
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools]
-# This makes editable install possible
-package-dir = {"" = "src"}
+[tool.hatch.version]
+path = "./src/clearwater_riverine/__init__.py"
 
-[tool.uv.sources]
-clearwater_data = { path = "../ClearWater-data", editable = true}
+[tool.hatch.readme]
+path = "./README.md"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
+########################
+### Pixi 
+########################
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tool.pixi.pypi-dependencies]
+clearwater_riverine = { path = ".", editable = true }
+
+#############################
+### Pixi Dev Environment
+#############################
+
+[tool.pixi.environments]
+dev = ["dev"]
+
+[tool.pixi.feature.dev.pypi-dependencies]
+pytest = "*"
+pytest-cov = "*"
+pyright = "*"
+snakeviz = "*"
+python-lsp-server = "*"
+pylsp-mypy = "*"
+jupyterlab-lsp = "*"
+clearwater_riverine = { path = ".", editable = true }
+clearwater_data = { path = "../ClearWater-data", editable = true }
+
+[tool.pixi.tasks]
