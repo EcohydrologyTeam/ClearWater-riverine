@@ -33,10 +33,6 @@ class Constituent:
         boundary_conditions: xr.DataArray,
         constituent_config: dict,
         start_datetime: datetime,
-        # mesh: xr.Dataset,
-        # flow_field_boundaries: Optional[pd.DataFrame] = None,
-        # constituent_config: Optional[Dict] = None,
-        # method: Optional[Literal['initialize', 'load']] = 'initialize',
     ):
         self._name = constituent_name
         self.__units = constituent_config.get("units", None)
@@ -70,53 +66,6 @@ class Constituent:
             registry=registry,
         )
 
-        # self.advection_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        # self.diffusion_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        # self.total_mass_flux = np.zeros((len(mesh.time), len(mesh.nedge)))
-        # self.input_array = np.zeros((len(mesh.time), len(mesh.nface)))
-        # # TODO: make units optional
-        # if method == 'initialize':
-        #     self.units = constituent_config['units']
-        #     self.max_value = None
-        #     self.min_value = None
-
-            # # add to model mesh
-            # mesh[self.name] = xr.DataArray(
-            #     np.full(
-            #         (len(mesh.time), len(mesh.nface)),
-            #         np.nan
-            #     ),
-            #     dims = ('time', 'nface'),
-            #     attrs = {
-            #         'Units': f'{self.units}'
-            #     }
-            # )
-        #     # define initial and boundary conditions
-        #     self.set_initial_conditions(
-        #         filepath=constituent_config['initial_conditions'],
-        #         mesh=mesh,
-        #     )
-        #     self.set_boundary_conditions(
-        #         filepath=constituent_config['boundary_conditions'],
-        #         mesh=mesh,
-        #         flow_field_boundaries=flow_field_boundaries,
-        #     )
-
-        #     # set up RHS matrix
-        #     self.b = RHS(
-        #         mesh=mesh,
-        #         input_array=self.input_array,
-        #     )
-        # elif method == 'load':
-        #     try:
-        #         self.units = mesh[name].Units
-        #     except AttributeError as err:
-        #         warnings.warn(
-        #             f'Constituent {self.name} does not have units defined',
-        #             UserWarning       
-        #         )
-
-        #     self.set_value_range(mesh)
 
     def register_constituent(
         self,
@@ -165,14 +114,20 @@ class Constituent:
         initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
 
         if isinstance(initial, xr.DataArray):
-            constituent[:] =  (
+            registry.set_at_time(
+                self._name,
+                start_datetime,
                 initial
                 .rename({self.__initial_condition_spatial_field: 'nface'})  # Align to mesh coords
                 .reindex(nface=constituent.nface)
                 .data
             )
         elif isinstance(initial, (float, int)):
-            constituent[:] = initial
+            registry.set_at_time(
+                self._name,
+                start_datetime,
+                initial
+            )
         
 
     def set_boundary_conditions(
@@ -212,10 +167,13 @@ class Constituent:
             boundary_reindexed = boundary.reindex(nface=constituent.nface)
 
             # place the boundary conditions into the constituent array
-            constituent[:] = xr.where(
-                boundary_reindexed.notnull(),
-                boundary_reindexed,
-                constituent
+            registry.set(
+                self._name,
+                xr.where(
+                    boundary_reindexed.notnull(),
+                    boundary_reindexed,
+                    constituent
+                )
             )
         elif isinstance(boundary, (float, int)):
             constituent.loc[dict(nface=ghost_cells)] = boundary

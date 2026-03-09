@@ -367,6 +367,7 @@ class ClearwaterRiverine:
         for variable_name in self.__output_variables:
             # TODO: clean up chunk indexing
             variable = self.registry.get(variable_name).isel(time=slice(0, -1))
+            print(variable)
             self.__output_data_store.write_chunk(
                 data=variable,
                 parameter_name=variable_name,
@@ -388,7 +389,6 @@ class ClearwaterRiverine:
 
         for constituent_name, _ in self.__constituents.items():
             constituent = self.registry.get_at_time(constituent_name, self.__current_time)
-            # constituent[:] = 10
 
     
         # else:

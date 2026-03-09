@@ -56,6 +56,10 @@ class TransportEngine:
 
             # update the value in the registry
             mask = np.isnan(next_constituent_value)
-            next_constituent_value[:] = next_constituent_value.where(~mask, other=x_full)
+            registry.set_at_time(
+                constituent_name,
+                current_time + time_step,
+                next_constituent_value.where(~mask, other=x_full)
+            )
 
             # optionally: calculate mass flux
