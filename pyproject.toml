@@ -25,7 +25,6 @@ dependencies = [
     "fastparquet",
     "xarray-simlab",
     "hvplot",
-    "geoviews",
     "panel>=0.14",
     "cmasher",
     "param",

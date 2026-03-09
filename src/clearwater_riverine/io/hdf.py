@@ -137,6 +137,9 @@ class RASHDFDataSource:
             FACE_X,
             FACE_Y,
             EDGE_FACE_CONNECTIVITY,
+            FACE_NODES,
+            NODE_X,
+            NODE_Y,
         ]
         self.lookup_variables = [
             LOOKUP_ELEVATION,

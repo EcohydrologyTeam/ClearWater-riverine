@@ -120,7 +120,7 @@ class ClearwaterRiverine:
             "initial_conditions": self.__initial_condition_data_sources,
             "variable_data_sources": self.__variable_data_sources
         }
-        self.__constituents: dict[str: Constituent] = {}
+        self._constituents: dict[str: Constituent] = {}
 
         if config_filepath:
             model, data_sources, constituents = init_from_config(config_filepath)
@@ -129,8 +129,8 @@ class ClearwaterRiverine:
             self.__flow_field_file_path = self.__root_directory / self.__hydrodynamic_input
             raw_chunk = model.get("chunk_size", None)
             self.__chunk_size = pd.Timedelta(raw_chunk) if raw_chunk is not None else None
-            self.__start_datetime = pd.to_datetime(model.get("start_datetime", None))
-            self.__end_datetime = pd.to_datetime(model.get("end_datetime", None))
+            self._start_datetime = pd.to_datetime(model.get("start_datetime", None))
+            self._end_datetime = pd.to_datetime(model.get("end_datetime", None))
             self.__calculated_variables = model.get("calculated_variables", None)
             self.__output_variables = model.get("output_variables", constituents)
             self.__mass_flux_calculation = model.get("mass_flux_calculation", False)
@@ -139,8 +139,8 @@ class ClearwaterRiverine:
                 self.__category_attr_map[category].update(data_sources_dict)
         else:
             self.__flow_field_file_path = flow_field_file_path
-            self.__start_datetime = start_datetime
-            self.__end_datetime = end_datetime
+            self._start_datetime = start_datetime
+            self._end_datetime = end_datetime
             self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         
         self.__chunked_mode: bool = self.__chunk_size is not None
@@ -156,7 +156,7 @@ class ClearwaterRiverine:
 
     
     def run(self) -> None:
-        while self.__current_time < self.__end_datetime:
+        while self.__current_time < self._end_datetime:
             self.update()
         self.finalize()
 
@@ -213,7 +213,7 @@ class ClearwaterRiverine:
             if isinstance(data_source, ChunkedDataSource):
                 data = data_source.read_chunk(
                     variable_name,
-                    self.__start_datetime, self.__start_datetime + self.__chunk_size
+                    self._start_datetime, self._start_datetime + self.__chunk_size
                 )
             else:
                 data = data_source.read(variable_name)
@@ -226,8 +226,8 @@ class ClearwaterRiverine:
         # Register hydrodynamic data
         self.__variable_data_sources['hydrodynamic_model'] = RASHDFDataSource(
             ras_hdf_path=self.__flow_field_file_path,
-            start_datetime=self.__start_datetime,
-            end_datetime=self.__end_datetime,
+            start_datetime=self._start_datetime,
+            end_datetime=self._end_datetime,
             calculated_variables=self.__calculated_variables,
         )
 
@@ -235,8 +235,8 @@ class ClearwaterRiverine:
             if self.__chunked_mode:
                 data = self.__variable_data_sources['hydrodynamic_model'].read_chunk(
                     variable_name,
-                    start_time = self.__start_datetime,
-                    end_time=self.__start_datetime + self.__chunk_size
+                    start_time = self._start_datetime,
+                    end_time=self._start_datetime + self.__chunk_size
                 )
             else:
                 data = self.__variable_data_sources['hydrodynamic_model'].read(variable_name)
@@ -269,6 +269,7 @@ class ClearwaterRiverine:
                 DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].boundary_data[variable_name])
             )
 
+
         # register additional variables
         self.registry.register(
             NUMBER_OF_REAL_CELLS,
@@ -294,7 +295,7 @@ class ClearwaterRiverine:
             )
         
         # set current timestep
-        self.__current_time = self.__start_datetime
+        self.__current_time = self._start_datetime
 
 
     def __init_constituents(
@@ -306,13 +307,13 @@ class ClearwaterRiverine:
         initial_conditions = self.__initial_condition_data_sources[constituent_name].read(constituent_name)
         boundary_conditions = self.__boundary_condition_data_sources[constituent_name].read(constituent_name)
 
-        self.__constituents[constituent_name] = Constituent(
+        self._constituents[constituent_name] = Constituent(
             constituent_name=constituent_name,
             registry=self.registry,
             initial_conditions=initial_conditions,
             boundary_conditions=boundary_conditions,
             constituent_config=constituent_config,
-            start_datetime=self.__start_datetime
+            start_datetime=self._start_datetime
         )
 
 
@@ -338,8 +339,8 @@ class ClearwaterRiverine:
         if self.__chunked_mode:
             self.__output_data_store = ChunkedZarrDataStore(
                 store_path=self.__root_directory / "model_outputs.zarr",
-                start_date=self.__start_datetime,
-                end_date=self.__end_datetime,
+                start_date=self._start_datetime,
+                end_date=self._end_datetime,
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
                 variables=self.__output_variables,
                 chunk_size=self.__chunk_size,
@@ -349,8 +350,8 @@ class ClearwaterRiverine:
         else:
             self.__output_data_store = ZarrDataStore(
                 store_path=self.__root_directory / "model_outputs.zarr",
-                start_date=self.__start_datetime,
-                end_date=self.__end_datetime,
+                start_date=self._start_datetime,
+                end_date=self._end_datetime,
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
                 variables=self.__output_variables,
                 spatial_field=NFACE,
@@ -361,8 +362,8 @@ class ClearwaterRiverine:
     def __init_chunks(self):
         """Define the end of each chunk."""
         self.__chunk_ends = pd.date_range(
-            self.__start_datetime,
-            self.__end_datetime,
+            self._start_datetime,
+            self._end_datetime,
             freq=self.__chunk_size
         )[1:-1]
 
@@ -382,7 +383,7 @@ class ClearwaterRiverine:
             )
 
         self.__update_calculated_variables()
-        for constituent_name, constituent in self.__constituents.items():
+        for constituent_name, constituent in self._constituents.items():
             constituent.reset_initial_conditions(
                 self.registry,
                 self.registry.get_at_time(constituent_name, self.__current_time)
@@ -429,7 +430,7 @@ class ClearwaterRiverine:
             mass_flux_calculation=self.__mass_flux_calculation
          )
 
-        for constituent_name, _ in self.__constituents.items():
+        for constituent_name, _ in self._constituents.items():
             constituent = self.registry.get_at_time(constituent_name, self.__current_time)
 
     def __calculate_mass_flux(self):
