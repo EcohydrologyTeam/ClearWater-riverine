@@ -367,7 +367,6 @@ class ClearwaterRiverine:
         for variable_name in self.__output_variables:
             # TODO: clean up chunk indexing
             variable = self.registry.get(variable_name).isel(time=slice(0, -1))
-            print(variable)
             self.__output_data_store.write_chunk(
                 data=variable,
                 parameter_name=variable_name,

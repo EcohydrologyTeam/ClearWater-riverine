@@ -157,7 +157,7 @@ class Constituent:
             # then map boundary indices to their associated ghost cells
             boundary = boundary.sel(
                 RAS2D_TS_Name=boundary_names
-            ). assign_coords(
+            ).assign_coords(
                 nface = ghost_cells
             ).groupby(
                 "nface"
@@ -167,23 +167,19 @@ class Constituent:
             boundary_reindexed = boundary.reindex(nface=constituent.nface)
 
             # place the boundary conditions into the constituent array
-            registry.set(
-                self._name,
-                xr.where(
+            # this is a workaround to help align the coordinates of the xarrays
+            # TODO: revist so that this is not being double-set.
+            constituent[:] = xr.where(
                     boundary_reindexed.notnull(),
                     boundary_reindexed,
                     constituent
-                )
+                )            
+            registry.set(
+                self._name,
+                constituent
             )
+
+        # TODO: does there need to be a custom set method to set at custom locations?
         elif isinstance(boundary, (float, int)):
             constituent.loc[dict(nface=ghost_cells)] = boundary
-
-
-    ## TODO: probably a more elegant way to do this
-    # def set_value_range(
-    #     self,
-    #     mesh: xr.Dataset
-    # ):
-    #     self.max_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).max())
-    #     self.min_value = int(mesh[self.name].sel(nface=slice(0, mesh.attrs[NUMBER_OF_REAL_CELLS])).min())
 
