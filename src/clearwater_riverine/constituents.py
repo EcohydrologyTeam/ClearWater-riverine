@@ -18,6 +18,7 @@ from clearwater_riverine.variables import (
     BOUNDARY_FACE_INDEX,
     BOUNDARY_NAME,
     EDGE_FACE_CONNECTIVITY,
+    NFACE,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
 )
@@ -86,7 +87,8 @@ class Constituent:
                 .rename(self._name)
                 .assign_attrs({
                     'units': self.__units
-                })
+                }),
+                space_dimension=NFACE,
             ),
         )
 
@@ -99,7 +101,10 @@ class Constituent:
         registry.unregister(f"{self._name}_initial")
         registry.register(
             f"{self._name}_initial",
-            DataArrayVariable(initial_conditions),
+            DataArrayVariable(
+                initial_conditions,
+                space_dimension=NFACE,
+            ),
         )
         self.__initial_condition_spatial_field =  'nface'
 
