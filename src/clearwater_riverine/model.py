@@ -388,7 +388,6 @@ class ClearwaterRiverine:
 
         for constituent_name, _ in self.__constituents.items():
             constituent = self.registry.get_at_time(constituent_name, self.__current_time)
-            # constituent[:] = 10
 
     
         # else:
