@@ -13,8 +13,11 @@ transport_model = cwr.ClearwaterRiverine(
     config_filepath=config_file,
 )
 
+# test getting variables
 transport_model.registry.get('water_temperature')
 transport_model.registry.get('tracer')
 
+# test getting space dimension 
+print(transport_model.registry.get_space_dimension('water_temperature'))
 
 transport_model.run()
