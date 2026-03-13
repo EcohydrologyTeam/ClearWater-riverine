@@ -6,7 +6,17 @@ import pandas as pd
 import xarray as xr
 
 import clearwater_riverine as cwr
-from clearwater_riverine import variables
+from clearwater_riverine.variables import(
+    FLOW_ACROSS_FACE,
+    NUMBER_OF_REAL_CELLS,
+)
+from clearwater_data.variables import VariableRegistry
+
+
+def _calculate_mass_flux(
+    registry: VariableRegistry,
+):
+    negative_condition = registry.get(FLOW_ACROSS_FACE)
 
 def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry):
     """Returns a Clearwater Riverine Simulation object that has water quality results"""

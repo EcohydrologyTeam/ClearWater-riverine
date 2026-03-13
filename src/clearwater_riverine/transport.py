@@ -8,10 +8,10 @@ from clearwater_riverine.variables import (
     NUMBER_OF_REAL_CELLS
 )
 from clearwater_riverine.constituents import Constituent
-
+from clearwater_data.variables import VariableRegistry
 
 class TransportEngine:
-    def __init__(self, registry):
+    def __init__(self, registry: VariableRegistry):
         # initialize left hand side of transport equation
         self.lhs = LHS(registry)
 
@@ -20,7 +20,8 @@ class TransportEngine:
         registry: VariableRegistry,
         current_time: datetime,
         time_step: timedelta,
-        constituents: dict[str, Constituent]
+        constituents: dict[str, Constituent],
+        mass_flux_calculation: bool,
     ):
         """Run the transport engine."""
         # update the left hand side of the matrix
@@ -62,4 +63,5 @@ class TransportEngine:
                 next_constituent_value.where(~mask, other=x_full)
             )
 
-            # optionally: calculate mass flux
+        
+    
