@@ -4,13 +4,161 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import xarray as xr
+from datetime import datetime
 
 import clearwater_riverine as cwr
 from clearwater_riverine.variables import(
+    BOUNDARY_FACE_INDEX,
+    BOUNDARY_NAME,
+    CHANGE_IN_TIME,
+    EDGE_FACE_CONNECTIVITY,
     FLOW_ACROSS_FACE,
     NUMBER_OF_REAL_CELLS,
 )
 from clearwater_data.variables import VariableRegistry
+
+
+def calculate_global_mass_balance(
+        registry: VariableRegistry,
+        constituent_name: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        calculate_answer: bool,
+        answer_value: Optional[float],
+    ):
+    ## TODO: logic for if run without mass flux calcs.
+    if f"{constituent_name}_mass_flux" not in registry:
+        raise ValueError("Rerun model with `mass_flux_calculation` set to True.")
+
+    # calculate starting mass
+    real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
+    volume_start = registry.get_at_time(constituent_name, start_datetime)[0:real_cell_count]
+    volume_end = registry.get_at_time(constituent_name, end_datetime)[0:real_cell_count]
+    if calculate_answer:
+        concentration_start = answer_value
+        concentration_end = answer_value
+    else:
+        concentration_start = registry.get_at_time(constituent_name, start_datetime)[0:real_cell_count]
+        concentration_end = registry.get_at_time(constituent_name, end_datetime)[0:real_cell_count]
+    mass_start = volume_start * concentration_start
+    mass_end = volume_end * concentration_end
+
+    # aggregate volume and mass over entire domain
+    total_volume_start = volume_start.sum().item()
+    total_volume_end = volume_end.sum().item()
+    total_mass_start = mass_start.sum().item()
+    total_mass_end  = mass_end.sum().item()
+
+    # construct dataframe to be returned
+    d = {
+        'volume_start': [total_volume_start],
+        'mass_start': [total_mass_start],
+        'volume_end_modeled': [total_volume_end],
+        'mass_end_modeled': [total_mass_end]
+    }
+    df = pd.DataFrame(data=d)
+    boundary_df = _calculate_boundary_data(registry, constituent_name, calculate_answer, answer_value)
+
+    _calculate_error_metrics(df=df, boundary_df=boundary_df, variable_name="volume")
+    _calculate_error_metrics(df=df, boundary_df=boundary_df, variable_name="mass")
+    return {
+        'global': df,
+        'boundary': boundary_df,
+    }
+
+
+def _calculate_boundary_data(
+    registry: VariableRegistry,
+    constituent_name: str,
+    calculate_answer: bool,
+    answer_value: float,
+):
+    # get boundary information
+    boundary = registry.get(f"{constituent_name}_boundary")
+    boundary_index = registry.get(BOUNDARY_FACE_INDEX)
+    boundary_names = registry.get(BOUNDARY_NAME)
+    edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
+    edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+
+    records = [] 
+    for boundary_name in np.unique(boundary_names):
+        # determine which edges are associated with the boundary
+        edges_mask = boundary_names == boundary_name
+        boundary_edges = boundary_index[edges_mask]
+
+        # get flow, volume, and mass
+        boundary_flow = registry.get(FLOW_ACROSS_FACE).sel(nedge=boundary_edges)
+        boundary_volume = boundary_flow * registry.get(CHANGE_IN_TIME)
+        if calculate_answer == True:
+            boundary_mass = boundary_volume * answer_value
+        else:
+            boundary_mass = registry.get(f"{constituent_name}_mass_flux").sel(nedge=boundary_edges)
+    
+        # calculate totals, 
+        metrics = {
+            'boundary_name': boundary_name,
+            "volume_total": boundary_volume.sum().item(),
+            "mass_total": boundary_mass.sum().item(),
+            "volume_in": boundary_volume.where(boundary_volume < 0).sum().item(),
+            "mass_in": boundary_mass.where(boundary_mass < 0).sum().item(),
+            "volume_out": boundary_volume.where(boundary_volume > 0).sum().item(),
+            "mass_out": boundary_mass.where(boundary_mass > 0).sum().item(),
+        }
+        records.append(metrics)
+
+    # add total across all boundaries 
+    boundary_df = pd.DataFrame.from_records(records).set_index("boundary_name")
+    total = boundary_df.sum()
+    total["boundary_name"] = "all_boundaries"
+
+    # append to the boundary_df
+    boundary_df_with_total = pd.concat([boundary_df.reset_index(), pd.DataFrame([total])], ignore_index=True)
+    boundary_df_with_total.set_index("boundary_name", inplace=True)
+    return boundary_df_with_total
+
+def _calculate_error_metrics(
+        df,
+        boundary_df,
+        variable_name,
+    ):
+    df[f'{variable_name}_end_calculated'] = df[f'{variable_name}_start'] + \
+        boundary_df.loc["all_boundaries", f"{variable_name}_in"] * -1 + \
+        boundary_df.loc["all_boundaries", f"{variable_name}_out"] * -1
+
+    df[f"{variable_name}_error"] = _total_error(
+        df[f"{variable_name}_end_calculated"],
+        df[f"{variable_name}_end_modeled"]
+    )
+
+    df[f"{variable_name}_percent_error"] = _percent_error(
+        df[f"{variable_name}_end_calculated"],
+        df[f"{variable_name}_end_modeled"],
+        boundary_df.loc["all_boundaries", f"{variable_name}_in"]
+    )
+
+
+def _total_error(
+    calculated_end_result,
+    modeled_end_result,
+):
+    return calculated_end_result - modeled_end_result
+
+
+def _percent_error(
+    calculated_end_result,
+    modeled_end_result,
+    boundary_inflow,
+):
+    return ((calculated_end_result - modeled_end_result) / boundary_inflow) * 100
+
+
+
+
+
+
+
+
+
 
 
 def _calculate_mass_flux(

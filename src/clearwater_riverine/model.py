@@ -51,6 +51,7 @@ from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import init_from_config
 from clearwater_riverine.transport import TransportEngine
 from clearwater_riverine.constituents import Constituent
+from clearwater_riverine.postproc_util import calculate_global_mass_balance
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -170,6 +171,27 @@ class ClearwaterRiverine:
         else:
             if self.__mass_flux_calculation:
                 self.__calculate_mass_flux()
+ 
+    def calculate_mass_balance(
+        self,
+        constituent_name: str,
+        start_datetime: Optional[datetime] = None,
+        end_datetime: Optional[datetime] = None,
+        calculate_answer: Optional[bool] = False,
+        answer_value: Optional[float] = 100,
+    ):
+        if start_datetime is None:
+            start_datetime = self.__start_datetime
+        if end_datetime is None:
+            end_datetime = self.__end_datetime
+        return calculate_global_mass_balance(
+            self.registry,
+            constituent_name,
+            start_datetime,
+            end_datetime,
+            calculate_answer,
+            answer_value,
+        )
 
 
     def __increment_timestep(self):

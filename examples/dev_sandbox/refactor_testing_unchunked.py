@@ -19,3 +19,13 @@ transport_model.registry.get('tracer')
 transport_model.run()
 
 print(transport_model.registry.get('tracer_mass_flux'))
+
+mass_balance_model = transport_model.calculate_mass_balance(constituent_name='tracer')
+mass_balance_answer = transport_model.calculate_mass_balance(
+    constituent_name='tracer',
+    calculate_answer=True,
+    answer_value=100
+)
+
+
+mass_balance_model
