@@ -14,6 +14,7 @@ from clearwater_riverine.variables import(
     EDGE_FACE_CONNECTIVITY,
     FLOW_ACROSS_FACE,
     NUMBER_OF_REAL_CELLS,
+    VOLUME,
 )
 from clearwater_data.variables import VariableRegistry
 
@@ -32,8 +33,8 @@ def calculate_global_mass_balance(
 
     # calculate starting mass
     real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
-    volume_start = registry.get_at_time(constituent_name, start_datetime)[0:real_cell_count]
-    volume_end = registry.get_at_time(constituent_name, end_datetime)[0:real_cell_count]
+    volume_start = registry.get_at_time(VOLUME, start_datetime)[0:real_cell_count]
+    volume_end = registry.get_at_time(VOLUME, end_datetime)[0:real_cell_count]
     if calculate_answer:
         concentration_start = answer_value
         concentration_end = answer_value
@@ -74,11 +75,8 @@ def _calculate_boundary_data(
     answer_value: float,
 ):
     # get boundary information
-    boundary = registry.get(f"{constituent_name}_boundary")
     boundary_index = registry.get(BOUNDARY_FACE_INDEX)
     boundary_names = registry.get(BOUNDARY_NAME)
-    edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
-    edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
 
     records = [] 
     for boundary_name in np.unique(boundary_names):
