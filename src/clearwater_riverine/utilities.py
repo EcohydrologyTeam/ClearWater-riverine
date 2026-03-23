@@ -69,7 +69,9 @@ def calculate_edge_vertical_area(
     registry: VariableRegistry
 ):
     vertical_area = registry.get(FLOW_ACROSS_FACE) / registry.get(EDGE_VELOCITY)
-    return DataArrayVariable(vertical_area.fillna(0))
+    # replace any NaN or Inf with 0
+    vertical_area = vertical_area.where(np.isfinite(vertical_area), 0)
+    return DataArrayVariable(vertical_area)
 
 
 def calculate_coeff_to_diffusion_term(
