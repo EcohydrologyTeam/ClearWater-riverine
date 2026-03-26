@@ -663,7 +663,7 @@ packages:
 - pypi: ./
   name: clearwater-riverine
   version: 0.6.0
-  sha256: c04770fdeff2356c50b4896c95a72d76795016b0681af549ceba0097bbc2e20c
+  sha256: e2d5e5932f08ffaabe2d383d7d43f382d799a8ee57a1a26999ec1cfc57feef47
   requires_dist:
   - bottleneck
   - cf-xarray
