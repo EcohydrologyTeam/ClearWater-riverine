@@ -4,13 +4,17 @@ import geopandas as gpd
 import pandas as pd
 import holoviews as hv
 import geoviews as gv
-from datetime import datetime, timedelta
+from datetime import datetime
+import matplotlib.pyplot as plt
+from pathlib import Path
 
 from typing import Optional
 
 from clearwater_riverine.variables import (
     CHANGE_IN_TIME,
     FACE_NODES,
+    FACE_X,
+    FACE_Y,
     NFACE,
     NODE_X,
     NODE_Y,
@@ -73,33 +77,11 @@ class RiverinePlotter:
         
         def map_generator(datetime):
             # TODO: update to get directly from data source or registry.
-            plotting_values = self.__plotting_data.get_at_time(constituent_name, datetime)
-            if filter_empty:
-                try:
-                    volume = self.__plotting_data.get_at_time(VOLUME, datetime)
-                    plotting_values = plotting_values.where(volume != 0)
-                except:
-                    print("Volume filter not working.")
-            # TODO: fix unit handling
-            # units = plotting_values.Units
-
-            # join to gdf
-            # TODO: explore xvec
-            df = (
-                plotting_values
-                .to_dataframe(name="value")
-                .reset_index()
-                .set_index("nface")
-            )
-            gdf_plot = self.polygon_gdf.join(df)
-            # TODO: don't make these model attrs, make them plotting atrs
-            self.gdf_plot = gdf_plot
-            self.df = df
-            self.plotting_values = plotting_values
+            gdf_plot = self.__get_plotting_gdf(constituent_name, datetime, filter_empty)
 
             mesh_map = gv.Polygons(
                 gdf_plot,
-                vdims = ["value", "nface"]).opts(
+                vdims = [constituent_name, "nface"]).opts(
                     height = 400,
                     width = 800,
                     color=constituent_name,
@@ -115,9 +97,11 @@ class RiverinePlotter:
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
         return dmap.redim.values(datetime=datetimes)              
 
+
     def static_plot(self,
-        plotting_timestep: datetime,
-        constituent_name: Optional[str] = None,
+        constituent_name: str,
+        plotting_datetime: datetime,
+        output_path: Optional[str | Path] = None,
         **kwargs
     ):
         """
@@ -127,12 +111,80 @@ class RiverinePlotter:
             time_index_range (tuple, optional): minimum and maximum time index to plot.
             filter_empty (boolean, optional): provides users the ability to filter out empty cells. 
         """
-        return
+        cmap: str = kwargs.get("cmap", "OrRd")
+        clim: tuple[float, float] = kwargs.get("clim", self.__set_clim(constituent_name, at_datetime=plotting_datetime))
+        filter_empty: bool = kwargs.get("filter_empty", True)
+
+        if self.polygon_gdf is None:
+            self.__prep_gdf()
+
+        date_value = self.__plotting_data.get(constituent_name)['time'].sel(
+            time=plotting_datetime
+        ).values
+
+        gdf_plot = self.__get_plotting_gdf(constituent_name, date_value, filter_empty)
+        print(clim)
+        fig, ax = plt.subplots()
+        gdf_plot.plot(
+            column=constituent_name,
+            cmap=cmap,
+            vmin=clim[0],
+            vmax=clim[1],
+            edgecolor = 'white',
+            linewidth = 0.1,
+            ax=ax,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.axis('off')
+        if output_path is not None:
+            fig.savefig(output_path)
+        plt.show()
     
-    def quick_plot(self, **kwargs):
-        """"""
-        return
-    
+    def quick_plot(self, constituent_name: str, **kwargs):
+        """Creates a dynamic scatterplot of cell centroids colored by cell concentration."""
+        clim: tuple[float, float] = kwargs.get("clim", self.__set_clim(constituent_name))
+        cmap: str = kwargs.get("cmap", "OrRd")
+        datetime_range: tuple[datetime, datetime] = kwargs.get("datetime_range", self.__get_datetime_range(constituent_name))
+        datetimes = pd.to_datetime(
+            self.__plotting_data.get(constituent_name)
+            .sel(time=slice(datetime_range[0], datetime_range[1]))['time']
+            .values
+        )
+
+        def quick_map_generator(datetime):
+            """This function generates plots for the DynamicMap"""
+            ds = self.__plotting_data.get_at_time(constituent_name, datetime)
+            real_cell_index = self.__plotting_data.get(NUMBER_OF_REAL_CELLS)
+
+            ind = np.where(
+                ds[constituent_name][0:real_cell_index] > 0
+            )
+            nodes = np.column_stack(
+                [
+                    ds[FACE_X][ind], ds[FACE_Y][ind],
+                    ds[constituent_name][ind], ds[NFACE][ind]
+                ]
+            )
+            nodes = hv.Points(nodes, vdims=[constituent_name, NFACE])
+
+            point_map = hv.Scatter(
+                nodes,
+                vdims=['x', 'y', constituent_name, 'nface']
+            ).opts(
+                width = 1000,
+                height = 500,
+                color = constituent_name,
+                cmap = cmap, 
+                clim = clim,
+                tools = ['hover'], 
+                colorbar = True
+            )
+            return point_map
+
+        return hv.DynamicMap(quick_map_generator, kdims=['time']).redim.values(time=datetimes)
+
+
     def __prep_gdf(self):
         """
         Creates a geodataframe of polygons to represent RAS cells.
@@ -143,7 +195,7 @@ class RiverinePlotter:
         node_x = self.__plotting_data.get(NODE_X)
         node_y = self.__plotting_data.get(NODE_Y)
        
-        # turn real mesh cells into polygons
+        # turn real cells into polygons
         polygon_list = [
             Polygon(np.column_stack((
                 node_x[cell[cell != -1]],
@@ -163,14 +215,44 @@ class RiverinePlotter:
         
         # convert to WGS84
         self.polygon_gdf = self.polygon_gdf.to_crs('EPSG:4326')
-
-
     
-    def __set_clim(self, constituent_name: str):
+    def __get_plotting_gdf(
+            self,
+            constituent_name: str,
+            time: datetime,
+            filter_empty: bool,
+    ):
+        """Create GDF for plotting.
+        
+        Ultimately, this should be refactored to use xvec (more efficient).
+        """
+        plotting_values = self.__plotting_data.get_at_time(constituent_name, time)
+        
+        if filter_empty:
+            try:
+                # Note: Ensure VOLUME is defined in the data source
+                volume = self.__plotting_data.get_at_time(VOLUME, time)
+                plotting_values = plotting_values.where(volume != 0)
+            except Exception:
+                print("Volume filter not working.")
+    
+        df = (
+            plotting_values
+            .to_dataframe(name=constituent_name)
+            .reset_index()
+            .set_index(NFACE)
+        )
+        return self.polygon_gdf.join(df)
+    
+    def __set_clim(self, constituent_name: str, at_datetime: Optional[str | datetime] = None):
         """Get minimum and maximum value."""
         # TODO: will this slow things down in chunked mode?
-        mn_val = self.__plotting_data.get(constituent_name).values.min()
-        mx_val = self.__plotting_data.get(constituent_name).values.max()
+        if at_datetime is not None:
+            mn_val = self.__plotting_data.get_at_time(constituent_name, at_datetime).values.min()
+            mx_val = self.__plotting_data.get_at_time(constituent_name, at_datetime).values.max()
+        else:
+            mn_val = self.__plotting_data.get(constituent_name).values.min()
+            mx_val = self.__plotting_data.get(constituent_name).values.max()
         return (mn_val, mx_val)
 
 
