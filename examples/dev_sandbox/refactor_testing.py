@@ -1,7 +1,7 @@
 import clearwater_riverine as cwr
 from pathlib import Path
 import pandas as pd
-import geoviews as gv
+# import geoviews as gv
 
 # read config
 working_dir = Path.cwd()
@@ -13,8 +13,11 @@ transport_model = cwr.ClearwaterRiverine(
     config_filepath=config_file,
 )
 
+# test getting variables
 transport_model.registry.get('water_temperature')
 transport_model.registry.get('tracer')
 
+# test getting space dimension 
+print(transport_model.registry.get_space_dimension('water_temperature'))
 
 transport_model.run()

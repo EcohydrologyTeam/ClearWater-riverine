@@ -348,9 +348,11 @@ class RASHDFDataSource:
         start_time: datetime,
         end_time: datetime
     ) -> DataArrayVariable:
-        return DataArrayVariable(self.__read_chunk(parameter_name, start_time, end_time))
-        
-    
+        return DataArrayVariable(
+            self.__read_chunk(parameter_name, start_time, end_time),
+            space_dimension=self.temporal_variables[parameter_name]
+        )        
+
     def __read_chunk(
         self,
         parameter_name: str,

@@ -218,7 +218,10 @@ class ClearwaterRiverine:
         for variable_name in non_temporal_variables:
             self.registry.register(
                 variable_name,
-                DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name])
+                DataArrayVariable(
+                    self.__variable_data_sources['hydrodynamic_model'].mesh[variable_name],
+                    space_dimension = self.__variable_data_sources['hydrodynamic_model'].static_variables.get(variable_name)
+                )
             )
         
         for variable_name in self.__variable_data_sources['hydrodynamic_model'].lookup_variables:

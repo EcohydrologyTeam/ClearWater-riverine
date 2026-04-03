@@ -18,6 +18,7 @@ from clearwater_riverine.variables import (
     BOUNDARY_FACE_INDEX,
     BOUNDARY_NAME,
     EDGE_FACE_CONNECTIVITY,
+    NFACE,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
 )
@@ -86,7 +87,8 @@ class Constituent:
                 .rename(self._name)
                 .assign_attrs({
                     'units': self.__units
-                })
+                }),
+                space_dimension=NFACE,
             ),
         )
 
@@ -99,9 +101,12 @@ class Constituent:
         registry.unregister(f"{self._name}_initial")
         registry.register(
             f"{self._name}_initial",
-            DataArrayVariable(initial_conditions),
+            DataArrayVariable(
+                initial_conditions,
+                space_dimension=NFACE,
+            ),
         )
-        self.__initial_condition_spatial_field =  'nface'
+        self.__initial_condition_spatial_field = NFACE
 
     def set_initial_conditions(
         self,
@@ -118,7 +123,7 @@ class Constituent:
                 self._name,
                 start_datetime,
                 initial
-                .rename({self.__initial_condition_spatial_field: 'nface'})  # Align to mesh coords
+                .rename({self.__initial_condition_spatial_field: NFACE})  # Align to mesh coords
                 .reindex(nface=constituent.nface)
                 .data
             )
@@ -166,17 +171,14 @@ class Constituent:
             # reshape to the shape of our constituent array
             boundary_reindexed = boundary.reindex(nface=constituent.nface)
 
-            # place the boundary conditions into the constituent array
-            # this is a workaround to help align the coordinates of the xarrays
-            # TODO: revist so that this is not being double-set.
-            constituent[:] = xr.where(
+            # place the boundary conditions into the constituent array      
+            registry.set(
+                self._name,
+                xr.where(
                     boundary_reindexed.notnull(),
                     boundary_reindexed,
                     constituent
-                )            
-            registry.set(
-                self._name,
-                constituent
+                )   
             )
 
         # TODO: does there need to be a custom set method to set at custom locations?
