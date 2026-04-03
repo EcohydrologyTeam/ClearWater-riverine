@@ -21,3 +21,5 @@ transport_model.registry.get('tracer')
 print(transport_model.registry.get_space_dimension('water_temperature'))
 
 transport_model.run()
+
+transport_model.plot(constituent_name='water_temperature')

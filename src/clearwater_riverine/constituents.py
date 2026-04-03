@@ -189,6 +189,15 @@ class Constituent:
         # TODO: does there need to be a custom set method to set at custom locations?
         elif isinstance(boundary, (float, int)):
             constituent.loc[dict(nface=ghost_cells)] = boundary
+    
+
+    def get_minimum_value(self, registry):
+        constituent = registry.get(self._name)
+        return constituent.min()
+
+    def get_maximum_value(self, registry):
+        constituent = registry.get(self._name)
+        return constituent.max()
 
 
     def _calculate_mass_flux(

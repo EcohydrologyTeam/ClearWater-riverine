@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import holoviews as hv
 # import geoviews as gv
 import geopandas as gpd
-import gc 
 from shapely.geometry import Polygon
 # hv.extension("bokeh")
 from typing import (
@@ -119,7 +118,7 @@ class ClearwaterRiverine:
             "initial_conditions": self.__initial_condition_data_sources,
             "variable_data_sources": self.__variable_data_sources
         }
-        self.__constituents: dict[str: Constituent] = {}
+        self._constituents: dict[str: Constituent] = {}
 
         if config_filepath:
             model, data_sources, constituents = init_from_config(config_filepath)
@@ -128,20 +127,22 @@ class ClearwaterRiverine:
             self.__flow_field_file_path = self.__root_directory / self.__hydrodynamic_input
             raw_chunk = model.get("chunk_size", None)
             self.__chunk_size = pd.Timedelta(raw_chunk) if raw_chunk is not None else None
-            self.__start_datetime = pd.to_datetime(model.get("start_datetime", None))
-            self.__end_datetime = pd.to_datetime(model.get("end_datetime", None))
+            self._start_datetime = pd.to_datetime(model.get("start_datetime", None))
+            self._end_datetime = pd.to_datetime(model.get("end_datetime", None))
             self.__calculated_variables = model.get("calculated_variables", None)
             self.__output_variables = model.get("output_variables", constituents)
             self.__mass_flux_calculation = model.get("mass_flux_calculation", False)
+            self.crs = model.get("crs", None)
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)
         else:
             self.__flow_field_file_path = flow_field_file_path
-            self.__start_datetime = start_datetime
-            self.__end_datetime = end_datetime
+            self._start_datetime = start_datetime
+            self._end_datetime = end_datetime
             self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         
         self.__chunked_mode: bool = self.__chunk_size is not None
+        self.plotter = None
 
         self.__init_model(constituents)
         self.__init_output_store()
@@ -150,7 +151,7 @@ class ClearwaterRiverine:
 
     
     def run(self) -> None:
-        while self.__current_time < self.__end_datetime:
+        while self.__current_time < self._end_datetime:
             self.update()
         self.finalize()
 
@@ -171,6 +172,20 @@ class ClearwaterRiverine:
         else:
             if self.__mass_flux_calculation:
                 self.__calculate_mass_flux()
+    
+    def plot(self, constituent_name: str, **kwargs):
+        if self.plotter is None:
+            from clearwater_riverine.plotting import RiverinePlotter
+            self.plotter = RiverinePlotter(registry=self.registry, crs=self.crs)
+        return self.plotter.dynamic_plot(constituent_name=constituent_name, **kwargs)
+    
+    def static_plot(self):
+        # self.static_plot = self.plotter.static_plot
+        return
+    
+    def quick_plot(self):
+        # return self.quick_plot = self.plotter.quick_plot
+        return
  
     def calculate_mass_balance(
         self,
@@ -207,7 +222,7 @@ class ClearwaterRiverine:
             if isinstance(data_source, ChunkedDataSource):
                 data = data_source.read_chunk(
                     variable_name,
-                    self.__start_datetime, self.__start_datetime + self.__chunk_size
+                    self._start_datetime, self._start_datetime + self.__chunk_size
                 )
             else:
                 data = data_source.read(variable_name)
@@ -220,8 +235,8 @@ class ClearwaterRiverine:
         # Register hydrodynamic data
         self.__variable_data_sources['hydrodynamic_model'] = RASHDFDataSource(
             ras_hdf_path=self.__flow_field_file_path,
-            start_datetime=self.__start_datetime,
-            end_datetime=self.__end_datetime,
+            start_datetime=self._start_datetime,
+            end_datetime=self._end_datetime,
             calculated_variables=self.__calculated_variables,
         )
 
@@ -229,8 +244,8 @@ class ClearwaterRiverine:
             if self.__chunked_mode:
                 data = self.__variable_data_sources['hydrodynamic_model'].read_chunk(
                     variable_name,
-                    start_time = self.__start_datetime,
-                    end_time=self.__start_datetime + self.__chunk_size
+                    start_time = self._start_datetime,
+                    end_time=self._start_datetime + self.__chunk_size
                 )
             else:
                 data = self.__variable_data_sources['hydrodynamic_model'].read(variable_name)
@@ -263,6 +278,7 @@ class ClearwaterRiverine:
                 DataArrayVariable(self.__variable_data_sources['hydrodynamic_model'].boundary_data[variable_name])
             )
 
+
         # register additional variables
         self.registry.register(
             NUMBER_OF_REAL_CELLS,
@@ -288,7 +304,7 @@ class ClearwaterRiverine:
             )
         
         # set current timestep
-        self.__current_time = self.__start_datetime
+        self.__current_time = self._start_datetime
 
 
     def __init_constituents(
@@ -300,13 +316,13 @@ class ClearwaterRiverine:
         initial_conditions = self.__initial_condition_data_sources[constituent_name].read(constituent_name)
         boundary_conditions = self.__boundary_condition_data_sources[constituent_name].read(constituent_name)
 
-        self.__constituents[constituent_name] = Constituent(
+        self._constituents[constituent_name] = Constituent(
             constituent_name=constituent_name,
             registry=self.registry,
             initial_conditions=initial_conditions,
             boundary_conditions=boundary_conditions,
             constituent_config=constituent_config,
-            start_datetime=self.__start_datetime
+            start_datetime=self._start_datetime
         )
 
 
@@ -332,8 +348,8 @@ class ClearwaterRiverine:
         if self.__chunked_mode:
             self.__output_data_store = ChunkedZarrDataStore(
                 store_path=self.__root_directory / "model_outputs.zarr",
-                start_date=self.__start_datetime,
-                end_date=self.__end_datetime,
+                start_date=self._start_datetime,
+                end_date=self._end_datetime,
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
                 variables=self.__output_variables,
                 chunk_size=self.__chunk_size,
@@ -343,8 +359,8 @@ class ClearwaterRiverine:
         else:
             self.__output_data_store = ZarrDataStore(
                 store_path=self.__root_directory / "model_outputs.zarr",
-                start_date=self.__start_datetime,
-                end_date=self.__end_datetime,
+                start_date=self._start_datetime,
+                end_date=self._end_datetime,
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
                 variables=self.__output_variables,
                 spatial_field=NFACE,
@@ -355,8 +371,8 @@ class ClearwaterRiverine:
     def __init_chunks(self):
         """Define the end of each chunk."""
         self.__chunk_ends = pd.date_range(
-            self.__start_datetime,
-            self.__end_datetime,
+            self._start_datetime,
+            self._end_datetime,
             freq=self.__chunk_size
         )[1:-1]
 
@@ -376,7 +392,7 @@ class ClearwaterRiverine:
             )
 
         self.__update_calculated_variables()
-        for constituent_name, constituent in self.__constituents.items():
+        for constituent_name, constituent in self._constituents.items():
             constituent.reset_initial_conditions(
                 self.registry,
                 self.registry.get_at_time(constituent_name, self.__current_time)
@@ -419,17 +435,17 @@ class ClearwaterRiverine:
             registry=self.registry,
             current_time=self.__current_time,
             time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
-            constituents=self.__constituents,
+            constituents=self._constituents,
             mass_flux_calculation=self.__mass_flux_calculation
          )
 
-        for constituent_name, _ in self.__constituents.items():
+        for constituent_name, _ in self._constituents.items():
             constituent = self.registry.get_at_time(constituent_name, self.__current_time)
 
     def __calculate_mass_flux(self):
         if self.__mass_flux_calculation:
             # TODO: toggle on and off for different constituents?
-            for _, constituent in self.__constituents.items():
+            for _, constituent in self._constituents.items():
                 constituent._calculate_mass_flux(self.registry)
 
         # else:
@@ -708,362 +724,362 @@ class ClearwaterRiverine:
         total_mass_flux[t] = advection_mass_flux[t] + diffusion_mass_flux[t]
 
 
-    def _prep_gdf(
-        self,
-        crs: str,
-        ):
-        """ Creates a geodataframe of polygons to represent each RAS cell. 
+    # def _prep_gdf(
+    #     self,
+    #     crs: str,
+    #     ):
+    #     """ Creates a geodataframe of polygons to represent each RAS cell. 
 
-        Args:
-            crs: coordinate system of RAS project.
+    #     Args:
+    #         crs: coordinate system of RAS project.
 
-        Notes:
-            Could we parse the CRS from the PRJ file?
-        """
+    #     Notes:
+    #         Could we parse the CRS from the PRJ file?
+    #     """
 
-        self.nreal_index = self.mesh.attrs[NUMBER_OF_REAL_CELLS] + 1
-        real_face_node_connectivity = self.mesh.face_nodes[0:self.nreal_index]
+    #     self.nreal_index = self.mesh.attrs[NUMBER_OF_REAL_CELLS] + 1
+    #     real_face_node_connectivity = self.mesh.face_nodes[0:self.nreal_index]
 
-        # Turn real mesh cells into polygons
-        polygon_list = []
-        for cell in real_face_node_connectivity:
-            xs = self.mesh.node_x[cell[np.where(cell != -1)]]
-            ys = self.mesh.node_y[cell[np.where(cell != -1)]]
-            p1 = Polygon(list(zip(xs.values, ys.values)))
-            polygon_list.append(p1)
+    #     # Turn real mesh cells into polygons
+    #     polygon_list = []
+    #     for cell in real_face_node_connectivity:
+    #         xs = self.mesh.node_x[cell[np.where(cell != -1)]]
+    #         ys = self.mesh.node_y[cell[np.where(cell != -1)]]
+    #         p1 = Polygon(list(zip(xs.values, ys.values)))
+    #         polygon_list.append(p1)
 
-        poly_gdf = gpd.GeoDataFrame(
-            {
-                'nface': self.mesh.nface[0:self.nreal_index],
-                'geometry': polygon_list
-            },
-            crs = crs
-        )
-        self.poly_gdf = poly_gdf.to_crs('EPSG:4326')
-        self._update_gdf()
+    #     poly_gdf = gpd.GeoDataFrame(
+    #         {
+    #             'nface': self.mesh.nface[0:self.nreal_index],
+    #             'geometry': polygon_list
+    #         },
+    #         crs = crs
+    #     )
+    #     self.poly_gdf = poly_gdf.to_crs('EPSG:4326')
+    #     self._update_gdf()
     
         
-    def _update_gdf(self):
-        """Update gdf values."""
-        self.plotting_time_step = self.time_step
-        constituent_dfs = []
-        gdf_elements = self.constituents + [VOLUME]
-        for constituent in gdf_elements:
-            df_from_array = self.mesh[constituent].isel(
-                nface=slice(0,self.nreal_index)
-                ).to_dataframe()
-            df_from_array.reset_index(inplace=True)
-            constituent_dfs.append(df_from_array)
+    # def _update_gdf(self):
+    #     """Update gdf values."""
+    #     self.plotting_time_step = self.time_step
+    #     constituent_dfs = []
+    #     gdf_elements = self.constituents + [VOLUME]
+    #     for constituent in gdf_elements:
+    #         df_from_array = self.mesh[constituent].isel(
+    #             nface=slice(0,self.nreal_index)
+    #             ).to_dataframe()
+    #         df_from_array.reset_index(inplace=True)
+    #         constituent_dfs.append(df_from_array)
 
-        all_constituents = pd.concat(
-            constituent_dfs,
-            axis=1,
-        )
-        all_constituents = all_constituents.loc[:, ~all_constituents.columns.duplicated()]
+    #     all_constituents = pd.concat(
+    #         constituent_dfs,
+    #         axis=1,
+    #     )
+    #     all_constituents = all_constituents.loc[:, ~all_constituents.columns.duplicated()]
 
-        self.df_merged = gpd.GeoDataFrame(
-                pd.merge(
-                    all_constituents,
-                    self.poly_gdf,
-                    on='nface',
-                    how='left'
-                )
-            )
-        self.df_merged.rename(
-            columns={
-                'nface':'cell',
-                'time': 'datetime'
-            },
-            inplace=True
-        )
-        self.gdf = self.df_merged
+    #     self.df_merged = gpd.GeoDataFrame(
+    #             pd.merge(
+    #                 all_constituents,
+    #                 self.poly_gdf,
+    #                 on='nface',
+    #                 how='left'
+    #             )
+    #         )
+    #     self.df_merged.rename(
+    #         columns={
+    #             'nface':'cell',
+    #             'time': 'datetime'
+    #         },
+    #         inplace=True
+    #     )
+    #     self.gdf = self.df_merged
 
 
-    def _maximum_plotting_value(
-        self,
-        clim_max: float,
-        constituent_name: str,
-    ) -> float:
-        """ Calculate the maximum value for color bar. 
+    # def _maximum_plotting_value(
+    #     self,
+    #     clim_max: float,
+    #     constituent_name: str,
+    # ) -> float:
+    #     """ Calculate the maximum value for color bar. 
         
-        Uses the maximum concentration value in the model mesh if no user-defined  clim_max is specified,
-        otherwise defines the maximum value as clim_max. 
+    #     Uses the maximum concentration value in the model mesh if no user-defined  clim_max is specified,
+    #     otherwise defines the maximum value as clim_max. 
 
-        Args:
-            clim_max (float): user defined maximum colorbar value or default (None)
-            constituent_name (str): constituent to plot. 
+    #     Args:
+    #         clim_max (float): user defined maximum colorbar value or default (None)
+    #         constituent_name (str): constituent to plot. 
         
-        Returns:
-            mval (float): maximum plotting value, either based on user input or the maximum concentration value.
-        """
-        if clim_max != None:
-            mx_val = clim_max
-        else:
-            if self.constituent_dict[constituent_name].max_value == None:
-                self.set_value_range(constituent_name)
-            mx_val = self.constituent_dict[constituent_name].max_value
-        return mx_val
+    #     Returns:
+    #         mval (float): maximum plotting value, either based on user input or the maximum concentration value.
+    #     """
+    #     if clim_max != None:
+    #         mx_val = clim_max
+    #     else:
+    #         if self.constituent_dict[constituent_name].max_value == None:
+    #             self.set_value_range(constituent_name)
+    #         mx_val = self.constituent_dict[constituent_name].max_value
+    #     return mx_val
 
-    def _minimum_plotting_value(
-        self,
-        clim_min,
-        constituent_name: str,
-    ) -> float:
-        """ Calculate the maximum value for color bar. 
+    # def _minimum_plotting_value(
+    #     self,
+    #     clim_min,
+    #     constituent_name: str,
+    # ) -> float:
+    #     """ Calculate the maximum value for color bar. 
         
-        Uses the maximum concentration value in the model mesh if no user-defined  clim_max is specified,
-        otherwise defines the maximum value as clim_max. 
+    #     Uses the maximum concentration value in the model mesh if no user-defined  clim_max is specified,
+    #     otherwise defines the maximum value as clim_max. 
 
-        Args:
-            clim_min (float): user defined minimum colorbar value or default (None)
-            constituent_name (str): constituent to plot. 
+    #     Args:
+    #         clim_min (float): user defined minimum colorbar value or default (None)
+    #         constituent_name (str): constituent to plot. 
         
-        Returns:
-            mval (float): minimum plotting value, either based on user input or the minimum concentration value.
-        """
-        if clim_min != None:
-            mn_val = clim_min
-        else:
-            if self.constituent_dict[constituent_name].min_value == None:
-                self.set_value_range(constituent_name)
-            mn_val = self.constituent_dict[constituent_name].min_value
-        return mn_val
+    #     Returns:
+    #         mval (float): minimum plotting value, either based on user input or the minimum concentration value.
+    #     """
+    #     if clim_min != None:
+    #         mn_val = clim_min
+    #     else:
+    #         if self.constituent_dict[constituent_name].min_value == None:
+    #             self.set_value_range(constituent_name)
+    #         mn_val = self.constituent_dict[constituent_name].min_value
+    #     return mn_val
 
-    def _check_constituent(
-        self,
-        constituent_name,
-    ):
-        """User warning."""
-        if constituent_name is None:
-            constituent_name = self.constituents[0]
-            warnings.warn(
-                f"No constituent name defined. Plotting {constituent_name}.",
-                UserWarning
-            )
-        return constituent_name
+    # def _check_constituent(
+    #     self,
+    #     constituent_name,
+    # ):
+    #     """User warning."""
+    #     if constituent_name is None:
+    #         constituent_name = self.constituents[0]
+    #         warnings.warn(
+    #             f"No constituent name defined. Plotting {constituent_name}.",
+    #             UserWarning
+    #         )
+    #     return constituent_name
     
-    def _define_clims(
-        self,
-        clim: tuple,
-        constituent_name: str,
-    ):
-        """Define color limit extent."""
+    # def _define_clims(
+    #     self,
+    #     clim: tuple,
+    #     constituent_name: str,
+    # ):
+    #     """Define color limit extent."""
 
-        mx_val = self._maximum_plotting_value(
-            clim_max=clim[1],
-            constituent_name=constituent_name
-        )
-        mn_val = self._minimum_plotting_value(
-            clim_min=clim[0],
-            constituent_name=constituent_name
-        )
-        return mx_val, mn_val
+    #     mx_val = self._maximum_plotting_value(
+    #         clim_max=clim[1],
+    #         constituent_name=constituent_name
+    #     )
+    #     mn_val = self._minimum_plotting_value(
+    #         clim_min=clim[0],
+    #         constituent_name=constituent_name
+    #     )
+    #     return mx_val, mn_val
 
-    def _prep_plot(
-        self,
-        constituent_name: str | None,
-        clim: tuple,
-        gdf_plot=False,
-        crs: Optional[str] = None,
-    ):
-        """Duplicate code for prepping plots."""
-        if gdf_plot:
-            if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
-                if crs == None:
-                    raise ValueError("This is your first time running the plot function. You must specify a crs!")
-                else:
-                    self._prep_gdf(crs)
+    # def _prep_plot(
+    #     self,
+    #     constituent_name: str | None,
+    #     clim: tuple,
+    #     gdf_plot=False,
+    #     crs: Optional[str] = None,
+    # ):
+    #     """Duplicate code for prepping plots."""
+    #     if gdf_plot:
+    #         if type(self.gdf) != gpd.geodataframe.GeoDataFrame:
+    #             if crs == None:
+    #                 raise ValueError("This is your first time running the plot function. You must specify a crs!")
+    #             else:
+    #                 self._prep_gdf(crs)
         
-            if self.plotting_time_step != self.time_step:
-                self._update_gdf()
+    #         if self.plotting_time_step != self.time_step:
+    #             self._update_gdf()
             
-        constituent_name = self._check_constituent(constituent_name)
+    #     constituent_name = self._check_constituent(constituent_name)
 
-        mx_val, mn_val = self._define_clims(
-            clim=clim,
-            constituent_name=constituent_name
-        )
-        return constituent_name, mx_val, mn_val
+    #     mx_val, mn_val = self._define_clims(
+    #         clim=clim,
+    #         constituent_name=constituent_name
+    #     )
+    #     return constituent_name, mx_val, mn_val
         
 
-    def plot(
-        self,
-        constituent_name: Optional[str] = None,
-        crs: Optional[str] = None,
-        clim: Optional[tuple] = (None, None),
-        cmap: Optional[str] = 'OrRd',
-        time_index_range: Optional[tuple] = (0, -1), 
-        filter_empty: Optional[bool] = True,
-    ):
-        """Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
+    # def plot(
+    #     self,
+    #     constituent_name: Optional[str] = None,
+    #     crs: Optional[str] = None,
+    #     clim: Optional[tuple] = (None, None),
+    #     cmap: Optional[str] = 'OrRd',
+    #     time_index_range: Optional[tuple] = (0, -1), 
+    #     filter_empty: Optional[bool] = True,
+    # ):
+    #     """Creates a dynamic polygon plot of concentrations in the RAS2D model domain.
 
-        The `plot()` method takes slightly  more time than the `quick_plot()` method in order to leverage the `geoviews` plotting library. 
-        The `plot()` method creates more detailed and aesthetic plots than the `quick_plot()` method. 
+    #     The `plot()` method takes slightly  more time than the `quick_plot()` method in order to leverage the `geoviews` plotting library. 
+    #     The `plot()` method creates more detailed and aesthetic plots than the `quick_plot()` method. 
 
-        Args:
-            constituent_name: name of constituent to plot.):
-            crs (str): coordinate system of the HEC-RAS 2D model. Only required the first time you call this method.  
-            clim_max (float, optional): maximum value for color bar. If not specifies, the default will be the 
-                maximum concentration value in the model domain over the entire simulation horizon. 
-            time_index_range (tuple, optional): minimum and maximum time index to plot.
-            filter_empty (boolean, optional): provides users the ability to filter out empty cells.
-        """
+    #     Args:
+    #         constituent_name: name of constituent to plot.):
+    #         crs (str): coordinate system of the HEC-RAS 2D model. Only required the first time you call this method.  
+    #         clim_max (float, optional): maximum value for color bar. If not specifies, the default will be the 
+    #             maximum concentration value in the model domain over the entire simulation horizon. 
+    #         time_index_range (tuple, optional): minimum and maximum time index to plot.
+    #         filter_empty (boolean, optional): provides users the ability to filter out empty cells.
+    #     """
 
-        constituent_name, mx_val, mn_val = self._prep_plot(
-            constituent_name=constituent_name,
-            clim=clim,
-            gdf_plot=True,
-            crs=crs,
-        )
+    #     constituent_name, mx_val, mn_val = self._prep_plot(
+    #         constituent_name=constituent_name,
+    #         clim=clim,
+    #         gdf_plot=True,
+    #         crs=crs,
+    #     )
 
-        def map_generator(datetime):
-            """This function generates plots for the DynamicMap"""
-            ras_sub_df = self.gdf[self.gdf.datetime == datetime]
-            if filter_empty:
-                ras_sub_df = ras_sub_df[ras_sub_df[VOLUME] != 0]
-            units = self.mesh[constituent_name].Units
-            ras_map = gv.Polygons(
-                ras_sub_df,
-                vdims=[constituent_name, 'cell']).opts(
-                    height = 400,
-                    width = 800,
-                    color=constituent_name,
-                    colorbar = True,
-                    cmap = cmap,
-                    clim = (mn_val, mx_val),
-                    line_width = 0.1,
-                    tools = ['hover'],
-                    clabel = f"{constituent_name} ({units})"
-            )
-            return (ras_map * gv.tile_sources.CartoLight())
+    #     def map_generator(datetime):
+    #         """This function generates plots for the DynamicMap"""
+    #         ras_sub_df = self.gdf[self.gdf.datetime == datetime]
+    #         if filter_empty:
+    #             ras_sub_df = ras_sub_df[ras_sub_df[VOLUME] != 0]
+    #         units = self.mesh[constituent_name].Units
+    #         ras_map = gv.Polygons(
+    #             ras_sub_df,
+    #             vdims=[constituent_name, 'cell']).opts(
+    #                 height = 400,
+    #                 width = 800,
+    #                 color=constituent_name,
+    #                 colorbar = True,
+    #                 cmap = cmap,
+    #                 clim = (mn_val, mx_val),
+    #                 line_width = 0.1,
+    #                 tools = ['hover'],
+    #                 clabel = f"{constituent_name} ({units})"
+    #         )
+    #         return (ras_map * gv.tile_sources.CartoLight())
 
-        dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
-        return dmap.redim.values(datetime=self.gdf.datetime.unique()[time_index_range[0]: time_index_range[1]])
+    #     dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
+    #     return dmap.redim.values(datetime=self.gdf.datetime.unique()[time_index_range[0]: time_index_range[1]])
 
-    def quick_plot(
-        self,
-        constituent_name: Optional[str] = None,
-        clim: Optional[tuple] = (None,None),
-        cmap: Optional[str] = 'OrRd'
-    ):
-        """Creates a dynamic scatterplot of cell centroids colored by cell concentration.
+    # def quick_plot(
+    #     self,
+    #     constituent_name: Optional[str] = None,
+    #     clim: Optional[tuple] = (None,None),
+    #     cmap: Optional[str] = 'OrRd'
+    # ):
+    #     """Creates a dynamic scatterplot of cell centroids colored by cell concentration.
 
-        The `quick_plot()` method is meant to rapidly develop visualizations to explore results. 
-        Use the `plot()` method for more aesthetic plots. 
+    #     The `quick_plot()` method is meant to rapidly develop visualizations to explore results. 
+    #     Use the `plot()` method for more aesthetic plots. 
 
-        Args:
-            clim_max (float, optional): maximum value for color bar. 
-        """
-        constituent_name, mx_val, mn_val = self._prep_plot(
-            constituent_name=constituent_name,
-            clim=clim,
-        )
+    #     Args:
+    #         clim_max (float, optional): maximum value for color bar. 
+    #     """
+    #     constituent_name, mx_val, mn_val = self._prep_plot(
+    #         constituent_name=constituent_name,
+    #         clim=clim,
+    #     )
 
-        def quick_map_generator(datetime):
-            """This function generates plots for the DynamicMap"""
-            ds = self.mesh.sel(time=datetime)
-            ind = np.where(
-                ds[constituent_name][0:self.mesh.attrs['nreal']] > 0
-            )
-            nodes = np.column_stack(
-                [
-                    ds.face_x[ind], ds.face_y[ind],
-                    ds[constituent_name][ind], ds['nface'][ind]
-                ]
-            )
-            nodes = hv.Points(nodes, vdims=[constituent_name, 'nface'])
-            nodes_all = np.column_stack(
-                [
-                    ds.face_x[0:self.mesh.attrs['nreal']],
-                    ds.face_y[0:self.mesh.attrs['nreal']],
-                    ds.volume[0:self.mesh.attrs['nreal']]
-                ]
-            )
-            nodes_all = hv.Points(nodes_all, vdims='volume')
+    #     def quick_map_generator(datetime):
+    #         """This function generates plots for the DynamicMap"""
+    #         ds = self.mesh.sel(time=datetime)
+    #         ind = np.where(
+    #             ds[constituent_name][0:self.mesh.attrs['nreal']] > 0
+    #         )
+    #         nodes = np.column_stack(
+    #             [
+    #                 ds.face_x[ind], ds.face_y[ind],
+    #                 ds[constituent_name][ind], ds['nface'][ind]
+    #             ]
+    #         )
+    #         nodes = hv.Points(nodes, vdims=[constituent_name, 'nface'])
+    #         nodes_all = np.column_stack(
+    #             [
+    #                 ds.face_x[0:self.mesh.attrs['nreal']],
+    #                 ds.face_y[0:self.mesh.attrs['nreal']],
+    #                 ds.volume[0:self.mesh.attrs['nreal']]
+    #             ]
+    #         )
+    #         nodes_all = hv.Points(nodes_all, vdims='volume')
 
-            p1 = hv.Scatter(
-                nodes,
-                vdims=['x', 'y', constituent_name, 'nface']
-            ).opts(
-                width = 1000,
-                height = 500,
-                color = constituent_name,
-                cmap = cmap, 
-                clim = (mn_val, mx_val),
-                tools = ['hover'], 
-                colorbar = True
-            )
+    #         p1 = hv.Scatter(
+    #             nodes,
+    #             vdims=['x', 'y', constituent_name, 'nface']
+    #         ).opts(
+    #             width = 1000,
+    #             height = 500,
+    #             color = constituent_name,
+    #             cmap = cmap, 
+    #             clim = (mn_val, mx_val),
+    #             tools = ['hover'], 
+    #             colorbar = True
+    #         )
             
-            p2 = hv.Scatter(
-                nodes_all,
-                vdims=['x', 'y', 'volume']
-            ).opts(
-                width = 1000,
-                height = 500,
-                color = 'grey',
-            )
-            title = pd.to_datetime(datetime).strftime('%m/%d/%Y %H:%M ')
-            return p1 # hv.Overlay([p2, p1]).opts(title=title)
+    #         p2 = hv.Scatter(
+    #             nodes_all,
+    #             vdims=['x', 'y', 'volume']
+    #         ).opts(
+    #             width = 1000,
+    #             height = 500,
+    #             color = 'grey',
+    #         )
+    #         title = pd.to_datetime(datetime).strftime('%m/%d/%Y %H:%M ')
+    #         return p1 # hv.Overlay([p2, p1]).opts(title=title)
 
-        return hv.DynamicMap(quick_map_generator, kdims=['Time']).redim.values(Time=self.mesh.time.values)
+    #     return hv.DynamicMap(quick_map_generator, kdims=['Time']).redim.values(Time=self.mesh.time.values)
     
-    def static_plot(
-        self,
-        plotting_timestep: int,
-        constituent_name: Optional[str] = None,
-        clim: Optional[tuple] = (None,None),
-        cmap: Optional[str] = 'RdYlBu_r', 
-        crs: Optional[str] = None,    
-        save: Optional[bool] = False,
-        output_path: Optional[str | Path] = None,
-    ):
-        """Generates a static plot at a given timestep
+    # def static_plot(
+    #     self,
+    #     plotting_timestep: int,
+    #     constituent_name: Optional[str] = None,
+    #     clim: Optional[tuple] = (None,None),
+    #     cmap: Optional[str] = 'RdYlBu_r', 
+    #     crs: Optional[str] = None,    
+    #     save: Optional[bool] = False,
+    #     output_path: Optional[str | Path] = None,
+    # ):
+    #     """Generates a static plot at a given timestep
         
-            Args:
-                plotting_timestep (int): integer timestep to plot.
-                constituent_name (str): name of constituent to plot.
-                crs (str): coordinate system of the HEC-RAS 2D model. Only required the first time you call this method.
-                clim (tuple): min and max color limit values.
-                    Defaults to min and max values of constituent.
-                cmap (str): colormap.
-                save (bool): save 
-                output_path (str | Path): output path to save image.
+    #         Args:
+    #             plotting_timestep (int): integer timestep to plot.
+    #             constituent_name (str): name of constituent to plot.
+    #             crs (str): coordinate system of the HEC-RAS 2D model. Only required the first time you call this method.
+    #             clim (tuple): min and max color limit values.
+    #                 Defaults to min and max values of constituent.
+    #             cmap (str): colormap.
+    #             save (bool): save 
+    #             output_path (str | Path): output path to save image.
 
-        """
-        constituent_name, mx_val, mn_val = self._prep_plot(
-            constituent_name=constituent_name,
-            clim=clim,
-            gdf_plot=True,
-            crs=crs,
-        )
+    #     """
+    #     constituent_name, mx_val, mn_val = self._prep_plot(
+    #         constituent_name=constituent_name,
+    #         clim=clim,
+    #         gdf_plot=True,
+    #         crs=crs,
+    #     )
 
-        date_value = self.mesh.time.isel(
-            time=plotting_timestep
-        ).values
+    #     date_value = self.mesh.time.isel(
+    #         time=plotting_timestep
+    #     ).values
 
-        c = self.gdf[
-            (self.gdf.datetime == date_value) & (self.gdf[VOLUME] != 0)
-        ].plot(
-            column=constituent_name,
-            cmap=cmap,
-            vmin=mn_val,
-            vmax=mx_val,
-            edgecolor = 'white',
-            linewidth = 0.1,
-        )
-        plt.xticks([])
-        plt.yticks([])
-        ax = plt.gca()
-        plt.axis('off')
-        plt.rcParams['figure.facecolor'] = 'lightgrey'
-        if save == True:
-            plt.savefig(output_path)
-        plt.show()
+    #     c = self.gdf[
+    #         (self.gdf.datetime == date_value) & (self.gdf[VOLUME] != 0)
+    #     ].plot(
+    #         column=constituent_name,
+    #         cmap=cmap,
+    #         vmin=mn_val,
+    #         vmax=mx_val,
+    #         edgecolor = 'white',
+    #         linewidth = 0.1,
+    #     )
+    #     plt.xticks([])
+    #     plt.yticks([])
+    #     ax = plt.gca()
+    #     plt.axis('off')
+    #     plt.rcParams['figure.facecolor'] = 'lightgrey'
+    #     if save == True:
+    #         plt.savefig(output_path)
+    #     plt.show()
 
-    def _determine_constituents(self):
-        defined_variables = [f[1] for f in inspect.getmembers(clearwater_riverine.variables)]
-        self.constituents = [
-            f for f in self.mesh.data_vars
-            if FACES in self.mesh[f].dims
-            and f not in defined_variables
-        ]
+    # def _determine_constituents(self):
+    #     defined_variables = [f[1] for f in inspect.getmembers(clearwater_riverine.variables)]
+    #     self.constituents = [
+    #         f for f in self.mesh.data_vars
+    #         if FACES in self.mesh[f].dims
+    #         and f not in defined_variables
+    #     ]
