@@ -17,7 +17,11 @@ from clearwater_riverine.variables import (
     BOUNDARY_CONDITION_LINE_ID,
     BOUNDARY_FACE_INDEX,
     BOUNDARY_NAME,
+    CHANGE_IN_TIME,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+    FLOW_ACROSS_FACE,
     EDGE_FACE_CONNECTIVITY,
+    NEDGE,
     NFACE,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
@@ -70,7 +74,8 @@ class Constituent:
 
     def register_constituent(
         self,
-        registry):
+        registry: VariableRegistry
+    ):
         """Register constituent to variable registry."""
         # unregister if it already exists
         if self._name in registry:
@@ -137,7 +142,7 @@ class Constituent:
 
     def set_boundary_conditions(
         self,
-        registry,
+        registry: VariableRegistry,
     ):
         """Define boundary conditions for the Constituent."""
         # retrieve necessary variables
@@ -185,3 +190,42 @@ class Constituent:
         elif isinstance(boundary, (float, int)):
             constituent.loc[dict(nface=ghost_cells)] = boundary
 
+
+    def _calculate_mass_flux(
+        self,
+        registry: VariableRegistry,
+    ):
+        # advection / diffusion coefficients from n timestep are used
+        advection_coefficient = registry.get(FLOW_ACROSS_FACE)[:-1]
+        diffusion_coefficient = registry.get(COEFFICIENT_TO_DIFFUSION_TERM)[:-1]
+        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
+        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+
+        # concentrations from n+1 timestep are used:
+        # indexing here shifts the data accordingly 
+        negative_condition = advection_coefficient < 0
+        parent_concentration = registry.get(self._name)[1:].sel(nface=edges_face1)
+        neighbor_concentration = registry.get(self._name)[1:].sel(nface=edges_face2)
+
+        # coerce times so the xarray where function will work
+        # think it makes most sense to assign the coordinates of advection coefficient
+        # at n timestep, mass flux is calculated to then get the concentration at the next timestep
+        parent_concentration = parent_concentration.assign_coords(time=advection_coefficient.time)
+        neighbor_concentration = neighbor_concentration.assign_coords(time=advection_coefficient.time)
+
+        advection_mass_flux = xr.where(
+            negative_condition,
+            advection_coefficient * neighbor_concentration,
+            advection_coefficient * parent_concentration
+        ) * registry.get(CHANGE_IN_TIME)
+
+        diffusion_mass_flux = diffusion_coefficient * \
+            (neighbor_concentration - parent_concentration) * \
+            registry.get(CHANGE_IN_TIME)
+
+        total_mass_flux = advection_mass_flux + diffusion_mass_flux
+
+        registry.register(
+            f"{self._name}_mass_flux",
+            DataArrayVariable(total_mass_flux, space_dimension=NEDGE),
+        )

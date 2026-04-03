@@ -51,6 +51,7 @@ from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import init_from_config
 from clearwater_riverine.transport import TransportEngine
 from clearwater_riverine.constituents import Constituent
+from clearwater_riverine.postproc_util import calculate_global_mass_balance
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -131,6 +132,7 @@ class ClearwaterRiverine:
             self.__end_datetime = pd.to_datetime(model.get("end_datetime", None))
             self.__calculated_variables = model.get("calculated_variables", None)
             self.__output_variables = model.get("output_variables", constituents)
+            self.__mass_flux_calculation = model.get("mass_flux_calculation", False)
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)
         else:
@@ -164,7 +166,32 @@ class ClearwaterRiverine:
 
 
     def finalize(self) -> None:
-        self.__finalize_chunk()
+        if self.__chunked_mode:
+            self.__finalize_chunk()
+        else:
+            if self.__mass_flux_calculation:
+                self.__calculate_mass_flux()
+ 
+    def calculate_mass_balance(
+        self,
+        constituent_name: str,
+        start_datetime: Optional[datetime] = None,
+        end_datetime: Optional[datetime] = None,
+        calculate_answer: Optional[bool] = False,
+        answer_value: Optional[float] = 100,
+    ):
+        if start_datetime is None:
+            start_datetime = self.__start_datetime
+        if end_datetime is None:
+            end_datetime = self.__end_datetime
+        return calculate_global_mass_balance(
+            self.registry,
+            constituent_name,
+            start_datetime,
+            end_datetime,
+            calculate_answer,
+            answer_value,
+        )
 
 
     def __increment_timestep(self):
@@ -310,7 +337,7 @@ class ClearwaterRiverine:
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
                 variables=self.__output_variables,
                 chunk_size=self.__chunk_size,
-                spatial_field="nface",
+                spatial_field=NFACE,
                 spatial_field_values=self.registry.get(VOLUME).nface               
             )
         else:
@@ -320,7 +347,7 @@ class ClearwaterRiverine:
                 end_date=self.__end_datetime,
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
                 variables=self.__output_variables,
-                spatial_field="nface",
+                spatial_field=NFACE,
                 spatial_field_values=self.registry.get(VOLUME).nface
             )
 
@@ -367,7 +394,13 @@ class ClearwaterRiverine:
 
 
     def __finalize_chunk(self):
+        if self.__mass_flux_calculation:
+            self.__calculate_mass_flux()
+            # TODO: write mass flux to output?
+            # will neeed to handle multiple space dimensions
+
         for variable_name in self.__output_variables:
+            # calculate mass flux, if necessary                
             # TODO: clean up chunk indexing
             variable = self.registry.get(variable_name).isel(time=slice(0, -1))
             self.__output_data_store.write_chunk(
@@ -386,13 +419,19 @@ class ClearwaterRiverine:
             registry=self.registry,
             current_time=self.__current_time,
             time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
-            constituents=self.__constituents
+            constituents=self.__constituents,
+            mass_flux_calculation=self.__mass_flux_calculation
          )
 
         for constituent_name, _ in self.__constituents.items():
             constituent = self.registry.get_at_time(constituent_name, self.__current_time)
 
-    
+    def __calculate_mass_flux(self):
+        if self.__mass_flux_calculation:
+            # TODO: toggle on and off for different constituents?
+            for _, constituent in self.__constituents.items():
+                constituent._calculate_mass_flux(self.registry)
+
         # else:
         #     if flow_field_file_path:
         #         ## TODO: add some checking that input set up correctly
