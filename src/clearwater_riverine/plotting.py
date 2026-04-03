@@ -154,16 +154,18 @@ class RiverinePlotter:
 
         def quick_map_generator(datetime):
             """This function generates plots for the DynamicMap"""
-            ds = self.__plotting_data.get_at_time(constituent_name, datetime)
+            values = self.__plotting_data.get_at_time(constituent_name, datetime)
             real_cell_index = self.__plotting_data.get(NUMBER_OF_REAL_CELLS)
+            face_x = self.__plotting_data.get(FACE_X)
+            face_y = self.__plotting_data.get(FACE_Y)
 
             ind = np.where(
-                ds[constituent_name][0:real_cell_index] > 0
+                values[0:real_cell_index] > 0
             )
             nodes = np.column_stack(
                 [
-                    ds[FACE_X][ind], ds[FACE_Y][ind],
-                    ds[constituent_name][ind], ds[NFACE][ind]
+                    face_x[ind], face_y[ind],
+                    values[ind], np.arange(real_cell_index)[ind]
                 ]
             )
             nodes = hv.Points(nodes, vdims=[constituent_name, NFACE])
@@ -180,6 +182,7 @@ class RiverinePlotter:
                 tools = ['hover'], 
                 colorbar = True
             )
+            print(clim)
             return point_map
 
         return hv.DynamicMap(quick_map_generator, kdims=['time']).redim.values(time=datetimes)
@@ -248,11 +251,11 @@ class RiverinePlotter:
         """Get minimum and maximum value."""
         # TODO: will this slow things down in chunked mode?
         if at_datetime is not None:
-            mn_val = self.__plotting_data.get_at_time(constituent_name, at_datetime).values.min()
-            mx_val = self.__plotting_data.get_at_time(constituent_name, at_datetime).values.max()
+            mn_val = np.nanmin(self.__plotting_data.get_at_time(constituent_name, at_datetime).values)
+            mx_val = np.nanmax(self.__plotting_data.get_at_time(constituent_name, at_datetime).values)
         else:
-            mn_val = self.__plotting_data.get(constituent_name).values.min()
-            mx_val = self.__plotting_data.get(constituent_name).values.max()
+            mn_val = np.nanmin(self.__plotting_data.get(constituent_name).values)
+            mx_val = np.nanmax(self.__plotting_data.get(constituent_name).values)
         return (mn_val, mx_val)
 
 
