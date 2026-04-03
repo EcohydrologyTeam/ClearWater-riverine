@@ -328,20 +328,25 @@ class ClearwaterRiverine:
 
     def __update_calculated_variables(self):
         """Initialize calculated variables."""
+        # unregister
+        for calculated_variable, calculate in self.__calculated_variables.items():
+            if calculate and calculated_variable in self.registry:
+                self.registry.unregister(calculated_variable)
+        
+        # recalculate and register
         for calculated_variable, calculate in self.__calculated_variables.items():
             if calculate:
                 # if calculated_variable not in self.registry:
                 # TODO: add logic to set calculated variables in order of dependencies
-                calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
-                calculated_result = calculation_method(
-                    registry=self.registry,
-                )
-                if calculated_variable in self.registry:
-                    self.registry.unregister(calculated_variable)
-                self.registry.register(
-                    calculated_variable,
-                    calculated_result,
-                )
+                if calculated_variable not in self.registry:
+                    calculation_method = CALCULATED_VARIABLE_MAP[calculated_variable]
+                    calculated_result = calculation_method(
+                        registry=self.registry,
+                    )
+                    self.registry.register(
+                        calculated_variable,
+                        calculated_result,
+                    )
 
 
     def __init_output_store(self):
