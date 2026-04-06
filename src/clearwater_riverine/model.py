@@ -196,9 +196,9 @@ class ClearwaterRiverine:
         answer_value: Optional[float] = 100,
     ):
         if start_datetime is None:
-            start_datetime = self.__start_datetime
+            start_datetime = self._start_datetime
         if end_datetime is None:
-            end_datetime = self.__end_datetime
+            end_datetime = self._end_datetime
         return calculate_global_mass_balance(
             self.registry,
             constituent_name,
