@@ -31,7 +31,7 @@ model_name = 'sumwere_creek_coarse_p48'
 
 # required for riverine
 test_case_path = project_path / 'examples/data_temp' / model_name
-riverine_config = test_case_path / 'demo_config.yml'
+riverine_config = test_case_path / 'riverine.yml'
 
 # requierd information for modules
 wetted_surface_area_path = test_case_path / "wetted_surface_area.zarr"
