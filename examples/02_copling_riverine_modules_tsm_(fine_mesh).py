@@ -27,7 +27,7 @@ src_path = project_path / 'src'
 
 # ## Instantiate Models
 # ### Clearwater-Riverine
-model_name = 'sumwere_creek_coarse_p48'
+model_name = 'sumwere_creek_fine_p49'
 
 # required for riverine
 test_case_path = project_path / 'examples/data_temp' / model_name
