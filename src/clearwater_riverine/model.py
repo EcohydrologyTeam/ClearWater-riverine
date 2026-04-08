@@ -105,10 +105,6 @@ class ClearwaterRiverine:
         """
         Initialize a Clearwater Riverine water quality model from hydrodynamic model (e.g., HEC RAS) output.
         """
-        ## TODO: probably get rid of these
-        # self.gdf = None
-        # self.time_step = 0
-
         self.registry = variable_registry if variable_registry is not None else VariableRegistry()
         self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         self.__initial_condition_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
@@ -123,8 +119,7 @@ class ClearwaterRiverine:
         if config_filepath:
             model, data_sources, constituents = init_from_config(config_filepath)
             self.__root_directory = Path(model.get("root_directory", "./"))
-            self.__hydrodynamic_input = model["hydrodynamic_input"]
-            self.__flow_field_file_path = self.__root_directory / self.__hydrodynamic_input
+            self.__flow_field_file_path = model["hydrodynamic_input"]
             raw_chunk = model.get("chunk_size", None)
             self.__chunk_size = pd.Timedelta(raw_chunk) if raw_chunk is not None else None
             self._start_datetime = pd.to_datetime(model.get("start_datetime", None))
@@ -444,9 +439,6 @@ class ClearwaterRiverine:
             constituents=self._constituents,
             mass_flux_calculation=self.__mass_flux_calculation
          )
-
-        for constituent_name, _ in self._constituents.items():
-            constituent = self.registry.get_at_time(constituent_name, self.__current_time)
 
     def __calculate_mass_flux(self):
         if self.__mass_flux_calculation:
