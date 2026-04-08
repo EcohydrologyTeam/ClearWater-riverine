@@ -1,0 +1,62 @@
+# The `model` section defines the model configuration parameters.
+model:
+  root_directory: C:\Users\sjordan\Github\ClearWater-modules\data_temp\sumwere_creek_coarse_p49
+  hydrodynamic_input: clearWaterTestCases.p49.hdf
+  # The CRS should match the coordinate reference system of the HEC RAS output
+  crs: EPSG:26916
+  # The start datetime for the model simulation. It sould be specified as string and 
+  #match the pandas.to_datetime formatting requirements
+  # https://pandas.pydata.org/docs/reference/api/pandas.to_datetime.html#pandas.to_datetime
+  start_datetime: 2022-05-14 00:00:00 
+  # The end datetime for the model simulation. It sould be specified as string and 
+  # match the pandas.to_datetime formatting requirements
+  # https://pandas.pydata.org/docs/reference/api/pandas.to_datetime.html#pandas.to_datetime
+  end_datetime: 2022-05-14 08:00:00
+  # chunk_size is optional; if it is not included, the model will be run without chunking.
+  # chunking is preferred for very large models, while smaller runs may be more efficient without chunking.
+  # This is the main time step for the model. It should be specified as a string and 
+  # match the pandas.Timedelta formatting requirements
+  # https://pandas.pydata.org/docs/reference/api/pandas.Timedelta.html
+  chunk_size: 4h
+  # Diffusion coefficient (float)
+  diffusion_coefficient: 0.1
+  # This is a list of variable names (as string) to output to the model's output file
+  output_variables: []
+  # This is a list of calculated variables that are not required to run conservative transport
+  # but may be required to couple ClearWater-Riverine with ClearWater-Modules
+  # set the following to true or false to specify whether to calculate the additional variables
+  calculated_variables:
+    wetted_surface_area: false
+    average_depth: false
+    maximum_depth: false
+
+# The `constituents` section defines the constituents to be transported in the model.
+# Each constituent much define `intitial_conditions` and `boundary_conditions`.
+# These are defiend either by data sources in CSV files or floats; an example of each is shown below
+# this is defined by the following:
+  #`provider:` This is the type of data source provider (csv, float). 
+  #`data:` This is the provider configuration block. Information here is provider specific. 
+# Users can model multiple constituents or just one
+constituents:
+  water_temperature:
+    initial_conditions:
+      provider: csv
+      data: 
+        file_path: C:\Users\sjordan\Github\ClearWater-modules\data_temp\sumwere_creek_coarse_p49\cwr_initial_conditions_temp.csv
+        spatial_field: Cell_Index
+    boundary_conditions:
+      provider: csv
+      data:
+        file_path: C:\Users\sjordan\Github\ClearWater-modules\data_temp\sumwere_creek_coarse_p49\cwr_boundary_conditions_temp.csv
+        time_field: Datetime
+        spatial_field: RAS2D_TS_Name
+    units: degC
+  tracer:
+    initial_conditions:
+      provider: float
+      data:
+        value: 100
+    boundary_conditions:
+      provider: float
+      data:
+        value: 100
