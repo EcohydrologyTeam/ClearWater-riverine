@@ -1,43 +1,31 @@
 [project]
 name = "clearwater_riverine"
-dynamic = ["version", "readme"]
 description = "Clearwater Python transport model"
 authors = [
+    {name = "Sarah Jordan", email = "sjordan@limno.com"},
+    {name = "Jason M Rutyna", email = "jrutyna@limno.com"},
+    {name = "Anthony Aufdenkampe", email = "aaufdenkampe@limno.com"},
+    {name = "Paul Tomasula", email = "ptomasula@gmail.com"},
     {name = "Todd Steissberg", email = "Todd.E.Steissberg@erdc.dren.mil"},
 ]
-requires-python = ">=3.11"
-dependencies = [
-    "scipy",
-    "numba",
-    "dask",
-    "xarray",
+dynamic = ["version", "readme"]
+requires-python = ">= 3.11"
+dependencies=[
     "cf-xarray",
-    "h5py",
-    "hdf5plugin",
-    "gridgeo",
-    "netCDF4",
-    "zarr",
-    "numcodecs",
-    "bottleneck",
+    "dask",
     "geopandas",
-    "geoviews",
-    "spatialpandas",
-    "fastparquet",
-    "xarray-simlab",
-    "hvplot",
-    "panel>=0.14",
-    "cmasher",
-    "param",
-    "jupyterlab>=4",
-    "ipympl",
-    "ipywidgets",
-    "jupyter_bokeh>=4.0.1",
-    "pyviz_comms",
-    "selenium",
-    "geckodriver",
-    #TODO: restore these install,
-    # clearwater_data = { git = "https://github.com/EcohydrologyTeam/ClearWater-data.git" },
-    # clearwater_modules = { git = "https://github.com/EcohydrologyTeam/ClearWater-modules.git" },
+    "h5py",
+    "hdf5plugin", # compression filters
+    "holoviews",
+    "matplotlib",
+    # "numba", # only used in archived files in sandbox
+    "numpy",
+    "pandas",
+    "pyyaml",
+    "scipy",
+    "shapely",
+    "xarray",
+    "zarr", # dependency of clearwater-data, so not strictly required here
 ]
 
 
@@ -57,16 +45,35 @@ path = "./README.md"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+
 ########################
 ### Pixi 
 ########################
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["win-64"]
+platforms = ["linux-64", "osx-arm64", "win-64"]
+
+[tool.pixi.dependencies]
+# Notebooks & Visualization
+geoviews = "*"
+hvplot = "*"
+panel  = "*"
+jupyterlab = "*"
+jupyterlab-lsp = "*"
+ipympl = "*"
+ipywidgets = "*"
+jupyter_bokeh = "*"
+pyviz_comms = "*"
+selenium = "*"
+geckodriver = "*"
+python-lsp-server = "*"
+pylsp-mypy = "*"
 
 [tool.pixi.pypi-dependencies]
 clearwater_riverine = { path = ".", editable = true }
+clearwater_data = { path = "../ClearWater-data", editable = true }
+
 
 #############################
 ### Pixi Dev Environment
@@ -75,15 +82,16 @@ clearwater_riverine = { path = ".", editable = true }
 [tool.pixi.environments]
 dev = ["dev"]
 
-[tool.pixi.feature.dev.pypi-dependencies]
+[tool.pixi.feature.dev.dependencies]
 pytest = "*"
 pytest-cov = "*"
 pyright = "*"
 snakeviz = "*"
-python-lsp-server = "*"
-pylsp-mypy = "*"
-jupyterlab-lsp = "*"
+
+[tool.pixi.feature.dev.pypi-dependencies]
 clearwater_riverine = { path = ".", editable = true }
 clearwater_data = { path = "../ClearWater-data", editable = true }
 
 [tool.pixi.tasks]
+verify-install = {cmd = "python -c \"import clearwater_data; import clearwater_riverine; \""}
+

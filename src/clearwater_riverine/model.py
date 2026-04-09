@@ -315,6 +315,8 @@ class ClearwaterRiverine:
         """Initalize model constituents."""
         initial_conditions = self.__initial_condition_data_sources[constituent_name].read(constituent_name)
         boundary_conditions = self.__boundary_condition_data_sources[constituent_name].read(constituent_name)
+        if isinstance(boundary_conditions, DataArrayVariable):
+            boundary_conditions = DataArrayVariable(boundary_conditions.get().interpolate_na(dim="time", method="linear"))
 
         self._constituents[constituent_name] = Constituent(
             constituent_name=constituent_name,
