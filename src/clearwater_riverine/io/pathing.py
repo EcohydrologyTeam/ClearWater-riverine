@@ -1,16 +1,18 @@
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
-import inspect
 
-def resolve_path(path: Path, root_path: Optional[Path] = None):
+def resolve_path(path: str|Path, repo_path: Optional[str|Path] = None):
     """Resolves filepath from configuration file"""
+    # convert windows path string, if supplied
+    path = Path(PureWindowsPath(path))
 
     if path.is_absolute():
         absolute_path = path
     else:
-        if root_path is None:
-            root_path = Path.cwd()
-        absolute_path = root_path / path
+        if repo_path is None:
+            # Repo path, relative to this module
+            repo_path = Path(__file__).parent.parent.parent.parent
+        absolute_path = repo_path / path
     
     validate_path(absolute_path)
     return absolute_path
