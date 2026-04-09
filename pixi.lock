@@ -3029,7 +3029,7 @@ packages:
 - pypi: ../ClearWater-data
   name: clearwater-data
   version: 0.1.0
-  sha256: 7e3f38eeec3bbe0fbe028bfc3c7870d8908984b4cfe13e7a44663c8e4da16d34
+  sha256: ed863e085c5ecabedfe58c3cac6a184705bd9a3baff15a1c4326a61bbfe069b1
   requires_dist:
   - dask
   - pandas
@@ -3037,7 +3037,7 @@ packages:
 - pypi: ./
   name: clearwater-riverine
   version: 0.6.0
-  sha256: 34c1bc779ab3d38fd3cb5fe9370c649ad2e3f6300e4ce03de8697a74f3d8bf54
+  sha256: 84e57524cc4e63cf641f217c90694cc4ca0e8475aa8dd0d4bced04298a275c18
   requires_dist:
   - cf-xarray
   - dask

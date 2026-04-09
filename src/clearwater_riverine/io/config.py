@@ -8,6 +8,8 @@ from clearwater_data.io.base import DataSource, ChunkedDataSource
 from clearwater_data.io.float import FloatDataSource
 from clearwater_riverine.variables import DIFFUSION_COEFFICIENT
 
+from clearwater_riverine.io.pathing import resolve_path, validate_path
+
 REQUIRED_CONFIG_KEYS = [
     'model',
     'constituents'
@@ -24,17 +26,20 @@ def init_from_config(
     """Initializes Riverine from config"""
     config = read_config(config_filepath)
 
-    model = config['model']
-    constituents = config['constituents']
+    model_config = config['model']
+    validate_config(model_config["hydrodynamic_input"])
+    model_config["root_directory"] = resolve_path(Path(model_config.get("root_directory")))
+    model_config["hydrodynamic_input"] = model_config["root_directory"] / Path(model_config["hydrodynamic_input"])
+    constituents_config = config['constituents']
 
-    data_sources = __init_data_sources(config)
+    data_sources = __init_data_sources(config, model_config["root_directory"])
     data_sources['variable_data_sources'][DIFFUSION_COEFFICIENT] = FloatDataSource(**{
-        "value": model["diffusion_coefficient"]
+        "value": model_config["diffusion_coefficient"]
     })
 
-    return model, data_sources, constituents
+    return model_config, data_sources, constituents_config
 
-def __init_single_data_source(source_name: str, source_config: dict) -> "DataSource":
+def __init_single_data_source(source_name: str, source_config: dict, root_path: Path) -> "DataSource":
     """Helper to initialize a single data source from its config."""
     if "|" in source_name:
         raise ValueError(
@@ -42,8 +47,9 @@ def __init_single_data_source(source_name: str, source_config: dict) -> "DataSou
         )
 
     provider_name = source_config["provider"].lower()
-
     if provider_name == "csv":
+        source_config["data"]["file_path"] = root_path / Path(source_config["data"]["file_path"])
+        validate_path(source_config["data"]["file_path"])
         return CSVDataSource(**source_config["data"])
     elif provider_name == "float":
         return FloatDataSource(**source_config["data"])
@@ -53,7 +59,8 @@ def __init_single_data_source(source_name: str, source_config: dict) -> "DataSou
         )
 
 def __init_data_sources(
-        config: dict
+        config: dict,
+        root_path: Path,
 ):
     """Init all data sources from config file."""
     data_source: dict[str, DataSource | ChunkedDataSource] = {
@@ -64,10 +71,10 @@ def __init_data_sources(
     # Initialize all constituent data sources
     for source_name, source_config in config["constituents"].items():
         boundary_conditions = source_config["boundary_conditions"]
-        data_source['boundary_conditions'][source_name] = __init_single_data_source(source_name, boundary_conditions)
+        data_source['boundary_conditions'][source_name] = __init_single_data_source(source_name, boundary_conditions, root_path)
 
         initial_conditions = source_config["initial_conditions"]
-        data_source['initial_conditions'][source_name] = __init_single_data_source(source_name, initial_conditions)
+        data_source['initial_conditions'][source_name] = __init_single_data_source(source_name, initial_conditions, root_path)
 
     return data_source
 
