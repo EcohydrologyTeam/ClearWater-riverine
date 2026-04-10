@@ -84,10 +84,8 @@ You should now be able to run the examples and create your own Jupyter Notebooks
 
 ### Examples
 
-We recommend viewing or interactively running our [Sumwere Creek](examples/01_getting_started_riverine.ipynb) Jupyter Notebook.
+Try running our [01_getting_started_riverine.ipynb](examples/01_getting_started_riverine.ipynb) Jupyter Notebook.
 
-We recommend using [JupyterLab](https://jupyterlab.readthedocs.io/en/stable/) to run our tutorial [Juptyer Notebooks](https://jupyter.org/index.html) in the [example](examples) folder, due to many additional built-in features and extensions. The following JupyterLab [extensions](https://jupyterlab.readthedocs.io/en/stable/user/extensions.html) are particularly useful:
-- [lckr-jupyterlab-variableinspector](https://github.com/lckr/jupyterlab-variableInspector)
 
 ## Contributing
 

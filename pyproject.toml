@@ -80,7 +80,8 @@ clearwater_data = { path = "../ClearWater-data", editable = true }
 #############################
 
 [tool.pixi.environments]
-dev = ["dev"]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
 
 [tool.pixi.feature.dev.dependencies]
 pytest = "*"
