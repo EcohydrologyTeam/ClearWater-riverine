@@ -10,6 +10,7 @@ model:
     wetted_surface_area: true
     average_depth: true
     maximum_depth: false
+  output_variables: ["water_temperature", "tracer"]
 constituents:
   water_temperature:
     initial_conditions:

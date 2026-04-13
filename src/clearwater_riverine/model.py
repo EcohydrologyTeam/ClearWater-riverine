@@ -167,6 +167,13 @@ class ClearwaterRiverine:
         else:
             if self.__mass_flux_calculation:
                 self.__calculate_mass_flux()
+            
+            for variable_name in self.__output_variables:
+                variable = self.registry.get(variable_name)
+                self.__output_data_store.write(
+                    data=variable,
+                    parameter_name=variable_name,
+                )
     
     def plot(self, constituent_name: str, **kwargs):
         if self.plotter is None:

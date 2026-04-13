@@ -5,7 +5,7 @@ import pandas as pd
 
 # read config
 working_dir = Path.cwd()
-network_path = working_dir / 'examples/data_temp/sumwere_creek_coarse_p48'
+network_path = working_dir / 'examples/data/sumwere_creek_coarse'
 config_file = network_path / 'riverine.yml'
 
 # instantiate model
