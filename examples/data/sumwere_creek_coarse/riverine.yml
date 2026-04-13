@@ -1,18 +1,19 @@
 model:
-  root_directory: data/sumwere_creek_coarse/
-    # Simulation workspace directory, absolute or relative 
-    # to current working directory of the running process (i.e. notebook)
+  # Simulation workspace directory, absolute or relative 
+  # to current working directory of the running process (i.e. notebook)
+  simulation_directory: data/sumwere_creek_coarse/
   hydrodynamic_input: clearWaterTestCases.p48.hdf
   crs: EPSG:26916
   start_datetime: 2022-05-13 08:00
   end_datetime: 2022-05-13 10:00
-  diffusion_coefficient: 0.001
+  # chunk_size: 4h
+  diffusion_coefficient: 0.1
+  output_variables: ["water_temperature", "tracer"]
   mass_flux_calculation: true
   calculated_variables:
     wetted_surface_area: false
     average_depth: false
     maximum_depth: false
-  # output_variables: ["water_temperature", "tracer"]
 constituents:
   water_temperature:
     initial_conditions:
@@ -22,7 +23,7 @@ constituents:
         spatial_field: Cell_Index
     boundary_conditions:
       provider: csv
-      data: 
+      data:
         file_path: cwr_boundary_conditions_temp.csv
         time_field: Datetime
         spatial_field: RAS2D_TS_Name

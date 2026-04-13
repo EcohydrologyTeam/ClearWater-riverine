@@ -118,7 +118,7 @@ class ClearwaterRiverine:
 
         if config_filepath:
             model, data_sources, constituents = init_from_config(config_filepath)
-            self.__root_directory = Path(model.get("root_directory", "./"))
+            self.__simulation_directory = Path(model.get("simulation_directory", "./"))
             self.__flow_field_file_path = model["hydrodynamic_input"]
             raw_chunk = model.get("chunk_size", None)
             self.__chunk_size = pd.Timedelta(raw_chunk) if raw_chunk is not None else None
@@ -356,7 +356,7 @@ class ClearwaterRiverine:
     def __init_output_store(self):
         if self.__chunked_mode:
             self.__output_data_store = ChunkedZarrDataStore(
-                store_path=self.__root_directory / "model_outputs.zarr",
+                store_path=self.__simulation_directory / "model_outputs.zarr",
                 start_date=self._start_datetime,
                 end_date=self._end_datetime,
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
@@ -367,7 +367,7 @@ class ClearwaterRiverine:
             )
         else:
             self.__output_data_store = ZarrDataStore(
-                store_path=self.__root_directory / "model_outputs.zarr",
+                store_path=self.__simulation_directory / "model_outputs.zarr",
                 start_date=self._start_datetime,
                 end_date=self._end_datetime,
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
