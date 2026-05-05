@@ -5,7 +5,7 @@ model:
   hydrodynamic_input: clearWaterTestCases.p48.hdf
   crs: EPSG:26916
   start_datetime: 2022-05-13 08:00
-  end_datetime: 2022-05-13 10:00
+  end_datetime: 2022-05-13 23:59
   # chunk_size: 4h
   diffusion_coefficient: 0.1
   output_variables: ["water_temperature", "tracer"]

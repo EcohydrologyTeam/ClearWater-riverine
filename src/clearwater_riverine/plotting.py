@@ -4,6 +4,7 @@ import geopandas as gpd
 import pandas as pd
 import holoviews as hv
 import geoviews as gv
+import panel as pn
 from datetime import datetime
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -95,7 +96,7 @@ class RiverinePlotter:
             return (mesh_map * gv.tile_sources.CartoLight())
         
         dmap = hv.DynamicMap(map_generator, kdims=['datetime'])
-        return dmap.redim.values(datetime=datetimes)              
+        return pn.panel(dmap.redim.values(datetime=datetimes), widget_location='bottom')
 
 
     def static_plot(self,
@@ -168,24 +169,20 @@ class RiverinePlotter:
                     values[ind], np.arange(real_cell_index)[ind]
                 ]
             )
-            nodes = hv.Points(nodes, vdims=[constituent_name, NFACE])
-
-            point_map = hv.Scatter(
+            return hv.Points(
                 nodes,
-                vdims=['x', 'y', constituent_name, 'nface']
+                vdims=[constituent_name, NFACE]
             ).opts(
-                width = 1000,
-                height = 500,
-                color = constituent_name,
-                cmap = cmap, 
-                clim = clim,
-                tools = ['hover'], 
-                colorbar = True
+                width=600,
+                height=500,
+                color=constituent_name,
+                cmap=cmap,
+                clim=clim,
+                tools=['hover'],
+                colorbar=True,
             )
-            print(clim)
-            return point_map
 
-        return hv.DynamicMap(quick_map_generator, kdims=['time']).redim.values(time=datetimes)
+        return pn.panel(hv.DynamicMap(quick_map_generator, kdims=['time']).redim.values(time=datetimes), widget_location='bottom')
 
 
     def __prep_gdf(self):
