@@ -151,6 +151,7 @@ examples/data/ohio_river/OhioRiver_m.p22.hdf
 
 # Temporary files created by examples
 examples/data_temp/
+*model_outputs.zarr
 
 #local Visual Studio files
 /.vs
@@ -158,3 +159,7 @@ examples/data_temp/
 .vscode/launch.json
 
 examples/dev_sandbox/temp/*
+
+# pixi environments
+.pixi*
+*.egg-info

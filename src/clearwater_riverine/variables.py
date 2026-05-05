@@ -9,6 +9,8 @@ FACE_NODES = 'face_nodes'
 EDGE_FACE_CONNECTIVITY = 'edge_face_connectivity'
 FACES = 'nface'
 MESH_2D = 'mesh_2d'
+NEDGE = 'nedge'
+NFACE = 'nface'
 
 # Available Variables
 EDGES_FACE1 = 'edges_face1'
@@ -45,3 +47,13 @@ MAXIMUM_DEPTH = 'maximum_depth'
 # Structures
 GATE_CONNECTIVITY = 'gate_connectivity'
 GATE_FLOW = 'gate_flow'
+
+# Lookup tables
+LOOKUP_VOLUME = 'lookup_volume'
+LOOKUP_ELEVATION = 'lookup_elevation'
+LOOKUP_WETTED_SURFACE_AREA = 'lookup_wetted_surface_area'
+
+# Boundary conditions
+BOUNDARY_CONDITION_LINE_ID = 'BC Line ID'
+BOUNDARY_FACE_INDEX = 'Face Index'
+BOUNDARY_NAME = 'Name'

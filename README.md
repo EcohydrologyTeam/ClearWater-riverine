@@ -10,109 +10,89 @@ A secondary goal is to develop a suite of easy-to-use modern Python tools that b
 
 The following plot shows an animation of E. Coli transport in the Ohio River in June, 2010. A sudden inflow of E. Coli enters the Ohio River at Covington on the south shore of the river. The downstream flow and lateral spread of E. Coli over time is due to the transport and mixing processes (advection-diffusion) in the river. 
 
-![ClearWater-Riverine animation of E. Coli transport in the Ohio River](images/ClearWater-Riverine-and-EFDC-Ohio.gif)
+![ClearWater-Riverine animation of E. Coli transport in the Ohio River](docs/gifs/ClearWater-Riverine-and-EFDC-Ohio.gif)
 
 ClearWater-Riverine performance was compared to an existing EFDC model of the Ohio River, and both models were verified with observed data. These comparisons verified that ClearWater-Riverine is accurately capaturing the transport processes in this system. A side-by-side comparison of the two models is shown below.
 
-![Comparison of ClearWater-Riverine and EFDC model performance for simulating E. Coli transport in the Ohio River](images/ClearWater-Riverine-Ohio.gif)
+![Comparison of ClearWater-Riverine and EFDC model performance for simulating E. Coli transport in the Ohio River](docs/gifs/ClearWater-Riverine-Ohio.gif)
 
 ## Repository Directories
 
-**[src](src)** contains the source code to create and run the clearwater_riverine.
+**[`src`](src)** contains the source code to create and run the `clearwater_riverine`.
 
-**[examples](examples)** contains tutorials and useful Juptyer Notebooks.
+**[`examples`](examples)** contains tutorials and useful Juptyer Notebooks.
 
-**[docs](docs)** contains relevant reference documentation.
+**[`docs`](docs)** contains relevant reference documentation.
 
-**[tests](tests)** will contain clearwater_riverine tests once they are developed. 
+**[`tests`](tests)** will contain clearwater_riverine tests once they are developed. 
 
-# Getting Started
+## Getting Started
 
-## Installation
+### Installation
 
-Clearwater Riverine is designed to run with **Python 3.10**. 
+Follow these steps to install the ClearWater Modeling System and its dependancies in a custom Python environment.
 
-Follow these steps to install.
+We recommend using [pixi](https://pixi.prefix.dev/latest/), the next-generation reproducible package management tool built on [conda](https://docs.conda.io/projects/conda/en/stable/) tooling.
 
-#### 1. Install Miniconda or Anaconda Distribution
+If you are new to pixi but familiar with conda, this [Switching from Conda](https://pixi.prefix.dev/latest/switching_from/conda/) documentation succinctly compares similarities and differences.
 
-We recommend installing the light-weight [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) that includes Python, the [conda](https://conda.io/docs/) environment and package management system, and their dependencies.
+Alternately, use a conda environment with the same dependencies.
 
-NOTE: Follow conda defaults to install in your local user director. DO NOT install for all users, to avoid substantial headaches with permissions.
+#### 1. Install Pixi
 
-If you have already installed the [**Anaconda Distribution**](https://www.anaconda.com/download), you can use it to complete the next steps, but you may need to [update to the latest version](https://docs.anaconda.com/free/anaconda/install/update-version/).
+Follow [Pixi Installation](https://pixi.prefix.dev/latest/installation/) instructions for your platform.
 
-#### 2. Clone or Download this `Clearwater-riverine` repository
+#### 2. Clone or Download the ClearWater family of repositories
 
-From this Github site, click on the green "Code" dropdown button near the upper right. Select to either Open in GitHub Desktop (i.e. git clone) or "Download ZIP". We recommend using GitHub Desktop, to most easily receive updates.
+There are three repositories which house the dependencies for this project. Navigate to each of the repositories listed below and follow the instructions to clone them to your local machine.
 
-Place your copy of this repo folder in any convenient location on your computer.
+- [ClearWater-riverine](https://github.com/EcohydrologyTeam/ClearWater-riverine) transport process simulator
+- [ClearWater-data](https://github.com/EcohydrologyTeam/ClearWater-data) perforamant data access and storage protocols
+- [ClearWater-modules](https://github.com/EcohydrologyTeam/ClearWater-modules) (optional) water quality reaction process simulator
 
-#### 3. Create a Conda Environment for Clearwater Riverine Modeling 
+From these Github sites, click on the green "Code" dropdown button near the upper right. Select to either "Open in GitHub Desktop" (i.e. git clone) or "Download ZIP". 
 
-We recommend creating a custom virtual environment with the [Conda](https://conda.io/docs/) package, dependency, and environment management for any language (i.e. easily install C++ packages such as GDAL).
+We recommend using GitHub Desktop, to most easily manage git workflows by providing excellent visuals for stagging commits, exploring commit histories, comparing branches, and resolving merge conflicts in tight integration with Visual Studio Code.
 
-We provide an [`environment.yml`](environment.yml) file that specifies for [Conda](https://conda.io/docs/) how to create a virtual environment that contains the same software dependencies that we've used in development and testing.
+Place your copy of these repos in any convenient location on your computer. Make sure that all are stored in the same directory OR you will need to update the `pyproject.toml` so that the `[pixi.tool.feature.dev.pypi-dependencies]` point to the correct location of your local clones.
 
-Create a `ClearWater-modules` environment using this [conda](https://conda.io/docs/) command in your terminal or Anaconda Prompt console. If necessary, replace `environment.yml` with the full file pathway to the `environment.yml` file in the local cloned repository.
+### 3. Create Clearwater Workspace and Python Environments 
 
-```shell
-conda env create --file environment.yml
-```
+Create a project-specific Pixi workspace and Python enviornment(s) from the `pyproject.toml` manifest file.
 
-Alternatively, use the faster [`libmamba` solver](https://conda.github.io/conda-libmamba-solver/getting-started/) with:
+#### Production 
 
-```shell
-conda env create -f environment.yml --solver=libmamba
-```
+Pardon our mess! Production instructions coming soon. For now you can install using the [Developer](#developer) instructions. 
 
-If users are experiencing issues with plots NOT displaying in jupyter notebooks once a cell is executed, then we recommend using the `environment_working.yml` file. We have noticed that later versions of some libraries might be creating a conflict, but we have not been able to track down the root cause since no warnings/errors are given when the plot does NOT display:
+#### Developers
 
-```shell
-conda env create -f environment_working.yml --solver=libmamba
-```
+Developer instructions install all ClearWater repos in "editable" mode in a second `dev` environment.
 
-Activate the environment using the instructions printed by conda after the environment is created successfully.
-
-To update your environment to the latest versions of dependencies and/or add additional dependencies to your environment (by first editting [`environment.yml`](environment.yml)), run the following command:
+From your terminal or console, navigate to the directory of your `Clearwater-riverine` clone and execute the following command to create a `dev` environment:
 
 ```shell
-conda env update -f environment.yml --solver=libmamba --prune
+pixi install -e dev
 ```
 
-or to recreate from scratch:
+To activate this environment in your shell, run the following:
 
 ```shell
-conda env create -f environment.yml --solver=libmamba --force
-```
-
-For additional information on managing conda environments, see [Conda's User Guide on Managing Environments](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html).
-
-#### 4. Add your `ClearWater-riverine` Path to Miniconda/Anaconda sites-packages
-
-To have access to the `clearwater_riverine` module in your Python environments, it is necessary to have a path to your copy of Clearwater Riverine in Anaconda's `sites-packages` directory (i.e. something like `$HOME/path/to/anaconda/lib/pythonX.X/site-packages` or `$HOME/path/to/anaconda/lib/site-packages` similar).
-
-The easiest way to do this is to use the [`conda develop`](https://docs.conda.io/projects/conda-build/en/latest/resources/commands/conda-develop.html) command in the console or terminal like this, replacing '/path/to/module/src' with the full file pathway to the local cloned Clearwater-riverine repository:
-
-```console
-conda develop '/path/to/module/src'
+pixi shell -e dev
 ```
 
 You should now be able to run the examples and create your own Jupyter Notebooks!
 
+### Examples
 
-## Examples
-
-We recommend viewing or interactively running our [Ohio River](examples/Ohio%20River.ipynb) Jupyter Notebook.
-
-We recommend using [JupyterLab](https://jupyterlab.readthedocs.io/en/stable/) to run our tutorial [Juptyer Notebooks](https://jupyter.org/index.html) in the [example](examples) folder, due to many additional built-in features and extensions. The following JupyterLab [extensions](https://jupyterlab.readthedocs.io/en/stable/user/extensions.html) are particularly useful:
-- [lckr-jupyterlab-variableinspector](https://github.com/lckr/jupyterlab-variableInspector)
-
-# Contributing
+Try running our [01_getting_started_riverine.ipynb](examples/01_getting_started_riverine.ipynb) Jupyter Notebook.
 
 
-# Acknowlgements
+## Contributing
+
+We welcome your pull request.
+
+## Acknowledgements
 
 This library is developed by ERDC-EL through funding from the ECOMOD project.
-Dr. Todd E. Steissberg (ERDC-EL) developed the vision for this library as an example of how to couple at water transport model with a water quality reaction model :
+Dr. Todd E. Steissberg (ERDC-EL) developed the vision for this library as an example of how to couple at water transport model with a water quality reaction model.
 

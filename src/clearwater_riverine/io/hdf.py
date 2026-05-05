@@ -3,6 +3,7 @@ from typing import (
     Any,
     Tuple,
     Optional,
+    Union,
 )
 
 import h5py
@@ -10,73 +11,48 @@ import xarray as xr
 # import variables
 import numpy as np
 import pandas as pd
+from datetime import datetime
+from clearwater_data.variables.xarray import DataArrayVariable
 
+from clearwater_riverine.mesh import (
+    instantiate_model_mesh,
+    load_model_mesh
+)
 from clearwater_riverine.variables import (
+    BOUNDARY_CONDITION_LINE_ID,
+    BOUNDARY_FACE_INDEX,
+    BOUNDARY_NAME,
+    CHANGE_IN_TIME,
+    COEFFICIENT_TO_DIFFUSION_TERM,
+    DIFFUSION_COEFFICIENT,
+    NEDGE,
+    NFACE,
     NODE_X,
     NODE_Y,
     TIME,
     FACE_NODES,
     EDGE_NODES,
-    EDGES_FACE1,
-    EDGES_FACE2,
     EDGE_FACE_CONNECTIVITY,
     FACE_X,
     FACE_Y,
     FACE_SURFACE_AREA,
+    FACE_TO_FACE_DISTANCE,
     GATE_CONNECTIVITY,
     GATE_FLOW,
-    EDGE_VELOCITY,
     EDGE_LENGTH,
+    EDGE_VELOCITY,
+    EDGE_VERTICAL_AREA,
+    LOOKUP_ELEVATION,
+    LOOKUP_VOLUME,
+    LOOKUP_WETTED_SURFACE_AREA,
     WATER_SURFACE_ELEVATION,
     FLOW_ACROSS_FACE,
-    NUMBER_OF_REAL_CELLS,
     VOLUME,
     VOLUME_ELEVATION_INFO,
     VOLUME_ELEVATION_VALUES,
     VOLUME_ELEVATION_LOOKUP,
     FACE_HYD_DEPTH,
-    FACE_VEL_X,
-    FACE_VEL_Y,
-    FACE_VEL_MAG,
 )
-
-
-def _hdf_internal_paths(project_name):
-    """ Define HDF paths to relevant data"""
-    hdf_paths = {
-        NODE_X: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
-        NODE_Y: f'Geometry/2D Flow Areas/{project_name}/FacePoints Coordinate',
-        TIME: 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
-        FACE_NODES: f'Geometry/2D Flow Areas/{project_name}/Cells FacePoint Indexes',
-        EDGE_NODES: f'Geometry/2D Flow Areas/{project_name}/Faces FacePoint Indexes',
-        EDGE_FACE_CONNECTIVITY: f'Geometry/2D Flow Areas/{project_name}/Faces Cell Indexes',
-        FACE_X: f'Geometry/2D Flow Areas/{project_name}/Cells Center Coordinate',
-        FACE_Y: f'Geometry/2D Flow Areas/{project_name}/Cells Center Coordinate',
-        FACE_SURFACE_AREA: f'Geometry/2D Flow Areas/{project_name}/Cells Surface Area',
-        EDGE_VELOCITY: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Velocity',
-        EDGE_LENGTH: f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length',
-        WATER_SURFACE_ELEVATION: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Water Surface',
-        FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Face Flow',
-        VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Volume',
-        FACE_HYD_DEPTH: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Hydraulic Depth',
-        FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Velocity - Velocity X',
-        FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{project_name}/Cell Velocity - Velocity Y',
-        'project_name': 'Geometry/2D Flow Areas/Attributes',
-        'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
-        'volume elevation info': f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info',
-        'volume_elevation_values': f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values',
-        'area_elevation_info': f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Info',
-        'area_elevation_values': f'Geometry/2D Flow Areas/{project_name}/Faces Area Elevation Values',
-        'normalunitvector_length': f'Geometry/2D Flow Areas/{project_name}/Faces NormalUnitVector and Length',
-        'boundary_condition_external_faces': 'Geometry/Boundary Condition Lines/External Faces',
-        'boundary_condition_attributes': 'Geometry/Boundary Condition Lines/Attributes/',
-        'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions',
-        VOLUME_ELEVATION_INFO: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Info',
-        VOLUME_ELEVATION_VALUES: f'Geometry/2D Flow Areas/{project_name}/Cells Volume Elevation Values',
-        'gate_path': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/SA 2D Area Conn',
-    }
-    return hdf_paths
-
 
 def _parse_attributes(dataset) -> Dict[str, Any]:
     """
@@ -109,7 +85,10 @@ def _hdf_to_xarray(
 ) -> xr.DataArray:
     """Read n-dimensional HDF5 dataset and return it as an xarray.DataArray"""
     if attrs is None:
-        attrs = _parse_attributes(dataset)
+        try:
+            attrs = _parse_attributes(dataset)
+        except AttributeError as e:
+            attrs = {}
     if time_constraint != (None, None):
         data_to_read = dataset[()][time_constraint[0]: time_constraint[1]]
     else:
@@ -132,113 +111,179 @@ def _hdf_to_dataframe(dataset) -> pd.DataFrame:
     return df
 
 
-class HDFReader:
+class RASHDFDataSource:
     """
-    Reads RAS hydrodynamic data required for WQ calculations
-    in Clearwater Riverine Model from HDF file.
+    Reads RAS hydrodynamic data required for WQ calculations.
     """
-    def __init__(
-        self,
-        file_path: str,
-        datetime_range: Optional[Tuple[int, int] | Tuple[str, str]] = None
-    ) -> None:
-        """
-        Opens HDF file and reads information required to
-        set-up model mesh.
-        """
-        self.file_path = file_path
-        self.infile = h5py.File(file_path, 'r')
-        self.project_name = self.infile[
-            'Geometry/2D Flow Areas/Attributes'
-        ][()][0][0].decode('UTF-8')
-        self.paths = _hdf_internal_paths(self.project_name)
-        self.datetime_range = datetime_range
-        try:
-            self.gates = list(self.infile[self.paths['gate_path']].keys())
-            self.has_gates = True
-        except KeyError:
-            self.has_gates = False
+    def __init__(self, **kwargs) -> None:
+        self.ras_hdf_path: str = kwargs.pop("ras_hdf_path")
+        self.start_datetime: datetime = kwargs.pop("start_datetime", None)
+        self.end_datetime: datetime = kwargs.pop("end_datetime", None)
+        self.datetime_range = (self.start_datetime, self.end_datetime)
+        self.calculated_variables = kwargs.pop("calculated_variables", {})
 
-    def _parse_dates(self):
+        self.mesh = instantiate_model_mesh()
+        self.temporal_variables = {
+            VOLUME: NFACE,
+            EDGE_VELOCITY: NEDGE,
+            WATER_SURFACE_ELEVATION: NFACE,
+            FLOW_ACROSS_FACE: NEDGE,
+        }
+        self.static_variables = {
+            FACE_SURFACE_AREA: NFACE,
+            EDGE_LENGTH: NEDGE,
+        }
+        self.topology_variables = [
+            FACE_X,
+            FACE_Y,
+            EDGE_FACE_CONNECTIVITY,
+            FACE_NODES,
+            NODE_X,
+            NODE_Y,
+        ]
+        self.lookup_variables = [
+            LOOKUP_ELEVATION,
+            LOOKUP_VOLUME,
+            LOOKUP_WETTED_SURFACE_AREA,
+        ]
+        self.boundary_variables = [
+            BOUNDARY_CONDITION_LINE_ID,
+            BOUNDARY_FACE_INDEX,
+            BOUNDARY_NAME,
+        ]
+
+        # Add internal ones or modify as needed
+        self.calculated_variables.update({
+            EDGE_VERTICAL_AREA: True,
+            FACE_TO_FACE_DISTANCE: True,
+            COEFFICIENT_TO_DIFFUSION_TERM: True,
+            CHANGE_IN_TIME: True,
+        })
+
+        ## TODO: add datetime validation somewhere
+        # self.__validate_datetime_range()
+
+        with h5py.File(self.ras_hdf_path, 'r') as infile:
+            # set-up steps
+            self.project_name = infile[
+                'Geometry/2D Flow Areas/Attributes'
+            ][()][0][0].decode('UTF-8')
+            self.paths = self.__set_internal_paths()
+            self.gate_names = self.__identify_gates(infile)
+            self.__parse_datetimes(infile)
+
+            # populate mesh
+            self.__define_spatial_coordinates(infile)
+            self.__define_topology(infile)
+            self.__define_boundary_hydrodynamics(infile)
+            self.__read_static_variables(infile)
+            
+            # populate lookup table
+            self.volume_elevation_lookup = self.__create_lookup_xarray(infile)
+
+            # gather additional data
+            self.real_cell_count = self.mesh[EDGE_FACE_CONNECTIVITY].T[0].values.max() + 1
+
+
+    def __identify_gates(
+        self,
+        infile,
+    ):
+        """Assesses if gate structures exist in HEC RAS model."""
+        try:
+            gate_names = list(infile[self.paths['gate_path']].keys())
+            self.variables_to_read.append(
+                'gate_path'
+            )
+        except KeyError:
+            gate_names = None
+        return gate_names
+
+
+    def __set_internal_paths(self):
+        """ Define HDF paths to relevant data"""
+        return {
+            NODE_X: f'Geometry/2D Flow Areas/{self.project_name}/FacePoints Coordinate',
+            NODE_Y: f'Geometry/2D Flow Areas/{self.project_name}/FacePoints Coordinate',
+            TIME: 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
+            FACE_NODES: f'Geometry/2D Flow Areas/{self.project_name}/Cells FacePoint Indexes',
+            EDGE_NODES: f'Geometry/2D Flow Areas/{self.project_name}/Faces FacePoint Indexes',
+            EDGE_FACE_CONNECTIVITY: f'Geometry/2D Flow Areas/{self.project_name}/Faces Cell Indexes',
+            FACE_X: f'Geometry/2D Flow Areas/{self.project_name}/Cells Center Coordinate',
+            FACE_Y: f'Geometry/2D Flow Areas/{self.project_name}/Cells Center Coordinate',
+            FACE_SURFACE_AREA: f'Geometry/2D Flow Areas/{self.project_name}/Cells Surface Area',
+            EDGE_VELOCITY: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Face Velocity',
+            EDGE_LENGTH: f'Geometry/2D Flow Areas/{self.project_name}/Faces NormalUnitVector and Length',
+            WATER_SURFACE_ELEVATION: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Water Surface',
+            FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Face Flow',
+            VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Volume',
+            FACE_HYD_DEPTH: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Hydraulic Depth',
+            # FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity X',
+            # FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity Y',
+            'project_name': 'Geometry/2D Flow Areas/Attributes',
+            'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
+            'volume elevation info': f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Info',
+            'volume_elevation_values': f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Values',
+            'area_elevation_info': f'Geometry/2D Flow Areas/{self.project_name}/Faces Area Elevation Info',
+            'area_elevation_values': f'Geometry/2D Flow Areas/{self.project_name}/Faces Area Elevation Values',
+            'normalunitvector_length': f'Geometry/2D Flow Areas/{self.project_name}/Faces NormalUnitVector and Length',
+            'boundary_condition_external_faces': 'Geometry/Boundary Condition Lines/External Faces',
+            'boundary_condition_attributes': 'Geometry/Boundary Condition Lines/Attributes/',
+            'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions',
+            VOLUME_ELEVATION_INFO: f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Info',
+            VOLUME_ELEVATION_VALUES: f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Values',
+            'gate_path': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/SA 2D Area Conn',
+        }
+
+
+    def __parse_datetimes(
+        self, 
+        infile: h5py.File,
+    ):
         """Date handling."""
         # time
-        time_stamps_binary = self.infile[self.paths['binary_time_stamps']][()]
+        time_stamps_binary = infile[self.paths['binary_time_stamps']][()]
 
         # pandas is working faster than numpy for binary conversion
+        ## TODO: figure out if it's faster to store all timesteps in memory and subset on each read
+        ## OR if it's faster to do this binary conversion for each new chunk read.
         time_stamps = pd.Series(time_stamps_binary).str.decode('utf8')
-        xr_time_stamps = pd.to_datetime(time_stamps, format='%d%b%Y %H:%M:%S')
+        self.all_datetimes = pd.to_datetime(time_stamps, format='%d%b%Y %H:%M:%S')
 
-        if self.datetime_range is None:
-            self.datetime_range_indices = (None, None)
-        elif isinstance(self.datetime_range[0], int):
-            self.datetime_range_indices: Tuple[int, int] = (
-                self.datetime_range[0],
-                self.datetime_range[1] + 1
-                )
-        elif isinstance(self.datetime_range[0], str):
-            start_date, end_date = map(
-                lambda x: pd.to_datetime(x, format='%m-%d-%Y %H:%M:%S'),
-                self.datetime_range
-            )
-            subset_dates = xr_time_stamps[
-                (xr_time_stamps >= start_date) & (xr_time_stamps <= end_date)
-            ]
-            subset_indices = subset_dates.index.intersection(
-                xr_time_stamps.index
-            )
-            self.datetime_range_indices: Tuple[int, int] = (
-                subset_indices[0],
-                subset_indices[-1] + 1
-            )
-        else:
-            raise TypeError(
-                "Invalid datetime_range, must be tuple of strings or ints"
-            )
 
-        if self.datetime_range_indices != (None, None):
-            xr_time_stamps = xr_time_stamps[
-                    self.datetime_range_indices[0]:
-                    self.datetime_range_indices[1]
-                    ]
-
-        return xr_time_stamps
-
-    def define_coordinates(self, mesh: xr.Dataset):
+    def __define_spatial_coordinates(
+        self,
+        infile: h5py.File
+    ):
         """Populate Coordinates and Dimensions"""
         # x-coordinates
-        mesh = mesh.assign_coords(
+        self.mesh = self.mesh.assign_coords(
             node_x=xr.DataArray(
-                data=self.infile[self.paths[NODE_X]][()].T[0],
+                data=infile[self.paths[NODE_X]][()].T[0],
                 dims=('node',),
             )
         )
         # y-coordinates
-        mesh = mesh.assign_coords(
+        self.mesh = self.mesh.assign_coords(
             node_y=xr.DataArray(
-                data=self.infile[self.paths[NODE_X]][()].T[1],
+                data=infile[self.paths[NODE_X]][()].T[1],
                 dims=('node',),
             )
-        )
+        )    
 
-        xr_time_stamps = self._parse_dates()
 
-        mesh = mesh.assign_coords(
-            time=xr.DataArray(
-                data=xr_time_stamps,
-                dims=('time',),
-            )
-        )
-        return mesh
-
-    def define_topology(self, mesh: xr.Dataset):
+    def __define_topology(
+        self,
+        infile: h5py.File,
+    ):
         """Define mesh topology """
-        mesh[FACE_NODES] = xr.DataArray(
-            data=self.infile[
+        self.mesh[FACE_NODES] = xr.DataArray(
+            data=infile[
                 f'Geometry/2D Flow Areas/{self.project_name}/Cells FacePoint Indexes'
             ][()],
             coords={
-                "face_x": ('nface', self.infile[self.paths[FACE_X]][()].T[0]),
-                "face_y": ('nface', self.infile[self.paths[FACE_Y]][()].T[1]),
+                "face_x": ('nface', infile[self.paths[FACE_X]][()].T[0]),
+                "face_y": ('nface', infile[self.paths[FACE_Y]][()].T[1]),
             },
             dims=('nface', 'nmax_face'),
             attrs={
@@ -248,16 +293,16 @@ class HDFReader:
                 '_FillValue': -1
             }
         )
-        mesh[EDGE_NODES] = xr.DataArray(
-            data=self.infile[self.paths[EDGE_NODES]][()],
+        self.mesh[EDGE_NODES] = xr.DataArray(
+            data=infile[self.paths[EDGE_NODES]][()],
             dims=("nedge", '2'),
             attrs={
                 'cf_role': 'edge_node_connectivity',
                 'long_name': 'Vertex nodes of mesh edges',
                 'start_index': 0
             })
-        mesh[EDGE_FACE_CONNECTIVITY] = xr.DataArray(
-            data=self.infile[self.paths[EDGE_FACE_CONNECTIVITY]][()],
+        self.mesh[EDGE_FACE_CONNECTIVITY] = xr.DataArray(
+            data=infile[self.paths[EDGE_FACE_CONNECTIVITY]][()],
             dims=("nedge", '2'),
             attrs={
                 'cf_role': 'edge_face_connectivity',
@@ -265,19 +310,19 @@ class HDFReader:
                 'start_index': 0
             })
         
-        if self.has_gates:
+        if self.gate_names is not None:
             connectivity_list = []
-            for g in self.gates:
-                headwater_cells = self.infile[
+            for g in self.gate_names:
+                headwater_cells = infile[
                     f"{self.paths['gate_path']}/{g}/HW TW Segments/Headwater Cells"][()].astype(int)
-                tailwater_cells = self.infile[
+                tailwater_cells = infile[
                     f"{self.paths['gate_path']}/{g}/HW TW Segments/Tailwater Cells"][()].astype(int)
                 gate_connectivity = np.stack((tailwater_cells, headwater_cells), axis=1)
                 connectivity_list.append(gate_connectivity)
             
             connectivity_array = np.concatenate(connectivity_list, axis=0)
 
-            mesh[GATE_CONNECTIVITY] = xr.DataArray(
+            self.mesh[GATE_CONNECTIVITY] = xr.DataArray(
                 data=connectivity_array,
                 dims=[GATE_CONNECTIVITY, '2'],
                 attrs={
@@ -285,114 +330,133 @@ class HDFReader:
                 }
             )
 
+    def read(self, parameter_name:str) -> DataArrayVariable:
+        return DataArrayVariable(self.__read(parameter_name))
 
-    def define_hydrodynamics(self, mesh: xr.Dataset):
-        """Populates hydrodynamic data in UGRID-compliant xarray."""
-        mesh[EDGES_FACE1] = _hdf_to_xarray(
-            mesh['edge_face_connectivity'].T[0],
+    def __read(self, parameter_name: str):
+        if parameter_name in self.mesh.data_vars:
+            return self.mesh[parameter_name]
+        else:
+            self.__subset_datetimes(
+                self.start_datetime,
+                self.end_datetime,
+            )
+            self.__update_time_coordinate()
+            self.__update_mesh()
+            return self.mesh[parameter_name]
+        
+    def read_chunk(
+        self,
+        parameter_name: str,
+        start_time: datetime,
+        end_time: datetime
+    ) -> DataArrayVariable:
+        return DataArrayVariable(
+            self.__read_chunk(parameter_name, start_time, end_time),
+            space_dimension=self.temporal_variables[parameter_name]
+        )        
+
+    def __read_chunk(
+        self,
+        parameter_name: str,
+        start_time: datetime,
+        end_time: datetime
+    ):
+        if (
+            "time" in self.mesh.coords
+            and (self.mesh.time[0] == start_time)
+            and (self.mesh.time[-1] == end_time)
+            and (parameter_name in self.mesh.data_vars)
+        ):
+            return self.mesh[parameter_name]
+        else:
+            self.__subset_datetimes(
+                start_time,
+                end_time
+            )
+            self.__update_time_coordinate()
+            self.__update_mesh()
+            return self.mesh[parameter_name]
+        
+    
+    def __update_mesh(
+            self,
+    ):
+        with h5py.File(self.ras_hdf_path, 'r') as infile:
+            self.__read_temporal_variables(infile)
+
+    # def read() --> as variable DataArray variable
+
+    def __subset_datetimes(
+        self,
+        start_datetime: datetime,
+        end_datetime: datetime,
+    ):
+        
+        subset_dates = self.all_datetimes[
+            (self.all_datetimes >= start_datetime) & (self.all_datetimes <= end_datetime)
+        ]
+        subset_indices = subset_dates.index.intersection(
+            self.all_datetimes.index
+        )
+        self.datetime_range_indices: Tuple[int, int] = (
+            subset_indices[0],
+            subset_indices[-1] + 1
+        )
+
+        if self.datetime_range_indices != (None, None):
+            self.datetime_subset = self.all_datetimes[
+                    self.datetime_range_indices[0]:
+                    self.datetime_range_indices[1]
+                    ]
+        else:
+            self.datetime_subset = self.all_datetimes
+
+
+    def __update_time_coordinate(
+        self,  
+    ):
+        self.mesh = self.mesh.assign_coords(
+            time=xr.DataArray(
+                data=self.datetime_subset,
+                dims=('time',),
+            )
+        )
+
+    
+    def __read_static_variables(
+        self,
+        infile: h5py.File,
+    ):
+        ## TODO: is this needed?
+        self.mesh[FACE_SURFACE_AREA] = _hdf_to_xarray(
+            infile[self.paths[FACE_SURFACE_AREA]],
+            (NFACE)
+        )
+        self.nface = len(self.mesh[NFACE])
+
+        self.mesh[EDGE_LENGTH] = _hdf_to_xarray(
+            infile[self.paths[EDGE_LENGTH]][:, 2],
             ('nedge'),
-            attrs={'Units': ''}
         )
-        mesh[EDGES_FACE2] = _hdf_to_xarray(
-            mesh['edge_face_connectivity'].T[1],
-            ('nedge'),
-            attrs={'Units': ''}
-        )
+        self.nedge = len(self.mesh[NEDGE])
 
-        nreal = mesh[EDGE_FACE_CONNECTIVITY].T[0].values.max()
-        mesh.attrs[NUMBER_OF_REAL_CELLS] = nreal
-
-        mesh[FACE_SURFACE_AREA] = _hdf_to_xarray(
-            self.infile[self.paths[FACE_SURFACE_AREA]],
-            ("nface")
-        )
-        mesh[EDGE_VELOCITY] = _hdf_to_xarray(
-            self.infile[self.paths[EDGE_VELOCITY]],
-            ('time', 'nedge'),
-            time_constraint=self.datetime_range_indices,
-
-        )
-        mesh[EDGE_LENGTH] = _hdf_to_xarray(
-            self.infile[self.paths[EDGE_LENGTH]][:, 2],
-            ('nedge'),
-            attrs={'Units': 'ft'}
-        )
-        mesh[WATER_SURFACE_ELEVATION] = _hdf_to_xarray(
-            self.infile[self.paths[WATER_SURFACE_ELEVATION]],
-            (['time', 'nface']),
-            time_constraint=self.datetime_range_indices
-        )
-        try:
-            mesh[VOLUME] = _hdf_to_xarray(
-                self.infile[self.paths[VOLUME]],
-                ('time', 'nface'),
-                time_constraint=self.datetime_range_indices
+    def __read_temporal_variables(
+        self,
+        infile: h5py.File,
+    ):
+        for variable in self.temporal_variables.keys():
+            self.mesh[variable] = _hdf_to_xarray(
+                infile[self.paths[variable]],
+                ('time', self.temporal_variables[variable]),
+                time_constraint=self.datetime_range_indices,
             )
-        except KeyError:
-            mesh.attrs['volume_calculation_required'] = True
-            mesh.attrs['face_volume_elevation_info'] = _hdf_to_dataframe(
-                self.infile[self.paths['volume elevation info']]
-            )
-            mesh.attrs['face_volume_elevation_values'] = _hdf_to_dataframe(
-                self.infile[self.paths['volume_elevation_values']]
-            )
-        try:
-            mesh[FLOW_ACROSS_FACE] = _hdf_to_xarray(
-                self.infile[self.paths[FLOW_ACROSS_FACE]],
-                ('time', 'nedge'),
-                time_constraint=self.datetime_range_indices
-            )
-        except:
-            mesh.attrs['face_area_calculation_required'] = True
-            mesh.attrs['face_area_elevation_info'] = _hdf_to_dataframe(
-                self.infile[self.paths['area_elevation_info']]
-            )
-            mesh.attrs['face_area_elevation_values'] = _hdf_to_dataframe(
-                self.infile[self.paths['area_elevation_values']]
-            )
-            mesh.attrs['face_normalunitvector_and_length'] = _hdf_to_dataframe(
-                self.infile[self.paths['normalunitvector_length']]
-            )
-            mesh.attrs['face_cell_indexes_df'] = _hdf_to_dataframe(
-                self.infile[self.paths[EDGE_FACE_CONNECTIVITY]]
-            )
-        try:
-            mesh[FACE_HYD_DEPTH] = _hdf_to_xarray(
-                self.infile[self.paths[FACE_HYD_DEPTH]],
-                (['time', 'nface']),
-                time_constraint=self.datetime_range_indices
-            )
-        except KeyError:
-            print("'Cell Hydraulic Depth' not found in hdf file; skip reading it. ")
-        try:
-            mesh[FACE_VEL_X] = _hdf_to_xarray(
-                self.infile[self.paths[FACE_VEL_X]],
-                (['time', 'nface']),
-                time_constraint=self.datetime_range_indices
-            )
-        except KeyError:
-            print("'Cell Velocity - Velocity X' not found in hdf file; skip reading it. ")
-        try:
-            mesh[FACE_VEL_Y] = _hdf_to_xarray(
-                self.infile[self.paths[FACE_VEL_Y]],
-                (['time', 'nface']),
-                time_constraint=self.datetime_range_indices
-            )
-        except KeyError:
-            print("'Cell Velocity - Velocity Y' not found in hdf file; skip reading it. ")
-        try:
-            mesh[FACE_VEL_MAG] = (mesh[FACE_VEL_X] ** 2
-                                + mesh[FACE_VEL_Y] ** 2) ** 0.5
-        except KeyError:
-            print("Cell velocities X and Y not found in hdf file; skip calculating velocity magnitude")
-
-        mesh.attrs[VOLUME_ELEVATION_LOOKUP] = self._create_lookup_df()
 
         # add gate flows
-        if self.has_gates:
+        if self. gate_names is not None:
             flow_list = []
             for g in self.gates:
-                gate_flow = self.infile[
+                gate_flow = infile[
                     f"{self.paths['gate_path']}/{g}/HW TW Segments/Flow"][()][:,0:-1] * -1
                 flow_list.append(gate_flow)
             
@@ -400,7 +464,7 @@ class HDFReader:
             flow_array = np.concatenate(flow_list, axis=1) 
             flow_array = flow_array[self.datetime_range_indices[0]: self.datetime_range_indices[1]]
 
-            mesh[GATE_FLOW] = xr.DataArray(
+            self.mesh[GATE_FLOW] = xr.DataArray(
                 data=flow_array,
                 dims=["time", GATE_FLOW],
                 attrs={
@@ -408,13 +472,16 @@ class HDFReader:
                 }
             )
 
-    def _create_lookup_df(self):
-        """Create volume elevation lookup dataframe."""
+    def __create_lookup_xarray(
+        self,
+        infile: h5py.File
+    ):
+        """Create volume elevation lookup xarray dataset."""
         volume_elevation_info_df = _hdf_to_dataframe(
-            self.infile[self.paths[VOLUME_ELEVATION_INFO]]
+            infile[self.paths[VOLUME_ELEVATION_INFO]]
             )
         volume_elevation_vals_df = _hdf_to_dataframe(
-            self.infile[self.paths[VOLUME_ELEVATION_VALUES]]
+            infile[self.paths[VOLUME_ELEVATION_VALUES]]
         )
         # Define cells associated with each lookup value
         volume_elevation_vals_df['Cell'] = np.concatenate(
@@ -427,29 +494,40 @@ class HDFReader:
             ]
         )
 
-        # Create lookup table
-        df_ls = []
+        # Create lookup dataset
+        lookup_datasets = []
 
         for cell in volume_elevation_vals_df['Cell'].unique():
-            cell_df = self._create_cell_lookup_table(
+            cell_df = self.__create_cell_lookup_table(
                 cell,
-                volume_elevation_vals_df
+                volume_elevation_vals_df,
+                infile,
             )
-            df_ls.append(cell_df)
+            cell_df = cell_df.rename(
+                columns = {
+                    "Elevation": LOOKUP_ELEVATION,
+                    "Volume": LOOKUP_VOLUME,
+                    "Wetted Surface Area": LOOKUP_WETTED_SURFACE_AREA,
+                }
+            )
+            ds_cell = xr.Dataset.from_dataframe(cell_df)
+            ds_cell = ds_cell.expand_dims({"nface": [cell]})
+            lookup_datasets.append(ds_cell)
 
-        return pd.concat(df_ls)
+        return xr.concat(lookup_datasets, dim="nface", join="outer")
 
-    def _create_cell_lookup_table(
+    def __create_cell_lookup_table(
         self,
         cell_no: int,
         df: pd.DataFrame,
+        infile: h5py.File
     ) -> pd.DataFrame:
         """Create volume-elevation lookup table for each cell."""
         # Filter for single cell
         df_temp = df[df['Cell'] == cell_no]
         test_df = df_temp.copy().reset_index(drop=True)
         cell_surface_area = _hdf_to_dataframe(
-            self.infile[self.paths[FACE_SURFACE_AREA]]
+            infile[self.paths[FACE_SURFACE_AREA]]
             )
 
         # Add row for flat cells (i.e., only one entry in lookup)
@@ -491,17 +569,20 @@ class HDFReader:
         test_df.at[0, 'Wetted Surface Area'] = 0
         return test_df
 
-    def define_boundary_hydrodynamics(self, mesh: xr.Dataset):
-        """Read necessary information on hydrodynamics,"""
+    def __define_boundary_hydrodynamics(
+        self,
+        infile: h5py.File
+    ):
+        """Read necessary information on hydrodynamics."""
         # Pull important boundary information from the HDF file.
         external_faces = pd.DataFrame(
-            self.infile[self.paths['boundary_condition_external_faces']][()]
+            infile[self.paths['boundary_condition_external_faces']][()]
         )
         attributes = pd.DataFrame(
-            self.infile[self.paths['boundary_condition_attributes']][()]
+            infile[self.paths['boundary_condition_attributes']][()]
         )
         list_of_boundaries = list(
-            self.infile[self.paths['boundary_condition_fixes']].keys()
+            infile[self.paths['boundary_condition_fixes']].keys()
         )
 
         # Decode data
@@ -521,17 +602,21 @@ class HDFReader:
         )
 
         # fix boundaries if needed
-        boundary_data = self._fix_boundary_hydrodynamics(
+        boundary_data = self.__fix_boundary_hydrodynamics(
             boundary_data,
-            list_of_boundaries
+            infile
         )
-        # add to the mesh
-        mesh.attrs['boundary_data'] = boundary_data
+        # store as boundary data
+        self.boundary_data = (
+            xr.Dataset.from_dataframe(boundary_data)
+            # .set_coords(BOUNDARY_NAME)
+            # .rename({BOUNDARY_NAME: 'RAS2D_TS_Name'})
+        )
 
-    def _fix_boundary_hydrodynamics(
+    def __fix_boundary_hydrodynamics(
         self,
         boundary_data: pd.DataFrame,
-        list_of_boundaries: list,
+        infile: h5py.File
     ) -> pd.DataFrame:
         """
         Fixes a HEC-RAS bug in designating faces associated with
@@ -543,7 +628,7 @@ class HDFReader:
         for boundary in boundary_data.Name.unique():
             fix_path = self.paths['boundary_condition_fixes']
             fpath = f"{fix_path}/{boundary} - Flow per Face"
-            attrs = _parse_attributes(self.infile[fpath])
+            attrs = _parse_attributes(infile[fpath])
             boundary_faces_fix = attrs['Faces']
             boundary_faces_orig = boundary_data[
                 (boundary_data.Name == boundary)]['Face Index']
@@ -574,6 +659,20 @@ class HDFReader:
 
         return fixed_df_full
 
-    def close(self):
-        """Close HDF file"""
-        self.infile.close()
+
+### SANDBOX:
+### DERIVED VARIABLES
+        # """Populates hydrodynamic data in UGRID-compliant xarray."""
+        # mesh[EDGES_FACE1] = _hdf_to_xarray(
+        #     mesh['edge_face_connectivity'].T[0],
+        #     ('nedge'),
+        #     attrs={'Units': ''}
+        # )
+        # mesh[EDGES_FACE2] = _hdf_to_xarray(
+        #     mesh['edge_face_connectivity'].T[1],
+        #     ('nedge'),
+        #     attrs={'Units': ''}
+        # )
+        
+        # nreal = mesh[EDGE_FACE_CONNECTIVITY].T[0].values.max()
+        # mesh.attrs[NUMBER_OF_REAL_CELLS] = nreal
