@@ -192,9 +192,6 @@ class RASHDFDataSource:
         """Assesses if gate structures exist in HEC RAS model."""
         try:
             gate_names = list(infile[self.paths['gate_path']].keys())
-            self.variables_to_read.append(
-                'gate_path'
-            )
         except KeyError:
             gate_names = None
         return gate_names
@@ -455,7 +452,7 @@ class RASHDFDataSource:
         # add gate flows
         if self. gate_names is not None:
             flow_list = []
-            for g in self.gates:
+            for g in self.gate_names:
                 gate_flow = infile[
                     f"{self.paths['gate_path']}/{g}/HW TW Segments/Flow"][()][:,0:-1] * -1
                 flow_list.append(gate_flow)
