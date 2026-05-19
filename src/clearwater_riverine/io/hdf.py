@@ -52,6 +52,8 @@ from clearwater_riverine.variables import (
     VOLUME_ELEVATION_VALUES,
     VOLUME_ELEVATION_LOOKUP,
     FACE_HYD_DEPTH,
+    FACE_VEL_X,
+    FACE_VEL_Y,
 )
 
 def _parse_attributes(dataset) -> Dict[str, Any]:
@@ -215,8 +217,12 @@ class RASHDFDataSource:
             FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Face Flow',
             VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Volume',
             FACE_HYD_DEPTH: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Hydraulic Depth',
-            # FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity X',
-            # FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity Y',
+            # Path scaffolding only: FACE_VEL_X / FACE_VEL_Y are NOT in
+            # temporal_variables, so __read_temporal_variables never reads
+            # them. Wiring them in is a 1-line add once their Phase-D
+            # consumer (depth/velocity diffusion closure) is ported.
+            FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity X',
+            FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity Y',
             'project_name': 'Geometry/2D Flow Areas/Attributes',
             'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
             'volume elevation info': f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Info',
@@ -443,8 +449,17 @@ class RASHDFDataSource:
         infile: h5py.File,
     ):
         for variable in self.temporal_variables.keys():
+            hdf_path = self.paths[variable]
+            if hdf_path not in infile:
+                raise KeyError(
+                    f"Required temporal variable '{variable}' is absent from "
+                    f"the HEC-RAS HDF (expected dataset: '{hdf_path}'). This "
+                    f"RAS run did not output it; fallback computation of this "
+                    f"variable from geometry/volume is not yet ported on this "
+                    f"branch."
+                )
             self.mesh[variable] = _hdf_to_xarray(
-                infile[self.paths[variable]],
+                infile[hdf_path],
                 ('time', self.temporal_variables[variable]),
                 time_constraint=self.datetime_range_indices,
             )
