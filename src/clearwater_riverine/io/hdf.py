@@ -12,7 +12,19 @@ import xarray as xr
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from pathlib import Path
+
+import clearwater_riverine
 from clearwater_data.variables.xarray import DataArrayVariable
+from clearwater_riverine.io.mesh_cache import (
+    CACHE_SCHEMA_VERSION,
+    build_cache_key_inputs,
+    cache_file_path,
+    cache_key_hash,
+    default_cache_dir,
+    read_cache,
+    write_cache,
+)
 
 from clearwater_riverine.mesh import (
     instantiate_model_mesh,
@@ -123,6 +135,8 @@ class RASHDFDataSource:
         self.end_datetime: datetime = kwargs.pop("end_datetime", None)
         self.datetime_range = (self.start_datetime, self.end_datetime)
         self.calculated_variables = kwargs.pop("calculated_variables", {})
+        self.__rebuild_mesh: bool = kwargs.pop("rebuild_mesh", False)
+        self.__mesh_cache_dir = kwargs.pop("mesh_cache_dir", None)
 
         self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
@@ -165,6 +179,74 @@ class RASHDFDataSource:
         ## TODO: add datetime validation somewhere
         # self.__validate_datetime_range()
 
+        # --- static-geometry cache (Phase-C C1b) ---------------------
+        # __build_static_from_hdf walks thousands of small geometry
+        # datasets plus the per-cell volume-elevation lookup loop; on a
+        # real corridor (Albany 587k cells) that costs 30-60 min and is
+        # fully deterministic from the HDF. Cache the static result on
+        # disk. Temporal read()/read_chunk() always re-open the HDF for
+        # the (cheap, sequential) time slabs, so they are unaffected and
+        # the cache never depends on the requested datetime window.
+        hdf_path = Path(self.ras_hdf_path)
+        cache_disabled = False
+        if self.__mesh_cache_dir is None:
+            cache_dir = default_cache_dir(hdf_path)
+        else:
+            cache_dir = Path(self.__mesh_cache_dir)
+            if str(cache_dir) in ('', '.'):
+                cache_disabled = True
+
+        cache_path = None
+        if not cache_disabled:
+            try:
+                cache_path = cache_file_path(
+                    cache_dir,
+                    cache_key_hash(
+                        build_cache_key_inputs(
+                            hdf_path=hdf_path,
+                            cwr_version=clearwater_riverine.__version__,
+                            extra={},
+                        )
+                    ),
+                )
+            except OSError:
+                # stat() failure -- treat as cache disabled.
+                cache_disabled = True
+
+        # Hit path: rehydrate the static state and skip the HDF walk.
+        # Any unexpected payload shape falls through to a clean rebuild,
+        # so a cache can never produce incorrect data.
+        if (
+            not cache_disabled
+            and not self.__rebuild_mesh
+            and cache_path is not None
+        ):
+            payload = read_cache(cache_path)
+            if payload is not None:
+                try:
+                    self.__rehydrate_static(payload)
+                    return
+                except Exception:
+                    pass
+
+        # Miss / forced rebuild / stale: full static build from the HDF.
+        self.__build_static_from_hdf()
+
+        # Best-effort cache write (a write failure must not break a run).
+        if not cache_disabled and cache_path is not None:
+            try:
+                write_cache(cache_path, self.__static_payload())
+            except Exception:
+                pass
+
+    def __build_static_from_hdf(self) -> None:
+        """Walk the HEC-RAS HDF and populate all static state.
+
+        Sets project_name, paths, gate_names, all_datetimes, the static
+        mesh (coords + topology + static vars), boundary_data, the
+        volume-elevation lookup, nface/nedge, and real_cell_count. This
+        is the expensive path the on-disk cache exists to skip.
+        """
         with h5py.File(self.ras_hdf_path, 'r') as infile:
             # set-up steps
             self.project_name = infile[
@@ -179,12 +261,52 @@ class RASHDFDataSource:
             self.__define_topology(infile)
             self.__define_boundary_hydrodynamics(infile)
             self.__read_static_variables(infile)
-            
+
             # populate lookup table
             self.volume_elevation_lookup = self.__create_lookup_xarray(infile)
 
             # gather additional data
             self.real_cell_count = self.mesh[EDGE_FACE_CONNECTIVITY].T[0].values.max() + 1
+
+    def __static_payload(self) -> Dict[str, Any]:
+        """Assemble the cacheable static state.
+
+        Everything __build_static_from_hdf produces, so a hit can fully
+        reconstruct the data source without touching the HDF for
+        geometry. Temporal arrays are deliberately excluded -- they are
+        re-read fresh from the HDF on every run.
+        """
+        return {
+            'schema_version': CACHE_SCHEMA_VERSION,
+            'cwr_version': clearwater_riverine.__version__,
+            'mesh': self.mesh,
+            'boundary_data': self.boundary_data,
+            'volume_elevation_lookup': self.volume_elevation_lookup,
+            'nface': self.nface,
+            'nedge': self.nedge,
+            'real_cell_count': self.real_cell_count,
+            'project_name': self.project_name,
+            'paths': self.paths,
+            'gate_names': self.gate_names,
+            'all_datetimes': self.all_datetimes,
+        }
+
+    def __rehydrate_static(self, payload: Dict[str, Any]) -> None:
+        """Restore static state from a cached payload (hit path).
+
+        A missing key raises KeyError, which the __init__ hit path
+        catches and treats as a stale cache -> rebuild.
+        """
+        self.mesh = payload['mesh']
+        self.boundary_data = payload['boundary_data']
+        self.volume_elevation_lookup = payload['volume_elevation_lookup']
+        self.nface = payload['nface']
+        self.nedge = payload['nedge']
+        self.real_cell_count = payload['real_cell_count']
+        self.project_name = payload['project_name']
+        self.paths = payload['paths']
+        self.gate_names = payload['gate_names']
+        self.all_datetimes = payload['all_datetimes']
 
 
     def __identify_gates(

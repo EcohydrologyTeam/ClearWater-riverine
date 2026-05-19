@@ -163,3 +163,7 @@ examples/dev_sandbox/temp/*
 # pixi environments
 .pixi*
 *.egg-info
+
+# Clearwater Riverine static-geometry mesh cache (derived from the
+# source HEC-RAS HDF; never source, must not be committed)
+.cwr_mesh_cache/
