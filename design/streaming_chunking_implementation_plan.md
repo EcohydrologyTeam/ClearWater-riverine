@@ -134,6 +134,21 @@ On a new branch off `clearwater_data` main (never main):
 4. B4 riverine-side: tolerance-based chunk-boundary detection (`>=` next
    boundary) + scalar-vs-array `dt` handling in `__increment_timestep`.
    Validate each step against the Phase-B gate (no closure regression).
+   - **C2-discovered (2026-05-19), C4 to fix:** `__init_chunks` uses
+     `pd.date_range(start, end, freq=chunk_size)[1:-1]`. When
+     `(end - start)` is not an exact integer multiple of `chunk_size`,
+     `date_range`'s last element is `< end`, so `[1:-1]` drops a
+     *legitimate interior* chunk boundary — the final chunk then spans
+     ~2× `chunk_size`, exceeding the memory ceiling `chunk_size` is meant
+     to bound. Exact-grid runs are unaffected; the C2 chunked oracle
+     deliberately uses even splits to isolate this from the v3-write check.
+
+   Note (C2 done): step 2 needed no fork code — §10 RE-BASE, canonical
+   already on the blessed `ChunkedZarrDataStore.write_chunk(region="auto")`
+   v3 path. C2 instead added the missing chunked-path test oracle (the
+   Phase-B guard was non-chunked only), found+loud-guarded the chunked
+   `mass_flux` re-registration crash (6th defect; continuity is step 3's),
+   and proved the v3 chunked write reproduces the non-chunked field.
 
 ### Phase D — Numerical-correctness ports (separate workstream)
 

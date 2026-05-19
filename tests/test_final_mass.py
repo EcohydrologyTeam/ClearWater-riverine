@@ -32,11 +32,14 @@ sidesteps the new CSVDataSource column-naming contract).
 from pathlib import Path
 
 import h5py
+import numpy as np
 import pandas as pd
 import pytest
+import xarray as xr
 import yaml
 
 import clearwater_riverine as cwr
+from clearwater_riverine.variables import CHANGE_IN_TIME
 
 DATA = Path(__file__).parent / "data"
 SIMPLE = DATA / "simple_test_cases"
@@ -148,4 +151,179 @@ def test_mass_conservation_guard(plan_key, tmp_path):
     assert modeled == pytest.approx(answer, rel=GUARD_ANSWER_REL), (
         f"{plan_key}: modeled end-mass {modeled:.6g} drifted from the "
         f"uniform-100 answer {answer:.6g} beyond rel={GUARD_ANSWER_REL}"
+    )
+
+
+# --- Chunked-mode sibling guard (Phase-C C2) --------------------------------
+# The non-chunked guard above never sets ``chunk_size``, so the standardized
+# blessed output path -- ``__transport_chunked`` / ``__load_new_chunk`` /
+# ``__finalize_chunk`` -> ``ChunkedZarrDataStore.write_chunk(region="auto")``,
+# Zarr v3 -- had ZERO test coverage. C2 establishes that missing oracle (which
+# C3, the release/checkpoint re-base living entirely in this path, will need).
+
+
+def _build_model(plan_dir, hdf_name, diff_coef, tmp_path, *,
+                 chunk_size=None, mass_flux=True):
+    """Construct (do NOT run) a model with an ISOLATED output store.
+
+    ``simulation_directory`` is ``tmp_path`` and ``hydrodynamic_input`` is the
+    ABSOLUTE HDF path. ``clearwater_data.io.config`` joins them as
+    ``simulation_directory / hydrodynamic_input``; pathlib discards the left
+    side when the right is absolute, so the HDF still resolves from
+    ``plan_dir`` while ``model_outputs.zarr`` lands under ``tmp_path`` -- no
+    collision with the non-chunked guard and no test-data-dir pollution.
+
+    When ``chunk_size`` is given, ``output_variables=["tracer"]`` so
+    ``__finalize_chunk`` actually drives
+    ``ChunkedZarrDataStore.write_chunk(region="auto")``; the non-chunked
+    guard's ``output_variables=[]`` would make that write loop a no-op.
+    """
+    start, end = _hdf_time_bounds(plan_dir / hdf_name)
+    model_cfg = {
+        "simulation_directory": str(tmp_path),
+        "hydrodynamic_input": str((plan_dir / hdf_name).resolve()),
+        "start_datetime": str(start),
+        "end_datetime": str(end),
+        "diffusion_coefficient": diff_coef,
+        "output_variables": ["tracer"] if chunk_size is not None else [],
+        "mass_flux_calculation": mass_flux,
+        "calculated_variables": {
+            "wetted_surface_area": False,
+            "average_depth": False,
+            "maximum_depth": False,
+        },
+    }
+    if chunk_size is not None:
+        model_cfg["chunk_size"] = chunk_size
+    cfg = {
+        "model": model_cfg,
+        "constituents": {
+            "tracer": {
+                "initial_conditions": {"provider": "float", "data": {"value": 100}},
+                "boundary_conditions": {"provider": "float", "data": {"value": 100}},
+            }
+        },
+    }
+    cfg_path = tmp_path / (
+        "riverine_chunked.yml" if chunk_size is not None else "riverine_probe.yml"
+    )
+    cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    return cwr.ClearwaterRiverine(config_filepath=str(cfg_path))
+
+
+def _even_chunk_size(plan_dir, hdf_name, diff, tmp_path):
+    """Derive a chunk_size giving an EXACT, even >=2-chunk split.
+
+    Returns ``(chunk_size_str, m)``, or ``(None, None)`` if the plan's step
+    count has no clean split (caller skips -- non-even chunk boundaries are a
+    separate C4 ``__init_chunks [1:-1]`` concern). A non-chunked probe (the
+    loud guard only fires for chunked + mass_flux) yields the model's own
+    ``CHANGE_IN_TIME``, which A3 requires ``chunk_size`` to be a multiple of.
+    """
+    probe = _build_model(plan_dir, hdf_name, diff, tmp_path)
+    dt_s = float(probe.registry.get(CHANGE_IN_TIME))
+    start, end = _hdf_time_bounds(plan_dir / hdf_name)
+    n_steps = round((end - start).total_seconds() / dt_s)
+    m = next(
+        (k for k in (3, 2) if n_steps % k == 0 and n_steps // k >= 2), None
+    )
+    if m is None:
+        return None, None
+    return str(pd.Timedelta(seconds=dt_s) * (n_steps // m)), m
+
+
+@pytest.mark.parametrize("plan_key", list(PLANS))
+def test_chunked_mass_flux_loudly_unsupported(plan_key, tmp_path):
+    """6th canonical defect, asserted as a contained, loud boundary (C2).
+
+    Chunked ``__finalize_chunk`` re-registers ``{constituent}_mass_flux``
+    every chunk with ``overwrite=False`` (chunk-2 ``ValueError``), and even
+    past that computes only the current chunk's window with no cross-chunk
+    accumulation -> wrong chunked global mass balance. Cross-chunk flux/mass
+    continuity is the fork PORT item owned by Phase-C C3. Until C3, the model
+    must reject this configuration *loudly and early* (at construction, before
+    the HDF is read) rather than crash mid-run on chunk 2.
+    """
+    if plan_key in SKIP:
+        pytest.skip(SKIP[plan_key])
+    plan_dir, hdf_name, diff = PLANS[plan_key]
+    with pytest.raises(NotImplementedError, match="Phase-C C3"):
+        _build_model(
+            plan_dir, hdf_name, diff, tmp_path,
+            chunk_size="1h", mass_flux=True,
+        )
+
+
+@pytest.mark.parametrize("plan_key", list(PLANS))
+def test_chunked_v3_write_path_sound(plan_key, tmp_path):
+    """The standardized v3 chunked write path reproduces the non-chunked field.
+
+    Isolated from the C3-owned mass-flux-continuity gap by running with
+    ``mass_flux_calculation=False`` (so the loud guard does not fire and no
+    per-chunk flux is registered). This drives the full multi-chunk
+    ``__transport_chunked`` / ``__load_new_chunk`` / ``__finalize_chunk`` ->
+    ``ChunkedZarrDataStore.write_chunk(region="auto")`` (Zarr v3) path -- which
+    no test had ever driven to completion.
+
+    Oracle: the chunked WRITTEN store must equal the NON-CHUNKED in-memory
+    field cell-for-cell, on the time slots the chunked run actually wrote.
+    Self-calibrating against the model's true (ghost-inclusive) field -- a
+    uniform IC=BC=100 tracer is 100 only in real cells; ghost/boundary cells
+    are legitimately 0 after the IC in BOTH modes, so a "== 100" oracle would
+    be wrong. ``region="auto"`` leaves trailing rolling-boundary slots NaN (a
+    C3/D4 concern), so only finite written rows are compared. No closure
+    assertion: the boundary-flux metric needs the disabled mass flux.
+    """
+    if plan_key in SKIP:
+        pytest.skip(SKIP[plan_key])
+    plan_dir, hdf_name, diff = PLANS[plan_key]
+
+    chunk_size, m = _even_chunk_size(plan_dir, hdf_name, diff, tmp_path)
+    if chunk_size is None:
+        pytest.skip(
+            f"{plan_key}: step count has no exact >=2-chunk split with "
+            f">=2 slots/chunk; non-even chunk boundaries are a C4 "
+            f"(__init_chunks [1:-1]) concern, out of scope for this oracle."
+        )
+
+    # Non-chunked reference field (the established-green guard path).
+    ref_model = _build_model(plan_dir, hdf_name, diff, tmp_path, mass_flux=False)
+    ref_model.run()
+    ref = np.asarray(ref_model.registry.get("tracer"))
+
+    # Chunked run through the v3 write path.
+    model = _build_model(
+        plan_dir, hdf_name, diff, tmp_path,
+        chunk_size=chunk_size, mass_flux=False,
+    )
+    model.run()
+
+    store = tmp_path / "model_outputs.zarr"
+    assert store.exists(), (
+        f"{plan_key} [chunked x{m}]: chunked run wrote no Zarr store"
+    )
+    ds = xr.open_zarr(store, consolidated=False)
+    assert "tracer" in ds, (
+        f"{plan_key} [chunked x{m}]: 'tracer' missing from the v3 store"
+    )
+    out = ds["tracer"].values
+
+    # Compare index-aligned (both runs share the identical global uniform
+    # time grid -- same HDF, dt, start/end), on rows the chunked store wrote
+    # fully (finite). Trailing NaN rolling-boundary slots are the known
+    # C3/D4 concern and are excluded from the soundness oracle.
+    n = min(ref.shape[0], out.shape[0])
+    ref, out = ref[:n], out[:n]
+    written = np.isfinite(out).all(axis=tuple(range(1, out.ndim)))
+    n_written = int(written.sum())
+    assert n_written >= 2, (
+        f"{plan_key} [chunked x{m}]: only {n_written} fully-written time "
+        f"rows in the v3 store; chunked write produced no usable output"
+    )
+    mism = ~np.isclose(out[written], ref[written], rtol=1e-6, atol=1e-6)
+    assert not mism.any(), (
+        f"{plan_key} [chunked x{m}]: v3 chunked write diverges from the "
+        f"non-chunked field at {int(mism.sum())}/{mism.size} written cells "
+        f"(max |Δ|={float(np.nanmax(np.abs(out[written] - ref[written]))):.4g}); "
+        f"chunked transport/write is not faithful to non-chunked"
     )

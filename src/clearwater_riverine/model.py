@@ -127,6 +127,24 @@ class ClearwaterRiverine:
             self.__calculated_variables = model.get("calculated_variables", None)
             self.__output_variables = model.get("output_variables", constituents)
             self.__mass_flux_calculation = model.get("mass_flux_calculation", False)
+            # Loud precondition (Phase-C C2, 6th canonical defect). In chunked
+            # mode __finalize_chunk runs every chunk and re-registers
+            # f"{constituent}_mass_flux" with overwrite=False, so chunk 2
+            # crashes with a cryptic "already registered" ValueError. Even
+            # past that, _calculate_mass_flux computes only the current
+            # chunk's window with no cross-chunk accumulation, so a chunked
+            # global mass balance would be incorrect. Cross-chunk flux/mass
+            # continuity is a fork PORT item owned by Phase-C C3. Fail loudly
+            # and early until C3 lands it.
+            if self.__chunk_size is not None and self.__mass_flux_calculation:
+                raise NotImplementedError(
+                    "Chunked mode with mass_flux_calculation=True is not yet "
+                    "supported: per-chunk mass flux re-registers without "
+                    "cross-chunk accumulation, so the chunked global mass "
+                    "balance would be incorrect. Cross-chunk flux/mass "
+                    "continuity is deferred to Phase-C C3. Run with "
+                    "chunk_size unset, or with mass_flux_calculation=False."
+                )
             self.crs = model.get("crs", None)
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)
@@ -456,8 +474,6 @@ class ClearwaterRiverine:
 
     def __transport(self):
         """Call transport process"""
-        # TODO: actual transport. 
-        # For now, dummy logic for testing
         self.__transport_engine.run(
             registry=self.registry,
             current_time=self.__current_time,
