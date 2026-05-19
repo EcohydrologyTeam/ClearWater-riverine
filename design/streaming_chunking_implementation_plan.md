@@ -145,8 +145,23 @@ On a new branch off `clearwater_data` main (never main):
      `calculate_global_mass_balance` path byte-identical (new optional
      `chunk_accumulator` only). Validated: chunked closure ≡ non-chunked to
      ~7 sig figs, all 7 plans; suite 21 pass / 6 skip.
-   - **C3b NEXT:** checkpoint/resume on the resolved v3 substrate
-     (`write_chunk` + `.npz` + JSON; resume via B1 `read_chunk`).
+   - **C3b DONE:** checkpoint/resume on the v3 substrate. Cross-repo:
+     `clearwater_data` adds an additive `init_template: bool = True`
+     kwarg to `ZarrDataStore.__init__` so an existing store survives
+     resume (on the `steissberg-clearwater-data-chunked-reader` branch,
+     not main; merge-back via separate PR). `clearwater_riverine`:
+     `model.checkpoint(dir)` writes `checkpoint.json` (current_time +
+     C3a `__mb_acc` + sha256 config-identity hash) plus
+     `resume_state.npz` (per-constituent boundary-slot concentration
+     for the resumed chunk's IC). `ClearwaterRiverine.from_checkpoint(
+     config, dir)` rebuilds with `_existing_output_store=True`,
+     restores the accumulator + timestamp, stages resume ICs (wrapped
+     to match the constituent's `nface` coord), and calls
+     `__load_new_chunk` to load the resume chunk; a `__just_resumed`
+     one-shot flag suppresses the chunk-end re-finalize/re-load on the
+     first post-resume `update()`. Validated: resumed closure equals
+     uninterrupted closure within `rel=1e-9` on all 7 plans;
+     full suite 28 pass / 8 skip; no regression to C3a / C2 / non-chunked.
 4. B4 riverine-side: tolerance-based chunk-boundary detection (`>=` next
    boundary) + scalar-vs-array `dt` handling in `__increment_timestep`.
    Validate each step against the Phase-B gate (no closure regression).

@@ -16,6 +16,8 @@ from typing import (
     Tuple,
 )
 from pathlib import Path
+import hashlib
+import json
 import warnings
 import inspect
 from datetime import datetime, timedelta
@@ -80,6 +82,20 @@ CONVERSIONS = {'Metric': {'Liters': 0.001},
                'Unknown': {'Liters': 0.001},
                }
 
+_CHECKPOINT_SCHEMA_VERSION = 1
+"""Bump when the C3b checkpoint payload structure changes (keys, dtypes,
+sidecar files, …). ``from_checkpoint`` rejects mismatched versions."""
+
+
+def _sha256_of_file(path: str | Path) -> str:
+    """Sha-256 of a file's contents, used as the C3b config-identity check."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 class ClearwaterRiverine:
     """ Creates Clearwater Riverine water quality model.
 
@@ -104,6 +120,7 @@ class ClearwaterRiverine:
         chunk_size: Optional[timedelta] = None,
         # datetime_range: Optional[Tuple[int, int] | Tuple[datetime, datetime]] = None,
         # mesh_file_path: Optional[str | Path] = None,
+        _existing_output_store: bool = False,
     ) -> None:
         """
         Initialize a Clearwater Riverine water quality model from hydrodynamic model (e.g., HEC RAS) output.
@@ -143,6 +160,22 @@ class ClearwaterRiverine:
         # Cross-chunk mass-balance accumulator (C3a). None until the first
         # chunk is finalized; only used in chunked mode.
         self.__mb_acc = None
+        # Checkpoint/resume state (C3b). __existing_output_store routes
+        # init_template=False through to the chunked store so an existing
+        # pre-allocated output store survives the resumed construction.
+        # __resuming_ics: per-constituent end-of-prev-chunk concentration to
+        # use as the IC for the resumed chunk, consumed in __load_new_chunk.
+        # __last_finalized_boundary: the most recent chunk-end whose
+        # __finalize_chunk completed (so the accumulator is consistent up
+        # through this timestamp); checkpoint() saves state as of this time.
+        self.__existing_output_store: bool = _existing_output_store
+        self.__resuming_ics: Optional[dict] = None
+        self.__last_finalized_boundary = self._start_datetime
+        # __just_resumed: first __transport_chunked after from_checkpoint
+        # must skip the chunk-end-detection that would re-finalize/re-load
+        # the chunk we just loaded in from_checkpoint.
+        self.__just_resumed: bool = False
+        self.__config_filepath = config_filepath
         self.plotter = None
 
         self.__init_model(constituents)
@@ -216,6 +249,141 @@ class ClearwaterRiverine:
             answer_value,
             chunk_accumulator=self.__mb_acc if self.__chunked_mode else None,
         )
+
+
+    def checkpoint(self, checkpoint_dir: str | Path) -> Path:
+        """Write a chunk-boundary checkpoint for later resume (Phase-C C3b).
+
+        Captures the model's state as of the most recent fully-finalized
+        chunk boundary (``__last_finalized_boundary``): the cross-chunk
+        mass-balance accumulator (C3a), the resume timestamp, and the
+        per-constituent concentration at that boundary (which the resumed
+        run uses as the next chunk's IC). The output store at
+        ``simulation_directory/model_outputs.zarr`` is left untouched and
+        survives via ``init_template=False`` on resume.
+
+        Calling ``run()`` on a model returned by ``from_checkpoint`` re-runs
+        every chunk after the boundary; because the chunked transport and
+        write path are deterministic (proven by the C2 oracle), the
+        resumed run's final result equals an uninterrupted run.
+        """
+        if not self.__chunked_mode:
+            raise RuntimeError(
+                "checkpoint() is only meaningful in chunked mode."
+            )
+        if self.__last_finalized_boundary == self._start_datetime:
+            raise RuntimeError(
+                "No chunk boundaries have been finalized yet; nothing "
+                "to checkpoint. Run at least one full chunk first."
+            )
+        if self.__mb_acc is None:
+            raise RuntimeError(
+                "checkpoint() requires mass_flux_calculation=True so the "
+                "cross-chunk mass-balance accumulator (C3a) carries the "
+                "state a continuity-preserving resume needs."
+            )
+        if self.__config_filepath is None:
+            raise RuntimeError(
+                "checkpoint() currently requires the model to have been "
+                "built from a config_filepath (resume re-reads it)."
+            )
+
+        checkpoint_dir = Path(checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        boundary = self.__last_finalized_boundary
+
+        # The boundary slot is set as chunk K+1's IC by __load_new_chunk;
+        # registry.get_at_time at that timestamp returns the same value
+        # regardless of how far into chunk K+1 transport has advanced
+        # (transport writes to subsequent slots, not back to slot 0).
+        resume_concentrations = {
+            name: np.asarray(self.registry.get_at_time(name, boundary))
+            for name in self._constituents
+        }
+
+        metadata = {
+            "schema_version": _CHECKPOINT_SCHEMA_VERSION,
+            "current_time": pd.Timestamp(boundary).isoformat(),
+            "mb_acc": self.__mb_acc,
+            "config_filepath": str(self.__config_filepath),
+            "config_hash": _sha256_of_file(self.__config_filepath),
+        }
+        with open(checkpoint_dir / "checkpoint.json", "w") as f:
+            json.dump(metadata, f, indent=2, default=str)
+        np.savez(checkpoint_dir / "resume_state.npz", **resume_concentrations)
+        return checkpoint_dir
+
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        config_filepath: str | Path,
+        checkpoint_dir: str | Path,
+    ) -> "ClearwaterRiverine":
+        """Reconstruct a model from a chunk-boundary checkpoint (C3b).
+
+        Builds the model from ``config_filepath`` with the existing output
+        store preserved (``_existing_output_store=True`` → clearwater_data
+        ``init_template=False``), restores the cross-chunk accumulator and
+        the resume timestamp, stages per-constituent resume ICs, and loads
+        the resume chunk's hydrodynamic window. The returned model is
+        ready for ``run()`` to continue to ``end_datetime``.
+
+        The current ``config_filepath`` must match the checkpointing run's
+        config (sha256 identity check).
+        """
+        checkpoint_dir = Path(checkpoint_dir)
+        with open(checkpoint_dir / "checkpoint.json") as f:
+            metadata = json.load(f)
+        if metadata.get("schema_version") != _CHECKPOINT_SCHEMA_VERSION:
+            raise ValueError(
+                f"Checkpoint schema_version "
+                f"{metadata.get('schema_version')!r} does not match the "
+                f"current {_CHECKPOINT_SCHEMA_VERSION}; resume not supported."
+            )
+        config_filepath = Path(config_filepath)
+        if _sha256_of_file(config_filepath) != metadata["config_hash"]:
+            raise ValueError(
+                f"Config identity mismatch: {config_filepath} sha256 does "
+                f"not match the checkpoint's config_hash. Resume requires "
+                f"the same config file as the checkpointed run."
+            )
+
+        npz = np.load(checkpoint_dir / "resume_state.npz")
+
+        model = cls(
+            config_filepath=str(config_filepath),
+            _existing_output_store=True,
+        )
+
+        # Wrap each per-constituent npz ndarray in an xr.DataArray with the
+        # SAME nface coord the constituent's IC array uses, so the
+        # downstream reset_initial_conditions / set_initial_conditions
+        # chain (which does .rename(...).reindex(nface=...).data) finds a
+        # matching index instead of NaN-padding.
+        resume_ics = {}
+        for name in npz.files:
+            template = model.registry.get_at_time(name, model._start_datetime)
+            if isinstance(template, xr.DataArray):
+                resume_ics[name] = xr.DataArray(
+                    npz[name],
+                    dims=template.dims,
+                    coords=template.coords,
+                )
+            else:
+                resume_ics[name] = xr.DataArray(
+                    npz[name], dims=(NFACE,)
+                )
+
+        cp_time = pd.to_datetime(metadata["current_time"])
+        model.__current_time = cp_time
+        model.__last_finalized_boundary = cp_time
+        model.__mb_acc = metadata["mb_acc"]
+        model.__resuming_ics = resume_ics
+        model.__just_resumed = True
+        # Load the resume chunk's hydrodynamic window + apply resume IC.
+        model.__load_new_chunk()
+        return model
 
 
     def __increment_timestep(self):
@@ -380,6 +548,10 @@ class ClearwaterRiverine:
 
 
     def __init_output_store(self):
+        # init_template=False on resume (C3b) preserves the existing
+        # pre-allocated store so subsequent write_chunk(region="auto")
+        # appends rather than clobbers.
+        init_template = not self.__existing_output_store
         if self.__chunked_mode:
             self.__output_data_store = ChunkedZarrDataStore(
                 store_path=self.__simulation_directory / "model_outputs.zarr",
@@ -389,7 +561,8 @@ class ClearwaterRiverine:
                 variables=self.__output_variables,
                 chunk_size=self.__chunk_size,
                 spatial_field=NFACE,
-                spatial_field_values=self.registry.get(VOLUME).nface               
+                spatial_field_values=self.registry.get(VOLUME).nface,
+                init_template=init_template,
             )
         else:
             self.__output_data_store = ZarrDataStore(
@@ -399,7 +572,8 @@ class ClearwaterRiverine:
                 time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
                 variables=self.__output_variables,
                 spatial_field=NFACE,
-                spatial_field_values=self.registry.get(VOLUME).nface
+                spatial_field_values=self.registry.get(VOLUME).nface,
+                init_template=init_template,
             )
 
 
@@ -428,17 +602,38 @@ class ClearwaterRiverine:
 
         self.__update_calculated_variables()
         for constituent_name, constituent in self._constituents.items():
-            constituent.reset_initial_conditions(
-                self.registry,
-                self.registry.get_at_time(constituent_name, self.__current_time)
-            )
+            # C3b: on the first __load_new_chunk after from_checkpoint, the
+            # in-memory registry holds chunk 1's array, not the end-of-prev-
+            # chunk state. Use the per-constituent concentration loaded
+            # from the checkpoint sidecar instead of registry.get_at_time
+            # (which would return NaN / wrong values). One-shot: cleared
+            # after consumption so subsequent chunk transitions use the
+            # normal path.
+            if (self.__resuming_ics is not None
+                    and constituent_name in self.__resuming_ics):
+                ic_value = self.__resuming_ics[constituent_name]
+            else:
+                ic_value = self.registry.get_at_time(
+                    constituent_name, self.__current_time
+                )
+            constituent.reset_initial_conditions(self.registry, ic_value)
             constituent.register_constituent(self.registry)
             constituent.set_initial_conditions(self.registry, self.__current_time)
-            constituent.set_boundary_conditions(self.registry)        
+            constituent.set_boundary_conditions(self.registry)
+        self.__resuming_ics = None
 
     
     def __transport_chunked(self):
-        if self.__current_time in self.__chunk_ends:
+        if self.__just_resumed:
+            # First call after from_checkpoint: __current_time equals a
+            # chunk boundary (the resume point), but the resume chunk has
+            # already been loaded in from_checkpoint and the accumulator
+            # already contains chunks 1..K. Skipping the finalize+load on
+            # this one call avoids re-finalizing chunk K (which would
+            # double-count it in the accumulator) and re-loading chunk K+1
+            # (which would clobber the staged resume IC). One-shot.
+            self.__just_resumed = False
+        elif self.__current_time in self.__chunk_ends:
             self.__finalize_chunk()
             self.__load_new_chunk()
         self.__transport()
@@ -462,6 +657,13 @@ class ClearwaterRiverine:
                     drop_last_slot=not is_last,
                     is_last=is_last,
                 )
+
+        # C3b: record the chunk boundary up through which the accumulator
+        # is consistent. Interior finalize: the accumulator has chunks
+        # 1..K and resume should start from this timestamp. Final finalize
+        # (is_last=True) closes the run; not a resume point.
+        if not is_last:
+            self.__last_finalized_boundary = self.__current_time
 
         for variable_name in self.__output_variables:
             # calculate mass flux, if necessary                

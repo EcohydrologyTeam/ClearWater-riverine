@@ -363,3 +363,101 @@ def test_chunked_v3_write_path_sound(plan_key, tmp_path):
         f"(max |Δ|={float(np.nanmax(np.abs(out[written] - ref[written]))):.4g}); "
         f"chunked transport/write is not faithful to non-chunked"
     )
+
+
+@pytest.mark.parametrize("plan_key", list(PLANS))
+def test_chunked_resume_equivalence(plan_key, tmp_path):
+    """Checkpoint at a chunk boundary + resume == uninterrupted (C3b).
+
+    Drives the full end-to-end resume contract:
+      1. Run the chunked plan uninterrupted -> closure C0 (reference).
+      2. Build a separate chunked run, advance past the first chunk
+         boundary, ``model.checkpoint(dir)``, tear down.
+      3. ``ClearwaterRiverine.from_checkpoint(config, dir)`` rebuilds with
+         the existing output store preserved (clearwater_data
+         ``init_template=False``), restores the C3a accumulator + resume
+         timestamp, stages per-constituent boundary-slot ICs, loads the
+         resume chunk's hydrodynamic window. ``run()`` continues to
+         ``end_datetime``.
+      4. Assert resumed closure C2 matches C0 within tight tolerance.
+
+    The chunked transport+write path is deterministic (proven by the C2
+    oracle), so resume should produce a bit-identical (or within FP
+    noise) final mass-balance number. Plans with no exact >=2-chunk
+    even split are skipped to isolate this oracle from the C4
+    ``__init_chunks [1:-1]`` edge.
+    """
+    if plan_key in SKIP:
+        pytest.skip(SKIP[plan_key])
+    plan_dir, hdf_name, diff = PLANS[plan_key]
+
+    chunk_size, m = _even_chunk_size(plan_dir, hdf_name, diff, tmp_path)
+    if chunk_size is None:
+        pytest.skip(
+            f"{plan_key}: step count has no exact >=2-chunk split with "
+            f">=2 slots/chunk; non-even chunk boundaries are a C4 "
+            f"(__init_chunks [1:-1]) concern, out of scope for this oracle."
+        )
+
+    # 1. Uninterrupted chunked run (reference).
+    ref_dir = tmp_path / "uninterrupted"
+    ref_dir.mkdir()
+    ref_model = _build_model(
+        plan_dir, hdf_name, diff, ref_dir,
+        chunk_size=chunk_size, mass_flux=True,
+    )
+    ref_model.run()
+    g_ref = ref_model.calculate_mass_balance(
+        "tracer", calculate_answer=False
+    )["global"]
+    pct_ref = abs(float(g_ref["mass_percent_error"].values[0]))
+    modeled_ref = float(g_ref["mass_end_modeled"].values[0])
+
+    # 2. Separate chunked run; advance past the first chunk boundary.
+    cp_dir = tmp_path / "with_checkpoint"
+    cp_dir.mkdir()
+    interim_model = _build_model(
+        plan_dir, hdf_name, diff, cp_dir,
+        chunk_size=chunk_size, mass_flux=True,
+    )
+    first_boundary = interim_model._ClearwaterRiverine__chunk_ends[0]
+    while interim_model._ClearwaterRiverine__current_time < first_boundary:
+        interim_model.update()
+    interim_model.update()  # the update that crosses the boundary
+    assert (
+        interim_model._ClearwaterRiverine__last_finalized_boundary
+        == first_boundary
+    ), "checkpoint precondition: first boundary should be finalized"
+
+    ckpt = tmp_path / "ckpt"
+    interim_model.checkpoint(ckpt)
+    assert (ckpt / "checkpoint.json").exists()
+    assert (ckpt / "resume_state.npz").exists()
+
+    # Drop references to the original model -- simulate a real resume
+    # (separate process) so any reliance on in-memory state would show.
+    interim_config = list(cp_dir.glob("*.yml"))[0]
+    del interim_model
+
+    # 3. Resume + run to end.
+    resumed = cwr.ClearwaterRiverine.from_checkpoint(
+        str(interim_config), str(ckpt)
+    )
+    resumed.run()
+    g_res = resumed.calculate_mass_balance(
+        "tracer", calculate_answer=False
+    )["global"]
+    pct_res = abs(float(g_res["mass_percent_error"].values[0]))
+    modeled_res = float(g_res["mass_end_modeled"].values[0])
+
+    # 4. Resumed closure ~== uninterrupted (deterministic; expect tight).
+    assert pct_res == pytest.approx(pct_ref, abs=1e-9, rel=1e-9), (
+        f"{plan_key} [chunked x{m}]: resumed closure pct {pct_res:.6g} "
+        f"differs from uninterrupted {pct_ref:.6g} -- resume is not "
+        f"faithful to an uninterrupted chunked run"
+    )
+    assert modeled_res == pytest.approx(modeled_ref, rel=1e-9), (
+        f"{plan_key} [chunked x{m}]: resumed modeled end-mass "
+        f"{modeled_res:.8g} drifted from uninterrupted "
+        f"{modeled_ref:.8g} beyond rel=1e-9"
+    )
