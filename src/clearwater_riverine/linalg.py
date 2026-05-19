@@ -121,7 +121,7 @@ class LHS:
         flow_in_indices = np.where(
             (flow_across_face < 0) & \
             (np.isin(flow_across_face.nedge, self.internal_edges))
-        )
+        )[0]
 
         # find empty cells at next timestep
         empty_cells = np.where(
