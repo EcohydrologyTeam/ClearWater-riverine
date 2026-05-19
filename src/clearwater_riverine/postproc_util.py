@@ -19,6 +19,146 @@ from clearwater_riverine.variables import(
 from clearwater_data.variables import VariableRegistry
 
 
+def accumulate_chunk_mass_balance(
+        acc: Optional[dict],
+        registry: VariableRegistry,
+        constituent_name: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        drop_last_slot: bool,
+        is_last: bool,
+    ) -> dict:
+    """Fold one chunk's contribution into the cross-chunk accumulator (C3a).
+
+    Mirrors ``_calculate_boundary_data``'s exact reductions, applied to the
+    chunk-resident registry and summed across chunks. Chunk windows overlap
+    by one slot (chunk k's last slot == chunk k+1's first slot), so for the
+    per-slot FLOW the shared trailing slot is dropped on every chunk except
+    the final one (``drop_last_slot``) -- the next chunk owns it as its
+    first slot. ``{constituent}_mass_flux`` is per-transition (length T-1)
+    and already partitions exactly across chunks, so it is summed in full
+    every chunk. The whole-run union therefore counts each timestep and each
+    transition exactly once, reproducing the non-chunked totals.
+
+    Domain start snapshot is captured the first time a constituent is seen
+    (chunk 1 is resident and contains ``start_datetime``); the end snapshot
+    is captured on the final chunk (``is_last``; it contains
+    ``end_datetime``).
+    """
+    if acc is None:
+        acc = {}
+    c = acc.setdefault(
+        constituent_name, {"boundaries": {}, "start": None, "end": None}
+    )
+    nreal = registry.get(NUMBER_OF_REAL_CELLS)
+
+    if c["start"] is None:
+        v = registry.get_at_time(VOLUME, start_datetime)[0:nreal]
+        x = registry.get_at_time(constituent_name, start_datetime)[0:nreal]
+        c["start"] = {
+            "total_volume": float(v.sum().item()),
+            "total_mass": float((v * x).sum().item()),
+        }
+    if is_last:
+        v = registry.get_at_time(VOLUME, end_datetime)[0:nreal]
+        x = registry.get_at_time(constituent_name, end_datetime)[0:nreal]
+        c["end"] = {
+            "total_volume": float(v.sum().item()),
+            "total_mass": float((v * x).sum().item()),
+        }
+
+    boundary_index = registry.get(BOUNDARY_FACE_INDEX)
+    boundary_names = registry.get(BOUNDARY_NAME)
+    flow = registry.get(FLOW_ACROSS_FACE)
+    if drop_last_slot:
+        flow = flow.isel(time=slice(0, -1))
+    dt = registry.get(CHANGE_IN_TIME)
+    mass_flux = registry.get(f"{constituent_name}_mass_flux")
+
+    for boundary_name in np.unique(boundary_names):
+        edges_mask = boundary_names == boundary_name
+        boundary_edges = boundary_index[edges_mask]
+        boundary_volume = flow.sel(nedge=boundary_edges) * dt
+        boundary_mass = mass_flux.sel(nedge=boundary_edges)
+        m = c["boundaries"].setdefault(
+            boundary_name,
+            {k: 0.0 for k in (
+                "volume_total", "mass_total", "volume_in",
+                "mass_in", "volume_out", "mass_out",
+            )},
+        )
+        m["volume_total"] += boundary_volume.sum().item()
+        m["mass_total"] += boundary_mass.sum().item()
+        m["volume_in"] += boundary_volume.where(boundary_volume < 0).sum().item()
+        m["mass_in"] += boundary_mass.where(boundary_mass < 0).sum().item()
+        m["volume_out"] += boundary_volume.where(boundary_volume > 0).sum().item()
+        m["mass_out"] += boundary_mass.where(boundary_mass > 0).sum().item()
+    return acc
+
+
+def _global_mass_balance_from_accumulator(
+        chunk_accumulator: dict,
+        constituent_name: str,
+        calculate_answer: bool,
+        answer_value: Optional[float],
+    ):
+    """Chunked global mass balance from the cross-chunk accumulator (C3a).
+
+    Reconstructs exactly the structures the non-chunked path feeds to
+    ``_calculate_error_metrics`` (which is reused unchanged), so the chunked
+    closure number is computed by the identical error math. The answer-case
+    boundary mass mirrors the non-chunked ``boundary_volume * answer_value``
+    (answer_value > 0 preserves sign, so the in/out split matches).
+    """
+    ca = chunk_accumulator[constituent_name]
+    total_volume_start = ca["start"]["total_volume"]
+    total_volume_end = ca["end"]["total_volume"]
+    if calculate_answer:
+        total_mass_start = total_volume_start * answer_value
+        total_mass_end = total_volume_end * answer_value
+    else:
+        total_mass_start = ca["start"]["total_mass"]
+        total_mass_end = ca["end"]["total_mass"]
+
+    df = pd.DataFrame(data={
+        'volume_start': [total_volume_start],
+        'mass_start': [total_mass_start],
+        'volume_end_modeled': [total_volume_end],
+        'mass_end_modeled': [total_mass_end],
+    })
+
+    records = []
+    for boundary_name, m in ca["boundaries"].items():
+        if calculate_answer:
+            mass_total = m["volume_total"] * answer_value
+            mass_in = m["volume_in"] * answer_value
+            mass_out = m["volume_out"] * answer_value
+        else:
+            mass_total, mass_in, mass_out = (
+                m["mass_total"], m["mass_in"], m["mass_out"]
+            )
+        records.append({
+            'boundary_name': boundary_name,
+            'volume_total': m["volume_total"],
+            'mass_total': mass_total,
+            'volume_in': m["volume_in"],
+            'mass_in': mass_in,
+            'volume_out': m["volume_out"],
+            'mass_out': mass_out,
+        })
+
+    boundary_df = pd.DataFrame.from_records(records).set_index("boundary_name")
+    total = boundary_df.sum()
+    total["boundary_name"] = "all_boundaries"
+    boundary_df = pd.concat(
+        [boundary_df.reset_index(), pd.DataFrame([total])], ignore_index=True
+    ).set_index("boundary_name")
+
+    _calculate_error_metrics(df=df, boundary_df=boundary_df, variable_name="volume")
+    _calculate_error_metrics(df=df, boundary_df=boundary_df, variable_name="mass")
+    return {'global': df, 'boundary': boundary_df}
+
+
 def calculate_global_mass_balance(
         registry: VariableRegistry,
         constituent_name: str,
@@ -26,7 +166,16 @@ def calculate_global_mass_balance(
         end_datetime: datetime,
         calculate_answer: bool,
         answer_value: Optional[float],
+        chunk_accumulator: Optional[dict] = None,
     ):
+    # Chunked runs: the registry only holds the final chunk post-run, so the
+    # whole-run balance is reconstructed from the cross-chunk accumulator
+    # (C3a). The non-chunked path below is unchanged.
+    if chunk_accumulator is not None:
+        return _global_mass_balance_from_accumulator(
+            chunk_accumulator, constituent_name, calculate_answer, answer_value
+        )
+
     ## TODO: logic for if run without mass flux calcs.
     if f"{constituent_name}_mass_flux" not in registry:
         raise ValueError("Rerun model with `mass_flux_calculation` set to True.")

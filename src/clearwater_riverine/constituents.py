@@ -234,7 +234,14 @@ class Constituent:
 
         total_mass_flux = advection_mass_flux + diffusion_mass_flux
 
+        # overwrite=True: in chunked mode this is recomputed every chunk on
+        # the chunk-resident window. The whole-run reduction is folded into
+        # the model's cross-chunk accumulator at each __finalize_chunk
+        # (Phase-C C3a), so only the current chunk's flux needs to be
+        # resident here. In non-chunked mode this is the single registration
+        # (overwrite is a no-op on first register).
         registry.register(
             f"{self._name}_mass_flux",
             DataArrayVariable(total_mass_flux, space_dimension=NEDGE),
+            overwrite=True,
         )

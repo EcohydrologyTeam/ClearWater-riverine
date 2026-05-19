@@ -131,6 +131,22 @@ On a new branch off `clearwater_data` main (never main):
    reads via the B1 reader (D4); the layer stays in `clearwater_riverine` (D5).
    **Preserve and re-validate** the rolling-2-slot solver-continuity invariant
    and cross-boundary flux/mass continuity.
+   - **Decomposed (2026-05-19) into C3a + C3b, each guard-gated.** Canonical's
+     one-chunk-resident model already subsumes the fork's whole-window
+     NaN-`release` machinery, so this is a *capability re-base*, not a
+     verbatim port of `_release_to_stream`/`checkpoint`.
+   - **C3a DONE:** cross-chunk mass-flux continuity. The global balance only
+     needs time-integrated boundary sums + start/end domain snapshots, so a
+     **lean fixed-size accumulator** (Option B) folds each chunk's
+     contribution at `__finalize_chunk` (interior chunks drop the shared
+     overlap slot; the final chunk keeps it; per-transition mass flux
+     partitions exactly). `_calculate_mass_flux` register → `overwrite=True`
+     (fixes the 6th-defect crash). C2 loud guard lifted. Non-chunked
+     `calculate_global_mass_balance` path byte-identical (new optional
+     `chunk_accumulator` only). Validated: chunked closure ≡ non-chunked to
+     ~7 sig figs, all 7 plans; suite 21 pass / 6 skip.
+   - **C3b NEXT:** checkpoint/resume on the resolved v3 substrate
+     (`write_chunk` + `.npz` + JSON; resume via B1 `read_chunk`).
 4. B4 riverine-side: tolerance-based chunk-boundary detection (`>=` next
    boundary) + scalar-vs-array `dt` handling in `__increment_timestep`.
    Validate each step against the Phase-B gate (no closure regression).

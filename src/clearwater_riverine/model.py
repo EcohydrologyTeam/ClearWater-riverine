@@ -50,7 +50,10 @@ from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import init_from_config
 from clearwater_riverine.transport import TransportEngine
 from clearwater_riverine.constituents import Constituent
-from clearwater_riverine.postproc_util import calculate_global_mass_balance
+from clearwater_riverine.postproc_util import (
+    accumulate_chunk_mass_balance,
+    calculate_global_mass_balance,
+)
 
 UNIT_DETAILS = {'Metric': {'Length': 'm',
                             'Velocity': 'm/s',
@@ -127,24 +130,6 @@ class ClearwaterRiverine:
             self.__calculated_variables = model.get("calculated_variables", None)
             self.__output_variables = model.get("output_variables", constituents)
             self.__mass_flux_calculation = model.get("mass_flux_calculation", False)
-            # Loud precondition (Phase-C C2, 6th canonical defect). In chunked
-            # mode __finalize_chunk runs every chunk and re-registers
-            # f"{constituent}_mass_flux" with overwrite=False, so chunk 2
-            # crashes with a cryptic "already registered" ValueError. Even
-            # past that, _calculate_mass_flux computes only the current
-            # chunk's window with no cross-chunk accumulation, so a chunked
-            # global mass balance would be incorrect. Cross-chunk flux/mass
-            # continuity is a fork PORT item owned by Phase-C C3. Fail loudly
-            # and early until C3 lands it.
-            if self.__chunk_size is not None and self.__mass_flux_calculation:
-                raise NotImplementedError(
-                    "Chunked mode with mass_flux_calculation=True is not yet "
-                    "supported: per-chunk mass flux re-registers without "
-                    "cross-chunk accumulation, so the chunked global mass "
-                    "balance would be incorrect. Cross-chunk flux/mass "
-                    "continuity is deferred to Phase-C C3. Run with "
-                    "chunk_size unset, or with mass_flux_calculation=False."
-                )
             self.crs = model.get("crs", None)
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)
@@ -155,6 +140,9 @@ class ClearwaterRiverine:
             self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         
         self.__chunked_mode: bool = self.__chunk_size is not None
+        # Cross-chunk mass-balance accumulator (C3a). None until the first
+        # chunk is finalized; only used in chunked mode.
+        self.__mb_acc = None
         self.plotter = None
 
         self.__init_model(constituents)
@@ -181,7 +169,7 @@ class ClearwaterRiverine:
 
     def finalize(self) -> None:
         if self.__chunked_mode:
-            self.__finalize_chunk()
+            self.__finalize_chunk(is_last=True)
         else:
             if self.__mass_flux_calculation:
                 self.__calculate_mass_flux()
@@ -226,6 +214,7 @@ class ClearwaterRiverine:
             end_datetime,
             calculate_answer,
             answer_value,
+            chunk_accumulator=self.__mb_acc if self.__chunked_mode else None,
         )
 
 
@@ -455,11 +444,24 @@ class ClearwaterRiverine:
         self.__transport()
 
 
-    def __finalize_chunk(self):
+    def __finalize_chunk(self, is_last: bool = False):
         if self.__mass_flux_calculation:
             self.__calculate_mass_flux()
-            # TODO: write mass flux to output?
-            # will neeed to handle multiple space dimensions
+            # Cross-chunk mass-balance continuity (C3a). Fold this chunk's
+            # boundary contribution + (first) start / (last) end domain
+            # snapshots into the accumulator. Interior chunks drop the
+            # shared trailing slot so each timestep is counted once across
+            # the run; the final chunk keeps it.
+            for constituent_name in self._constituents:
+                self.__mb_acc = accumulate_chunk_mass_balance(
+                    self.__mb_acc,
+                    self.registry,
+                    constituent_name,
+                    self._start_datetime,
+                    self._end_datetime,
+                    drop_last_slot=not is_last,
+                    is_last=is_last,
+                )
 
         for variable_name in self.__output_variables:
             # calculate mass flux, if necessary                

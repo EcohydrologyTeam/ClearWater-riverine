@@ -233,25 +233,61 @@ def _even_chunk_size(plan_dir, hdf_name, diff, tmp_path):
 
 
 @pytest.mark.parametrize("plan_key", list(PLANS))
-def test_chunked_mass_flux_loudly_unsupported(plan_key, tmp_path):
-    """6th canonical defect, asserted as a contained, loud boundary (C2).
+def test_chunked_mass_balance_closure(plan_key, tmp_path):
+    """Chunked mass balance conserves to the SAME standard as non-chunked (C3a).
 
-    Chunked ``__finalize_chunk`` re-registers ``{constituent}_mass_flux``
-    every chunk with ``overwrite=False`` (chunk-2 ``ValueError``), and even
-    past that computes only the current chunk's window with no cross-chunk
-    accumulation -> wrong chunked global mass balance. Cross-chunk flux/mass
-    continuity is the fork PORT item owned by Phase-C C3. Until C3, the model
-    must reject this configuration *loudly and early* (at construction, before
-    the HDF is read) rather than crash mid-run on chunk 2.
+    Replaces the C2 loud-guard assertion: the 6th defect (chunked
+    ``__finalize_chunk`` re-registers ``{constituent}_mass_flux``;
+    ``_calculate_mass_flux`` has no cross-chunk accumulation) is fixed by
+    folding each chunk's boundary contribution + start/end domain snapshots
+    into a cross-chunk accumulator that ``calculate_global_mass_balance``
+    consumes. Chunk windows overlap one slot, so per-slot FLOW drops the
+    shared trailing slot on interior chunks and the final chunk keeps it;
+    per-transition mass flux partitions exactly -- so every timestep is
+    counted once and the chunked totals must reproduce the non-chunked ones.
+
+    The two guards are identical to the non-chunked test, so passing both
+    here proves chunked == non-chunked via the shared uniform-100 answer.
+    ``chunk_size`` gives an exact even >=2-chunk split (the ``[1:-1]``
+    non-even edge is a separate C4 concern), so the run genuinely crosses
+    chunk boundaries.
     """
     if plan_key in SKIP:
         pytest.skip(SKIP[plan_key])
     plan_dir, hdf_name, diff = PLANS[plan_key]
-    with pytest.raises(NotImplementedError, match="Phase-C C3"):
-        _build_model(
-            plan_dir, hdf_name, diff, tmp_path,
-            chunk_size="1h", mass_flux=True,
+
+    chunk_size, m = _even_chunk_size(plan_dir, hdf_name, diff, tmp_path)
+    if chunk_size is None:
+        pytest.skip(
+            f"{plan_key}: step count has no exact >=2-chunk split with "
+            f">=2 slots/chunk; non-even chunk boundaries are a C4 "
+            f"(__init_chunks [1:-1]) concern, out of scope for this oracle."
         )
+
+    model = _build_model(
+        plan_dir, hdf_name, diff, tmp_path,
+        chunk_size=chunk_size, mass_flux=True,
+    )
+    model.run()
+
+    g = model.calculate_mass_balance("tracer", calculate_answer=False)["global"]
+    a = model.calculate_mass_balance(
+        "tracer", calculate_answer=True, answer_value=100
+    )["global"]
+    pct = abs(float(g["mass_percent_error"].values[0]))
+    modeled = float(g["mass_end_modeled"].values[0])
+    answer = float(a["mass_end_modeled"].values[0])
+
+    assert pct < GUARD_TOL_PCT, (
+        f"{plan_key} [chunked x{m}, chunk_size={chunk_size}]: chunked "
+        f"closure error {pct:.5f}% exceeds the {GUARD_TOL_PCT}% guard -- "
+        f"cross-chunk mass continuity is not faithful to non-chunked"
+    )
+    assert modeled == pytest.approx(answer, rel=GUARD_ANSWER_REL), (
+        f"{plan_key} [chunked x{m}]: chunked modeled end-mass "
+        f"{modeled:.6g} drifted from the uniform-100 answer {answer:.6g} "
+        f"beyond rel={GUARD_ANSWER_REL}"
+    )
 
 
 @pytest.mark.parametrize("plan_key", list(PLANS))
