@@ -242,6 +242,25 @@ class ClearwaterRiverine:
             calculated_variables=self.__calculated_variables,
         )
 
+        # Loud precondition (Finding #3, Phase-C C1a). io/hdf.py
+        # __read_temporal_variables reads GATE_FLOW into the RAS mesh, but
+        # this branch does not yet register GATE_FLOW into the
+        # VariableRegistry. The linalg gate path keys off
+        # `GATE_FLOW in registry` (TransportEngine), so an unregistered
+        # GATE_FLOW would silently evaluate False and drop *all* gate flow
+        # from the transport solution. Fail loudly until the registration
+        # wire-up is implemented and validated against a gated fixture
+        # (Phase-C scale validation).
+        if self.__variable_data_sources['hydrodynamic_model'].gate_names is not None:
+            raise NotImplementedError(
+                "This HEC-RAS model contains gate structures, but gate flow "
+                "is not yet wired into the variable registry on this branch. "
+                "Running it would silently drop all gate flow from the "
+                "transport solution. Gated models are unsupported here until "
+                "GATE_FLOW registration is implemented and validated against "
+                "a gated fixture."
+            )
+
         for variable_name in self.__variable_data_sources['hydrodynamic_model'].temporal_variables:
             if self.__chunked_mode:
                 data = self.__variable_data_sources['hydrodynamic_model'].read_chunk(
