@@ -387,8 +387,23 @@ class ClearwaterRiverine:
 
 
     def __increment_timestep(self):
-        """Increment the model timestep."""
-        self.__current_time += timedelta(seconds=self.registry.get(CHANGE_IN_TIME)) 
+        """Increment the model timestep.
+
+        ``calculate_change_in_time`` (utilities.py) returns a ``FloatVariable``
+        (scalar) when RAS stamps are uniform and a ``DataArrayVariable``
+        (per-step array) otherwise. The C4 uniform-cadence precondition
+        (__init_model) normally rules out the array case, but this scalar/
+        array fallback is cheap robustness if it ever slips through.
+        """
+        dt_raw = self.registry.get(CHANGE_IN_TIME)
+        try:
+            dt_seconds = float(dt_raw)
+        except (TypeError, ValueError):
+            # Per-step array: look up dt at the current time.
+            dt_seconds = float(
+                self.registry.get_at_time(CHANGE_IN_TIME, self.__current_time)
+            )
+        self.__current_time += timedelta(seconds=dt_seconds)
 
 
     def __init_model(self, constituents: dict):
@@ -416,6 +431,25 @@ class ClearwaterRiverine:
             end_datetime=self._end_datetime,
             calculated_variables=self.__calculated_variables,
         )
+
+        # Loud precondition (Phase-C C4 / B4). The chunked design and the
+        # C3a mass-balance accumulator's per-chunk drop-last-slot tiling
+        # both assume a uniform RAS output cadence. Non-uniform stamps
+        # would make calculate_change_in_time return a per-step array
+        # (the latent dt-array path) and silently drift the chunk grid
+        # away from the timestep grid. The resolved B3/B4 design is
+        # uniform-cadence-only; verify it explicitly and fail loudly.
+        all_dts = self.__variable_data_sources[
+            'hydrodynamic_model'
+        ].all_datetimes
+        diffs = np.diff(np.asarray(all_dts.values))
+        if len(diffs) > 1 and not np.all(diffs == diffs[0]):
+            raise ValueError(
+                "Non-uniform RAS output cadence detected (timestamps "
+                "differ in spacing). The chunked transport design "
+                "(Phase-C B3/B4) assumes a uniform timestep. Re-export "
+                "the RAS run at a single uniform interval."
+            )
 
         # Loud precondition (Finding #3, Phase-C C1a). io/hdf.py
         # __read_temporal_variables reads GATE_FLOW into the RAS mesh, but
@@ -578,12 +612,31 @@ class ClearwaterRiverine:
 
 
     def __init_chunks(self):
-        """Define the end of each chunk."""
-        self.__chunk_ends = pd.date_range(
+        """Define the interior chunk boundaries.
+
+        ``pd.date_range(start, end, freq=chunk_size)`` produces stamps at
+        ``start, start+chunk_size, ..., k*chunk_size <= end``. The previous
+        ``[1:-1]`` slice dropped both endpoints, which is correct WHEN
+        ``(end-start)`` is an exact multiple of ``chunk_size`` (the last
+        element is ``end`` itself and we want only interior boundaries).
+        When it is NOT a multiple, the last element is ``< end`` and the
+        slice drops a *legitimate interior* boundary, so the final chunk
+        spans up to ``~2 * chunk_size`` (Phase-C C4 / B4 fix).
+
+        Filter explicitly to boundaries strictly between start and end:
+        identical to ``[1:-1]`` on the even-split path the C2/C3a/C3b
+        oracles use, plus correct on the uneven-split path the new C4
+        oracle exercises.
+        """
+        all_stamps = pd.date_range(
             self._start_datetime,
             self._end_datetime,
-            freq=self.__chunk_size
-        )[1:-1]
+            freq=self.__chunk_size,
+        )
+        self.__chunk_ends = all_stamps[
+            (all_stamps > self._start_datetime)
+            & (all_stamps < self._end_datetime)
+        ]
 
 
     def __load_new_chunk(self):
@@ -633,9 +686,20 @@ class ClearwaterRiverine:
             # double-count it in the accumulator) and re-loading chunk K+1
             # (which would clobber the staged resume IC). One-shot.
             self.__just_resumed = False
-        elif self.__current_time in self.__chunk_ends:
-            self.__finalize_chunk()
-            self.__load_new_chunk()
+        elif len(self.__chunk_ends) > 0:
+            # Tolerance-based chunk-boundary detection (Phase-C C4 / B4).
+            # Identical to the previous exact-equality semantics when
+            # __current_time lands on a boundary exactly (clearwater_data
+            # A3 enforces chunk_size % time_step == 0, so this is the
+            # common case). The ``>= next_unfired`` form is cheap
+            # robustness for any misconfigured / array-dt edge that would
+            # otherwise miss the boundary forever.
+            unfired = self.__chunk_ends[
+                self.__chunk_ends > self.__last_finalized_boundary
+            ]
+            if len(unfired) > 0 and self.__current_time >= unfired[0]:
+                self.__finalize_chunk()
+                self.__load_new_chunk()
         self.__transport()
 
 

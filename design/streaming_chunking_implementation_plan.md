@@ -165,14 +165,28 @@ On a new branch off `clearwater_data` main (never main):
 4. B4 riverine-side: tolerance-based chunk-boundary detection (`>=` next
    boundary) + scalar-vs-array `dt` handling in `__increment_timestep`.
    Validate each step against the Phase-B gate (no closure regression).
-   - **C2-discovered (2026-05-19), C4 to fix:** `__init_chunks` uses
-     `pd.date_range(start, end, freq=chunk_size)[1:-1]`. When
-     `(end - start)` is not an exact integer multiple of `chunk_size`,
-     `date_range`'s last element is `< end`, so `[1:-1]` drops a
-     *legitimate interior* chunk boundary — the final chunk then spans
-     ~2× `chunk_size`, exceeding the memory ceiling `chunk_size` is meant
-     to bound. Exact-grid runs are unaffected; the C2 chunked oracle
-     deliberately uses even splits to isolate this from the v3-write check.
+   - **C4 ✓ DONE (2026-05-19):** all four robustness items + a
+     C4-revealed RAS-reader fix, in one commit. (a) `__init_chunks`
+     replaces `[1:-1]` with a strictly-interior filter — every interior
+     boundary is kept on uneven splits; identical to the previous
+     behavior on the even-split path the C2/C3a/C3b oracles use. (b)
+     `__transport_chunked` uses `>= next-unfired-boundary` tolerance
+     detection (referenced against `__last_finalized_boundary`),
+     identical to exact-equality when alignment holds. (c)
+     `__increment_timestep` falls back to `registry.get_at_time` if
+     `CHANGE_IN_TIME` is per-step (array) rather than scalar. (d)
+     `__init_model` adds a loud uniform-cadence precondition guard on
+     RAS stamps. (e) **C4-revealed RAS-reader fix
+     (`io/hdf.py:__update_time_coordinate`):** drop time-dim data vars
+     before `assign_coords(time=new)` so the final shorter chunk of an
+     uneven split does not trigger an xarray dim-length conflict — the
+     previous design assumed every chunk had the same length, which the
+     uneven-split case violates. Validated by a new sibling test
+     `test_chunked_uneven_chunk_size`: chunk_size that does NOT divide
+     `(end-start)` evenly conserves mass to the same standard as
+     non-chunked on all 7 plans. Full riverine suite: **35 pass / 10
+     skip** (no regression to non-chunked, C2 v3-write, C3a closure, or
+     C3b resume).
 
    Note (C2 done): step 2 needed no fork code — §10 RE-BASE, canonical
    already on the blessed `ChunkedZarrDataStore.write_chunk(region="auto")`

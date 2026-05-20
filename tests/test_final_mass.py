@@ -461,3 +461,89 @@ def test_chunked_resume_equivalence(plan_key, tmp_path):
         f"{modeled_res:.8g} drifted from uninterrupted "
         f"{modeled_ref:.8g} beyond rel=1e-9"
     )
+
+
+def _uneven_chunk_size(plan_dir, hdf_name, diff, tmp_path):
+    """Derive a chunk_size that does NOT divide (end-start) evenly (C4).
+
+    Pre-C4, ``__init_chunks`` used ``pd.date_range(...)[1:-1]`` which
+    dropped the last *interior* boundary when ``(end-start) % chunk_size
+    != 0``, producing an oversized final chunk. The C4 fix replaces the
+    slice with a strictly-interior filter. This helper picks the smallest
+    chunk_length k (in time-steps) such that n_steps % k != 0 (=> uneven
+    split) and n_steps // k >= 2 (>=3 chunks) and k >= 2 (each chunk has
+    >=2 slots so the rolling-boundary trim is well-defined). Returns
+    ``(chunk_size_str, n_chunks)`` or ``(None, None)`` if no such k exists.
+    A3 still requires ``chunk_size`` to be an integer multiple of
+    ``time_step``; ``k * dt`` satisfies that by construction.
+    """
+    probe = _build_model(plan_dir, hdf_name, diff, tmp_path)
+    dt_s = float(probe.registry.get(CHANGE_IN_TIME))
+    start, end = _hdf_time_bounds(plan_dir / hdf_name)
+    n_steps = round((end - start).total_seconds() / dt_s)
+    k = next(
+        (c for c in range(2, n_steps // 2 + 1)
+         if n_steps % c != 0 and n_steps // c >= 2),
+        None,
+    )
+    if k is None:
+        return None, None
+    n_chunks = -(-n_steps // k)  # ceil division -- final chunk is short
+    return str(pd.Timedelta(seconds=dt_s) * k), n_chunks
+
+
+@pytest.mark.parametrize("plan_key", list(PLANS))
+def test_chunked_uneven_chunk_size(plan_key, tmp_path):
+    """``(end-start) % chunk_size != 0`` still conserves mass (C4 / B4).
+
+    The C4 fix in ``__init_chunks`` replaces the previous
+    ``[1:-1]`` slice with a strictly-interior filter so every interior
+    boundary is kept on uneven-split runs (pre-fix: a legitimate boundary
+    was dropped and the final chunk spanned up to ``~2 * chunk_size``).
+    Plus the tolerance-based detection in ``__transport_chunked``
+    (``>= next unfired boundary`` against ``__last_finalized_boundary``)
+    is identical to the previous exact-equality semantics when alignment
+    holds (A3 enforces ``chunk_size % time_step == 0``, so it always
+    does), and is cheap robustness if it ever doesn't.
+
+    Validation: chunked closure must meet the *same* two guards as the
+    non-chunked baseline (closure < ``GUARD_TOL_PCT``, modeled equals
+    the uniform-100 answer). Passing both on an uneven split proves the
+    C4 fix conserves mass to the established standard regardless of
+    whether the chunk grid divides the run length evenly.
+    """
+    if plan_key in SKIP:
+        pytest.skip(SKIP[plan_key])
+    plan_dir, hdf_name, diff = PLANS[plan_key]
+
+    chunk_size, n_chunks = _uneven_chunk_size(plan_dir, hdf_name, diff, tmp_path)
+    if chunk_size is None:
+        pytest.skip(
+            f"{plan_key}: step count has no uneven >=3-chunk split with "
+            f">=2 slots/chunk; cannot exercise the C4 [1:-1] fix here."
+        )
+
+    model = _build_model(
+        plan_dir, hdf_name, diff, tmp_path,
+        chunk_size=chunk_size, mass_flux=True,
+    )
+    model.run()
+
+    g = model.calculate_mass_balance("tracer", calculate_answer=False)["global"]
+    a = model.calculate_mass_balance(
+        "tracer", calculate_answer=True, answer_value=100
+    )["global"]
+    pct = abs(float(g["mass_percent_error"].values[0]))
+    modeled = float(g["mass_end_modeled"].values[0])
+    answer = float(a["mass_end_modeled"].values[0])
+
+    assert pct < GUARD_TOL_PCT, (
+        f"{plan_key} [chunked x{n_chunks}, uneven chunk_size={chunk_size}]: "
+        f"closure error {pct:.5f}% exceeds the {GUARD_TOL_PCT}% guard -- "
+        f"uneven chunk grid is not faithful to non-chunked"
+    )
+    assert modeled == pytest.approx(answer, rel=GUARD_ANSWER_REL), (
+        f"{plan_key} [chunked x{n_chunks}, uneven]: modeled end-mass "
+        f"{modeled:.6g} drifted from the uniform-100 answer "
+        f"{answer:.6g} beyond rel={GUARD_ANSWER_REL}"
+    )

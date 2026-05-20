@@ -539,8 +539,20 @@ class RASHDFDataSource:
 
 
     def __update_time_coordinate(
-        self,  
+        self,
     ):
+        # Drop any time-dimensioned data vars from a previous chunk read
+        # first; otherwise assign_coords(time=new) raises when the new
+        # window length differs from the previous one (Phase-C C4 / B4:
+        # the final chunk of an uneven (end-start) / chunk_size split is
+        # shorter than the others). Static vars without a 'time' dim are
+        # preserved.
+        time_vars = [
+            v for v in self.mesh.data_vars
+            if 'time' in self.mesh[v].dims
+        ]
+        if time_vars:
+            self.mesh = self.mesh.drop_vars(time_vars)
         self.mesh = self.mesh.assign_coords(
             time=xr.DataArray(
                 data=self.datetime_subset,
