@@ -30,6 +30,7 @@ from clearwater_data.variables.xarray import DataArrayVariable
 
 from clearwater_riverine.utilities import(
     CALCULATED_VARIABLE_MAP,
+    compute_wet_mask,
 )
 import clearwater_riverine.variables
 from clearwater_riverine.variables import (
@@ -38,6 +39,7 @@ from clearwater_riverine.variables import (
     EDGES_FACE1,
     EDGES_FACE2,
     FACES,
+    FACE_HYD_DEPTH,
     CHANGE_IN_TIME,
     NFACE,
     NEDGE,
@@ -46,6 +48,7 @@ from clearwater_riverine.variables import (
     VOLUME_ELEVATION_INFO,
     VOLUME_ELEVATION_VALUES,
     VOLUME_ELEVATION_LOOKUP,
+    WET_MASK,
 )
 from clearwater_riverine.linalg import LHS
 from clearwater_riverine.io.hdf import RASHDFDataSource
@@ -120,6 +123,10 @@ class ClearwaterRiverine:
         chunk_size: Optional[timedelta] = None,
         # datetime_range: Optional[Tuple[int, int] | Tuple[datetime, datetime]] = None,
         # mesh_file_path: Optional[str | Path] = None,
+        wet_dry_metric: Optional[str] = None,
+        wet_dry_threshold: Optional[Dict[str, float]] = None,
+        mass_loss_warn_threshold: Optional[float] = 0.01,
+        zero_dry_initial_conditions: bool = False,
         _existing_output_store: bool = False,
     ) -> None:
         """
@@ -176,6 +183,21 @@ class ClearwaterRiverine:
         # the chunk we just loaded in from_checkpoint.
         self.__just_resumed: bool = False
         self.__config_filepath = config_filepath
+        # Phase-D Unit A wet/dry scaffolding. wet_dry_metric=None (default)
+        # is opt-out: no WET_MASK is registered and behavior is identical
+        # to the pre-Unit-A path. Setting metric to "volume", "depth", or
+        # "both" enables auto-registration of WET_MASK in __init_model
+        # (and per-chunk re-registration in __load_new_chunk). The other
+        # three kwargs are stored for the Phase-D units that consume them
+        # (mass_loss_warn_threshold / zero_dry_initial_conditions: Unit
+        # C's IC zeroing + end-of-run warning; wet_dry_threshold: this
+        # unit's compute_wet_mask thresholds).
+        self.__wet_dry_metric: Optional[str] = wet_dry_metric
+        _wdt = wet_dry_threshold or {}
+        self.__wet_dry_h_min: float = float(_wdt.get("h_min", 0.01))
+        self.__wet_dry_v_min: float = float(_wdt.get("V_min", 0.1))
+        self.__mass_loss_warn_threshold: Optional[float] = mass_loss_warn_threshold
+        self.__zero_dry_initial_conditions: bool = bool(zero_dry_initial_conditions)
         self.plotter = None
 
         self.__init_model(constituents)
@@ -526,10 +548,14 @@ class ClearwaterRiverine:
         # calculate intermediate variables
         self.__update_calculated_variables()
 
+        # Phase-D Unit A: register WET_MASK after VOLUME (+ optionally
+        # FACE_HYD_DEPTH) is available; opt-in via wet_dry_metric.
+        self.__populate_wet_mask()
+
         # initialize constituents
         for constituent_name in list(constituents.keys()):
             self.__init_constituents(
-                constituent_name=constituent_name, 
+                constituent_name=constituent_name,
                 constituent_config=constituents[constituent_name]
             )
         
@@ -555,6 +581,41 @@ class ClearwaterRiverine:
             boundary_conditions=boundary_conditions,
             constituent_config=constituent_config,
             start_datetime=self._start_datetime
+        )
+
+
+    def __populate_wet_mask(self):
+        """Register ``WET_MASK`` on the current chunk window (Phase-D Unit A).
+
+        Opt-in: no-op when ``wet_dry_metric is None`` (the default). When
+        set, computes a per-cell wet/dry boolean from the resident
+        ``VOLUME`` (and ``FACE_HYD_DEPTH`` if the requested metric needs
+        it). Re-registers each time it's called, so a chunked run gets
+        a fresh ``WET_MASK`` with the chunk's time coord (called from
+        ``__init_model`` for chunk 1 and from ``__load_new_chunk`` for
+        each subsequent chunk window).
+        """
+        if self.__wet_dry_metric is None:
+            return
+        volume = self.registry.get(VOLUME)
+        depth = None
+        if (
+            self.__wet_dry_metric in ("depth", "both")
+            and FACE_HYD_DEPTH in self.registry
+        ):
+            depth = self.registry.get(FACE_HYD_DEPTH)
+        mask = compute_wet_mask(
+            volume,
+            depth,
+            h_min=self.__wet_dry_h_min,
+            V_min=self.__wet_dry_v_min,
+            metric=self.__wet_dry_metric,
+        )
+        if WET_MASK in self.registry:
+            self.registry.unregister(WET_MASK)
+        self.registry.register(
+            WET_MASK,
+            DataArrayVariable(mask, space_dimension=NFACE),
         )
 
 
@@ -654,6 +715,8 @@ class ClearwaterRiverine:
             )
 
         self.__update_calculated_variables()
+        # Phase-D Unit A: refresh WET_MASK for the new chunk's time window.
+        self.__populate_wet_mask()
         for constituent_name, constituent in self._constituents.items():
             # C3b: on the first __load_new_chunk after from_checkpoint, the
             # in-memory registry holds chunk 1's array, not the end-of-prev-

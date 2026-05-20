@@ -17,6 +17,7 @@ EDGES_FACE1 = 'edges_face1'
 EDGES_FACE2 = 'edges_face2'
 NUMBER_OF_REAL_CELLS = 'nreal'
 VOLUME = 'volume'
+WET_MASK = 'wet_mask'  # Phase-D Unit A: per-cell wet/dry boolean (time, nface)
 FACE_SURFACE_AREA = 'faces_surface_area'
 WETTED_SURFACE_AREA = 'wetted_surface_area'
 EDGE_VELOCITY = 'edge_velocity'

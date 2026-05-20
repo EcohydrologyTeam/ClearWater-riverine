@@ -186,8 +186,65 @@ def calculate_maximum_depth(
     # volume elevation lookup only has real cells: expand dimensions to include all cells
     minimum_elevation = minimum_elevation.reindex(nface=np.arange(len(registry.get(FACE_X))))
     maxiumum_depth = registry.get(WATER_SURFACE_ELEVATION) - minimum_elevation
-    
+
     return DataArrayVariable(maxiumum_depth)
+
+
+def compute_wet_mask(
+    volume,
+    depth=None,
+    *,
+    h_min: float = 0.01,
+    V_min: float = 0.1,
+    metric: str = "both",
+):
+    """Compute a per-cell wet/dry boolean mask (Phase-D Unit A).
+
+    Pure function; no registry coupling. ``volume`` and ``depth`` may be
+    NumPy arrays or xarray DataArrays of compatible shape (typically
+    ``(time, nface)``). The returned mask has the same shape and dtype
+    bool: ``True`` where the cell is considered wet, ``False`` otherwise.
+
+    Parameters
+    ----------
+    volume : array-like
+        Cell volume (per HEC-RAS output), shape ``(time, nface)`` or
+        ``(nface,)``.
+    depth : array-like, optional
+        Cell hydraulic depth, required when ``metric`` is ``"depth"`` or
+        ``"both"`` (the default). Pass ``None`` if metric is ``"volume"``.
+    h_min : float
+        Minimum hydraulic depth (m) for a cell to count as wet under the
+        depth-based metric. Default 0.01 m matches the fork's design spec.
+    V_min : float
+        Minimum cell volume (m^3) for a cell to count as wet under the
+        volume-based metric. Default 0.1 m^3 matches the fork's spec.
+    metric : {"depth", "volume", "both"}
+        Which physical criterion to apply. ``"both"`` requires both
+        ``depth > h_min`` AND ``volume > V_min`` (most conservative;
+        matches the fork's default). ``"depth"`` uses only the depth
+        threshold; ``"volume"`` uses only the volume threshold (and
+        does not require ``depth``).
+
+    Returns
+    -------
+    Boolean array or DataArray with the same shape as ``volume``.
+    """
+    if metric not in ("depth", "volume", "both"):
+        raise ValueError(
+            f"metric={metric!r} is not one of 'depth', 'volume', 'both'"
+        )
+    if metric in ("depth", "both") and depth is None:
+        raise ValueError(
+            f"metric={metric!r} requires the depth argument; "
+            f"pass depth=... or use metric='volume'"
+        )
+    if metric == "volume":
+        return volume > V_min
+    if metric == "depth":
+        return depth > h_min
+    # metric == "both"
+    return (volume > V_min) & (depth > h_min)
 
 
 CALCULATED_VARIABLE_MAP = {
