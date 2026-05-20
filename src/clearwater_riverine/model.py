@@ -53,7 +53,18 @@ from clearwater_riverine.variables import (
 from clearwater_riverine.linalg import LHS
 from clearwater_riverine.io.hdf import RASHDFDataSource
 from clearwater_riverine.io.config import init_from_config
-from clearwater_riverine.transport import TransportEngine
+from clearwater_riverine.transport import (
+    TransportEngine,
+    emit_mass_loss_warning,
+    # Aliased to avoid name collision with the ``__init__`` kwarg of
+    # the same spelling. Inside the class scope the bare name resolves
+    # to the bool kwarg, shadowing the function and producing a
+    # ``TypeError: 'bool' object is not callable`` at call time. The
+    # ``_zero_dry_initial_conditions_fn`` alias is what model code
+    # invokes; tests that want to spy on the call patch the alias on
+    # this module.
+    zero_dry_initial_conditions as _zero_dry_initial_conditions_fn,
+)
 from clearwater_riverine.constituents import Constituent
 from clearwater_riverine.postproc_util import (
     accumulate_chunk_mass_balance,
@@ -205,7 +216,41 @@ class ClearwaterRiverine:
         self.__init_chunks()
         self.__transport_engine = TransportEngine(self.registry)
 
-    
+        # Phase-D Unit D2: model-level IC-zeroing opt-in.
+        # When ``zero_dry_initial_conditions=True`` AND ``WET_MASK`` is
+        # in the registry (Unit-A opt-in), sweep any IC mass loaded
+        # into sub-threshold cells at ``start_datetime``: the
+        # concentration is zeroed for extensive constituents and the
+        # discarded mass is logged to the engine's
+        # ``mass_lost_to_dry`` accumulator so the end-of-run warning
+        # can surface it. Intensive scalars (e.g. temperature) are
+        # skipped by ``zero_dry_initial_conditions`` itself --
+        # T = 0 in a sub-threshold cell is non-physical and would
+        # cascade through coupled physics when the cell becomes wet.
+        # Default ``False`` preserves the legacy IC behaviour for
+        # real-mesh runs where the user's IC file is the source of
+        # truth on sub-threshold cells.
+        if self.__zero_dry_initial_conditions and WET_MASK in self.registry:
+            ic_lost = _zero_dry_initial_conditions_fn(
+                self.registry, self._constituents, self._start_datetime,
+            )
+            for name, mass in ic_lost.items():
+                self.__transport_engine.mass_lost_to_dry.setdefault(
+                    name, []
+                ).append(float(mass))
+
+
+    @property
+    def transport_engine(self) -> TransportEngine:
+        """Read-only accessor for the underlying transport engine.
+
+        Exposes the ``TransportEngine`` instance so tests and callers
+        can inspect post-run diagnostics (notably
+        ``mass_lost_to_dry``) without reaching through the model's
+        private name-mangled attribute.
+        """
+        return self.__transport_engine
+
     def run(self) -> None:
         while self.__current_time < self._end_datetime:
             self.update()
@@ -228,13 +273,28 @@ class ClearwaterRiverine:
         else:
             if self.__mass_flux_calculation:
                 self.__calculate_mass_flux()
-            
+
             for variable_name in self.__output_variables:
                 variable = self.registry.get(variable_name)
                 self.__output_data_store.write(
                     data=variable,
                     parameter_name=variable_name,
                 )
+
+        # Phase-D Unit D2: end-of-run wet-dry mass-loss warning.
+        # Compares per-constituent total ``mass_lost_to_dry`` against
+        # ``mass_loss_warn_threshold * sum(bc_inflow_mass)`` and emits
+        # a ``UserWarning`` for each extensive constituent that
+        # breaches. No-op when ``mass_loss_warn_threshold`` is ``None``
+        # or the engine's accumulator is empty. Intensive scalars are
+        # skipped by ``emit_mass_loss_warning`` itself (the BC inflow
+        # MASS denominator has the wrong units for a scalar like
+        # temperature).
+        emit_mass_loss_warning(
+            self.__transport_engine.mass_lost_to_dry,
+            self._constituents,
+            self.__mass_loss_warn_threshold,
+        )
     
     def plot(self, constituent_name: str, **kwargs):
         if self.plotter is None:
