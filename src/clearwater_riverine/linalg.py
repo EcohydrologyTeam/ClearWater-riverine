@@ -475,7 +475,7 @@ class RHS:
         registry: VariableRegistry,
     ):
         """
-        Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions. 
+        Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions.
         """
         self.real_cell_index = registry.get(NUMBER_OF_REAL_CELLS) - 1
         self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
@@ -483,6 +483,15 @@ class RHS:
 
         self.values = np.zeros(self.real_cell_count)
         self.ghost_cells = np.where(edges_face2 > self.real_cell_index)[0]
+        # Phase-D Unit C-gamma: per-step advective BC inflow mass for
+        # this constituent. Populated by ``_ghost_cell`` when
+        # ``flowing_in=True`` and an inflow edge actually injects mass.
+        # Consumed at end-of-run by ``emit_mass_loss_warning`` as the
+        # denominator of the wet-dry mass-loss fraction. Units: same as
+        # ``concentration * volume`` (e.g., mg if concentration is mg/L
+        # and volume is L). One entry appended per ``run()`` call that
+        # produces a positive inflow injection for this constituent.
+        self.bc_inflow_mass: list = []
 
     def update_values(
         self,
@@ -723,11 +732,35 @@ class RHS:
                     internal_cell_index
                     )
                 
+        # Phase-D Unit C-gamma: accumulate per-step advective BC inflow
+        # mass for this constituent. Only fires on the inflow branch
+        # (advection term is the boundary mass injection rate;
+        # multiplying by dt gives the per-step mass). Diffusion
+        # contributions are excluded -- they represent gradient-driven
+        # exchange across the boundary, not net mass injection from
+        # upstream water. Per-edge accumulation avoids the same silent
+        # overwrite that affects ``concentration_multipliers`` when two
+        # boundary edges share an internal cell.
+        if flowing_in and len(index_list) != 0:
+            adv_mag = np.abs(np.asarray(advection_coefficient)[index_list])
+            edge_concentrations = np.asarray(
+                registry.get_at_time(
+                    constituent_name,
+                    current_time + time_step,
+                )
+            )[external_cell_index]
+            dt_sec = float(registry.get(CHANGE_IN_TIME))
+            step_mass_in = float(
+                np.sum(adv_mag * edge_concentrations) * dt_sec
+            )
+            if step_mass_in > 0:
+                self.bc_inflow_mass.append(step_mass_in)
+
         if flowing_in:
             add_to_rhs = advection_face + diffusion_face
         else:
             add_to_rhs = diffusion_face
-        
+
         add_to_rhs = add_to_rhs * concentration_multipliers
-        
+
         return add_to_rhs

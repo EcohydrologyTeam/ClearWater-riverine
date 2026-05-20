@@ -1,4 +1,5 @@
 from typing import Optional, Tuple
+import warnings
 import numpy as np
 from scipy.sparse import csr_matrix, linalg
 from datetime import datetime, timedelta
@@ -349,6 +350,190 @@ def drain_newly_dry(
             lost += M_i
 
     return drain_source, lost
+
+
+def zero_dry_initial_conditions(
+    registry: VariableRegistry,
+    constituents: dict,
+    current_time: datetime,
+) -> dict:
+    """Zero IC mass loaded into sub-threshold cells (Phase-D Unit C-gamma).
+
+    For each extensive constituent, cells with
+    ``WET_MASK[current_time] = False`` carry zero concentration after
+    this call. Any IC mass loaded into a sub-threshold cell at
+    ``current_time`` is returned in the per-constituent total so the
+    caller can fold it into ``mass_lost_to_dry``.
+
+    **Intensive scalars** (e.g. water temperature, indicated by
+    ``constituent.is_intensive = True``) are skipped: zeroing a
+    temperature to ``T = 0`` in a sub-threshold cell is non-physical
+    (represents "ice cold" rather than "no value") and can cascade
+    through coupled physics when the cell becomes wet later. Intensive
+    constituents keep their IC values in sub-threshold cells. The
+    ``is_intensive`` attribute is consulted via ``getattr`` with a
+    default of ``False``, so this routine is forward-compatible with
+    Unit D's introduction of the flag.
+
+    Opt-in via Unit A's ``wet_dry_metric``. When ``WET_MASK`` is not in
+    the registry, this routine returns an empty dict so the legacy
+    code path is unchanged.
+
+    The caller decides whether to invoke this routine: it is **not**
+    auto-invoked by ``TransportEngine``. On the fork the IC zeroing is
+    gated by an explicit ``zero_dry_initial_conditions`` model-level
+    flag (default off) introduced in Unit D; the canonical port keeps
+    that gate at the call site rather than embedding it in the engine.
+
+    Args:
+        registry: The variable registry holding ``WET_MASK``,
+            ``VOLUME``, and each constituent's array.
+        constituents: ``dict[str, Constituent]`` mapping constituent
+            name to the canonical ``Constituent`` object. The object
+            is consulted via ``getattr(c, "is_intensive", False)`` to
+            decide whether to skip.
+        current_time: The simulation-start timestamp at which the IC
+            mask and IC concentrations are read.
+
+    Returns:
+        ``dict[str, float]`` mapping constituent name to the IC mass
+        that was zeroed out of sub-threshold cells. Only constituents
+        with non-zero loss appear in the dict.
+    """
+    if WET_MASK not in registry:
+        return {}
+
+    wet0 = np.asarray(
+        registry.get_at_time(WET_MASK, current_time), dtype=bool
+    )
+    if wet0.all():
+        return {}
+
+    nreal = int(registry.get(NUMBER_OF_REAL_CELLS))
+    V0_full = np.asarray(registry.get_at_time(VOLUME, current_time))
+    dry_mask_real = ~wet0[:nreal]
+    if not dry_mask_real.any():
+        return {}
+
+    lost_by_name: dict = {}
+    for name, constituent in constituents.items():
+        if getattr(constituent, "is_intensive", False):
+            # Intensive scalars keep their IC values; see docstring.
+            continue
+        c0_da = registry.get_at_time(name, current_time)
+        c0_full = np.asarray(c0_da)
+        # Real-cell IC mass loaded into sub-threshold cells.
+        ic_mass_lost = float(
+            np.sum(V0_full[:nreal][dry_mask_real] * c0_full[:nreal][dry_mask_real])
+        )
+        if ic_mass_lost > 0:
+            lost_by_name[name] = ic_mass_lost
+        # Zero the dry real cells in place via set_at_time. Ghost cells
+        # are left untouched -- they carry boundary-condition values.
+        new_c0 = c0_da.copy()
+        # Use boolean indexing on the underlying array; preserve coords.
+        full_mask = np.zeros(c0_full.shape, dtype=bool)
+        full_mask[:nreal] = dry_mask_real
+        new_vals = new_c0.values.copy()
+        new_vals[full_mask] = 0.0
+        new_c0.values[:] = new_vals
+        registry.set_at_time(name, current_time, new_c0)
+
+    return lost_by_name
+
+
+def emit_mass_loss_warning(
+    mass_lost_to_dry: dict,
+    constituents: dict,
+    threshold: Optional[float] = 0.01,
+) -> None:
+    """End-of-run wet-dry mass-loss warning (Phase-D Unit C-gamma).
+
+    Compares per-constituent total ``mass_lost_to_dry`` against
+    ``threshold * bc_inflow_mass`` and emits ``warnings.warn`` for each
+    extensive constituent that breaches. Constituents that lost mass
+    but had zero BC inflow warn unconditionally (typical signal: IC
+    mass loaded into sub-threshold cells and zeroed by
+    :func:`zero_dry_initial_conditions`).
+
+    No-op cases:
+      - ``threshold is None`` -- the user explicitly disabled the
+        warning.
+      - ``mass_lost_to_dry`` is empty -- no losses recorded (the
+        Unit-A opt-out path: ``WET_MASK`` not in registry).
+      - A constituent's recorded losses sum to zero.
+      - A constituent flagged ``is_intensive`` -- the warning's
+        denominator (BC inflow MASS) has the wrong units for an
+        intensive scalar like temperature.
+
+    Args:
+        mass_lost_to_dry: ``dict[str, list[float] | float | ndarray]``
+            mapping constituent name to per-step loss entries. ``np.sum``
+            yields the total. Typically ``TransportEngine.mass_lost_to_dry``
+            populated by Unit C-beta plus any IC contribution from
+            :func:`zero_dry_initial_conditions` folded in by the caller.
+        constituents: ``dict[str, Constituent]`` mapping constituent
+            name to the canonical ``Constituent`` object. The object's
+            ``rhs.bc_inflow_mass`` accumulator (a list of per-step
+            inflow masses, populated by ``RHS._ghost_cell``) supplies
+            the denominator; ``is_intensive`` decides whether to skip.
+        threshold: Fraction of total BC inflow above which a warning
+            is emitted. Defaults to ``0.01`` (1%). Pass ``None`` to
+            disable.
+    """
+    if threshold is None:
+        return
+    if not mass_lost_to_dry:
+        return
+    threshold = float(threshold)
+    if threshold < 0:
+        raise ValueError(
+            "threshold must be >= 0 or None, "
+            f"got {threshold}"
+        )
+    for name, lost_entries in mass_lost_to_dry.items():
+        total_lost = float(np.sum(np.asarray(lost_entries, dtype=float)))
+        if total_lost <= 0:
+            continue
+        constituent = constituents.get(name)
+        if constituent is None or not hasattr(constituent, "rhs"):
+            continue
+        if getattr(constituent, "is_intensive", False):
+            # Intensive scalars (e.g. temperature) should never reach
+            # this branch because IC zeroing, drain mass logging, and
+            # the post-solve wet-dry leak diagnostic all skip them.
+            # Guard anyway: the BC inflow MASS denominator has the
+            # wrong units for an intensive scalar.
+            continue
+        bc_inflow_mass = getattr(constituent.rhs, "bc_inflow_mass", [])
+        total_inflow = float(
+            np.sum(np.asarray(bc_inflow_mass, dtype=float))
+        )
+        if total_inflow <= 0:
+            # No BC inflow to compare against -- warn unconditionally
+            # if any mass was lost (otherwise the loss is silent).
+            warnings.warn(
+                f"Constituent {name!r}: {total_lost:.4g} mass units "
+                f"routed to mass_lost_to_dry with zero BC inflow over "
+                f"the run. Likely IC mass loaded into sub-threshold "
+                f"cells. Review wet_dry_threshold or IC inputs.",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        fraction = total_lost / total_inflow
+        if fraction > threshold:
+            warnings.warn(
+                f"Constituent {name!r}: {total_lost:.4g} mass units "
+                f"({100 * fraction:.2f}% of BC inflow {total_inflow:.4g}) "
+                f"routed to mass_lost_to_dry, exceeding the "
+                f"{100 * threshold:.2f}% threshold. Indicates wet->dry "
+                f"events with no wet outflow path or IC mass loaded "
+                f"into sub-threshold cells. Tighten wet_dry_threshold "
+                f"or review the source of the loss.",
+                UserWarning,
+                stacklevel=2,
+            )
 
 
 class TransportEngine:
