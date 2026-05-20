@@ -538,8 +538,13 @@ def emit_mass_loss_warning(
 
 class TransportEngine:
     def __init__(self, registry: VariableRegistry):
-        # initialize left hand side of transport equation
+        # initialize left hand side of transport equation. ``self.lhs``
+        # remains the extensive LHS (``is_intensive=False``). When any
+        # constituent in a ``run()`` call is intensive, the engine
+        # lazily builds a second LHS keyed by ``is_intensive=True``
+        # below.
         self.lhs = LHS(registry)
+        self._lhs_intensive: LHS | None = None
         # Phase-D Unit C-beta: per-constituent mass-loss accumulator.
         # Lazily populated -- one list entry appended per ``run()`` call
         # that produces a non-zero loss for that constituent. Stays an
@@ -557,22 +562,57 @@ class TransportEngine:
         mass_flux_calculation: bool,
     ):
         """Run the transport engine."""
-        # update the left hand side of the matrix
+        # Phase-D Unit D1: build the LHS matrices once per
+        # ``is_intensive`` flag in use this step. The extensive LHS
+        # (``self.lhs``) is always rebuilt -- it is the common case and
+        # the legacy/no-wet-mask path. The intensive LHS is built only
+        # when at least one constituent in this run is flagged
+        # intensive, so models with no temperature constituent pay no
+        # extra cost.
+        any_intensive = any(
+            getattr(c, "is_intensive", False) for c in constituents.values()
+        )
+
         self.lhs.update_values(
             registry,
             current_time,
             time_step,
         )
-
-        # define compressed sparse row matrix for LHS
         real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
-        A = csr_matrix(
+        A_extensive = csr_matrix(
             (self.lhs.coefficients, (self.lhs.rows, self.lhs.columns)),
-            shape = (real_cell_count, real_cell_count)
+            shape=(real_cell_count, real_cell_count),
         )
+
+        if any_intensive:
+            if self._lhs_intensive is None:
+                self._lhs_intensive = LHS(registry)
+            self._lhs_intensive.update_values(
+                registry,
+                current_time,
+                time_step,
+                is_intensive=True,
+            )
+            A_intensive = csr_matrix(
+                (
+                    self._lhs_intensive.coefficients,
+                    (self._lhs_intensive.rows, self._lhs_intensive.columns),
+                ),
+                shape=(real_cell_count, real_cell_count),
+            )
+        else:
+            A_intensive = None
 
         # loop through all constituents
         for constituent_name, constituent in constituents.items():
+            # Phase-D Unit D1: pick the LHS / A built with this
+            # constituent's intensive-ness flag. Extensive default
+            # preserves all prior behaviour.
+            is_intensive = bool(getattr(constituent, "is_intensive", False))
+            A = A_intensive if is_intensive else A_extensive
+            lhs_for_constituent = (
+                self._lhs_intensive if is_intensive else self.lhs
+            )
             constituent_value = registry.get_at_time(constituent_name, current_time)
             next_constituent_value = registry.get_at_time(constituent_name, current_time + time_step)
 
@@ -616,18 +656,29 @@ class TransportEngine:
             # the implicit solve sinks mass at rate ``|adv| * c[t+1,
             # donor]``. That mass has left the wet domain (the dry
             # recipient has no water to hold it) and is logged here as
-            # an honest accounting of the wet-side outflow loss.
+            # an honest accounting of the wet-side outflow loss. The
+            # diagnostic is read from this constituent's own LHS so an
+            # intensive scalar (which uses the intensive-LHS cache key
+            # that emits empty leak arrays) does not pick up the
+            # extensive constituent's leak entries. Unit D1.
             leak_total = 0.0
-            wd_donors = getattr(self.lhs, "wet_dry_leak_donors", None)
+            wd_donors = getattr(lhs_for_constituent, "wet_dry_leak_donors", None)
             if wd_donors is not None and wd_donors.size > 0:
-                wd_abs_adv = self.lhs.wet_dry_leak_abs_adv
+                wd_abs_adv = lhs_for_constituent.wet_dry_leak_abs_adv
                 dt_sec = float(registry.get(CHANGE_IN_TIME))
                 leak_total = float(
                     np.sum(wd_abs_adv * x[wd_donors]) * dt_sec
                 )
 
+            # Phase-D Unit D1: skip the mass_lost_to_dry accumulator
+            # for intensive constituents. The diagnostic is summed as
+            # mg-equivalent for concentration species; for an intensive
+            # scalar like temperature the same quantity is V*T (heat-
+            # content units) which does not sum with the other
+            # constituents' loss totals or interact with the
+            # end-of-run warning denominator (BC inflow MASS).
             step_lost = float(drain_lost) + float(leak_total)
-            if step_lost > 0:
+            if step_lost > 0 and not is_intensive:
                 self.mass_lost_to_dry.setdefault(
                     constituent_name, []
                 ).append(step_lost)

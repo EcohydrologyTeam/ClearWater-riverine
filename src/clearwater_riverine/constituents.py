@@ -41,6 +41,21 @@ class Constituent:
     ):
         self._name = constituent_name
         self.__units = constituent_config.get("units", None)
+        # Phase-D Unit D1: intensive vs extensive flag. Intensive
+        # scalars (e.g. water temperature) skip the LHS rule-3
+        # donor-diagonal amendment on wet-dry edges (which would
+        # otherwise produce spurious cooling), skip the IC-zeroing
+        # pass (zeroing a temperature in a sub-threshold cell is
+        # non-physical), and skip the end-of-run mass_lost_to_dry
+        # warning (the BC inflow MASS denominator has the wrong units
+        # for an intensive scalar). Default ``False`` preserves the
+        # existing concentration-species behaviour. Consumed by
+        # ``LHS.update_values``, ``zero_dry_initial_conditions``, and
+        # ``emit_mass_loss_warning`` via ``getattr(c, "is_intensive",
+        # False)``.
+        self.is_intensive: bool = bool(
+            constituent_config.get("is_intensive", False)
+        )
         self.__initial_condition_spatial_field = constituent_config["initial_conditions"]["data"].get(
             "spatial_field", "Cell_Index"  # Default to old config requriement
         )

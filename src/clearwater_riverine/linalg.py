@@ -57,7 +57,7 @@ class LHS:
         registry: VariableRegistry,
         current_time: datetime,
         time_step: timedelta,
-
+        is_intensive: bool = False,
     ):
         """ Updates values in the LHS matrix based on the timestep. 
 
@@ -170,11 +170,26 @@ class LHS:
             # the wet cell at rate |adv|*c[t+1, donor] via the implicit
             # solve. Without this contribution the wet-dry edge silently
             # traps the wet cell's outflow mass.
+            #
+            # Phase-D Unit D1: intensive scalars (e.g. water
+            # temperature) tighten the donor gate to ``edge_active``
+            # (both endpoints wet at t+1 or ghost), restoring the
+            # pre-rule-3 behaviour for wet-dry edges. Without this,
+            # the donor-diagonal sink would pull "heat" out of the wet
+            # cell toward a dry neighbour with no water to hold it,
+            # producing spurious cooling. Wet-ghost edges (BC outflow)
+            # keep the donor contribution because the ghost-side
+            # cell-water boundary is physically valid for both
+            # extensive and intensive properties. Rule 1 (dry-cell
+            # identity pin) still applies regardless of constituent
+            # kind so the row stays non-singular.
+            donor_gate_pos = edge_active if is_intensive else ef1_wet_or_ghost
+            donor_gate_neg = edge_active if is_intensive else ef2_wet_or_ghost
             flow_out_indices = np.where(
-                (adv > 0) & ef1_wet_or_ghost
+                (adv > 0) & donor_gate_pos
             )[0]
             flow_in_indices_diag = np.where(
-                (adv < 0) & ef2_wet_or_ghost & in_internal
+                (adv < 0) & donor_gate_neg & in_internal
             )[0]
 
             # Rule-1 dry-cell pinning. Every REAL cell with
@@ -189,23 +204,32 @@ class LHS:
             # Wet-dry leak diagnostic: record (donor, |adv|) per internal
             # wet-dry edge so the post-solve diagnostic in C-beta can
             # compute the mass that left the wet donor toward the dry
-            # recipient and add it to mass_lost_to_dry.
-            wet_dry_pos = (
-                (adv > 0) & ef1_wet_or_ghost & ~ef2_wet_or_ghost
-                & in_internal
-            )
-            wet_dry_neg = (
-                (adv < 0) & ef2_wet_or_ghost & ~ef1_wet_or_ghost
-                & in_internal
-            )
-            self.wet_dry_leak_donors = np.concatenate([
-                ef1_full[wet_dry_pos],
-                ef2_full[wet_dry_neg],
-            ])
-            self.wet_dry_leak_abs_adv = np.concatenate([
-                np.abs(adv[wet_dry_pos]),
-                np.abs(adv[wet_dry_neg]),
-            ])
+            # recipient and add it to mass_lost_to_dry. Skipped for
+            # intensive scalars (Unit D1): no donor-diagonal
+            # contribution is added in the intensive branch above, so
+            # there is no implicit-solve "leak" to log; the
+            # mass_lost_to_dry diagnostic also has the wrong units for
+            # an intensive scalar (mass vs heat content).
+            if is_intensive:
+                self.wet_dry_leak_donors = np.array([], dtype=np.int64)
+                self.wet_dry_leak_abs_adv = np.array([], dtype=float)
+            else:
+                wet_dry_pos = (
+                    (adv > 0) & ef1_wet_or_ghost & ~ef2_wet_or_ghost
+                    & in_internal
+                )
+                wet_dry_neg = (
+                    (adv < 0) & ef2_wet_or_ghost & ~ef1_wet_or_ghost
+                    & in_internal
+                )
+                self.wet_dry_leak_donors = np.concatenate([
+                    ef1_full[wet_dry_pos],
+                    ef2_full[wet_dry_neg],
+                ])
+                self.wet_dry_leak_abs_adv = np.concatenate([
+                    np.abs(adv[wet_dry_pos]),
+                    np.abs(adv[wet_dry_neg]),
+                ])
             self.dry_cells_t1 = dry_cells_t1
         else:
             # Legacy path: existing canonical behaviour bit-identical.
