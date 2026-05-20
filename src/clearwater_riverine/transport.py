@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 from scipy.sparse import csr_matrix, linalg
 from datetime import datetime, timedelta
@@ -6,6 +6,7 @@ import xarray as xr
 
 from clearwater_riverine.linalg import LHS
 from clearwater_riverine.variables import (
+    CHANGE_IN_TIME,
     EDGE_FACE_CONNECTIVITY,
     FLOW_ACROSS_FACE,
     NUMBER_OF_REAL_CELLS,
@@ -196,10 +197,171 @@ def reconstruct_newly_wet(
     x_full.values[:nreal] = x_arr[:nreal]
     return x_full
 
+
+def drain_newly_dry(
+    registry: VariableRegistry,
+    current_time: datetime,
+    time_step: timedelta,
+    constituent_name: str,
+) -> Tuple[np.ndarray, float]:
+    """Pre-solve wet->dry mass handoff (Phase-D Unit C-beta).
+
+    Symmetric counterpart to :func:`reconstruct_newly_wet`. For each
+    cell ``i`` with ``WET_MASK[t] = True`` and ``WET_MASK[t+1] = False``
+    (a wet->dry transition):
+
+      1. For each outflow face from ``i`` to a wet-at-t+1 neighbour
+         ``j``, add ``f_ij * c_i[t]`` to ``drain_source[j]``. Units are
+         mass per unit time; the implicit solve integrates over ``dt``.
+      2. Donor mass not carried by face flow to wet neighbours --
+         phantom volume that disappears from ``i`` without crossing any
+         face (RAS continuity residual: infiltration, evaporation,
+         hydraulic time-step truncation), plus volume flowed to a
+         dry-at-t+1 neighbour (which drains itself on its own
+         iteration), plus volume that left via a ghost face (already
+         accounted for by the existing BC outflow term) -- is returned
+         as ``lost`` for the caller to accumulate into
+         ``mass_lost_to_dry``.
+
+    The LHS rule-3 amendment zeros the (i, j) advection coupling for
+    wet-dry edges, so this drain rate provides the only path for
+    ``i -> j`` mass transfer. The cell's own row is pinned to identity
+    with RHS = 0 by the LHS rule-1 contribution, so no post-solve
+    overwrite of cell ``i`` is required.
+
+    Opt-in via Unit A's ``wet_dry_metric``. When ``WET_MASK`` is not in
+    the registry, this routine returns ``(zeros(nreal), 0.0)`` so the
+    legacy non-mask code path stays free of overhead.
+
+    Args:
+        registry: The variable registry holding ``VOLUME``, ``WET_MASK``,
+            ``FLOW_ACROSS_FACE``, ``EDGE_FACE_CONNECTIVITY``,
+            ``NUMBER_OF_REAL_CELLS``, ``CHANGE_IN_TIME``, and the
+            constituent's own concentration array.
+        current_time: The ``t`` timestamp. Volume, mask, advection, and
+            constituent concentration at this time gate which cells
+            qualify and supply the donor concentration.
+        time_step: The simulation timestep. ``current_time + time_step``
+            is the ``t+1`` timestamp; the mask there decides which
+            cells transition wet->dry.
+        constituent_name: Name of the constituent being drained. Its
+            concentration at ``current_time`` is the donor value
+            ``c_i[t]`` carried by each outflowing face.
+
+    Returns:
+        drain_source: shape ``(nreal,)``. Per-cell mass-rate
+            contribution to be added to the RHS before ``spsolve``.
+            Only entries corresponding to wet recipients of a wet->dry
+            donor are non-zero.
+        lost: scalar; the per-step mass that could not be apportioned
+            to a wet face neighbour. The caller adds this to
+            ``mass_lost_to_dry`` for the constituent.
+    """
+    nreal = int(registry.get(NUMBER_OF_REAL_CELLS))
+    drain_source = np.zeros(nreal)
+
+    if WET_MASK not in registry:
+        return drain_source, 0.0
+
+    next_time = current_time + time_step
+    wet_t = np.asarray(
+        registry.get_at_time(WET_MASK, current_time), dtype=bool
+    )
+    wet_t1 = np.asarray(
+        registry.get_at_time(WET_MASK, next_time), dtype=bool
+    )
+
+    # Trigger set: cells wet at t, dry at t+1 -- restricted to real cells.
+    going_dry = np.flatnonzero(wet_t & ~wet_t1)
+    going_dry = going_dry[going_dry < nreal]
+    if going_dry.size == 0:
+        return drain_source, 0.0
+
+    adv_t = np.asarray(registry.get_at_time(FLOW_ACROSS_FACE, current_time))
+    V_t = np.asarray(registry.get_at_time(VOLUME, current_time))[:nreal]
+    c_t = np.asarray(
+        registry.get_at_time(constituent_name, current_time)
+    )[:nreal]
+    dt_sec = float(registry.get(CHANGE_IN_TIME))
+    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))  # (nedge, 2)
+
+    lost = 0.0
+    # Per-cell loop. ``going_dry`` is typically a handful of cells per
+    # timestep (boundary of the wet region), so the explicit loop is
+    # fine and keeps the apportionment logic readable.
+    for i in going_dry:
+        i = int(i)
+        edges = np.where((ef[:, 0] == i) | (ef[:, 1] == i))[0]
+        if edges.size == 0:
+            # Isolated cell -- no path for the mass to go.
+            lost += float(V_t[i] * c_t[i])
+            continue
+
+        # For each edge incident on i: outflow magnitude (from i) and
+        # the neighbour index.
+        f_to_wet_neighbor = []
+        neighbors = []
+        for e in edges:
+            e = int(e)
+            f1 = int(ef[e, 0])
+            f2 = int(ef[e, 1])
+            if f1 == i:
+                j = f2
+                f_out = float(adv_t[e])   # adv > 0 means face1 -> face2
+            else:
+                j = f1
+                f_out = float(-adv_t[e])  # adv < 0 means face2 -> face1
+            if f_out <= 0:
+                continue  # inflow or zero on this edge
+            # Skip wet-dry routes to dry neighbours: routing to a
+            # neighbour that is itself going dry would recreate the
+            # artifact this pass exists to eliminate.
+            if j < nreal and not wet_t1[j]:
+                continue
+            # Ghost neighbour outflow is already accounted for by the
+            # existing ghost-cell outflow term; do not double-credit.
+            if j >= nreal:
+                continue
+            f_to_wet_neighbor.append(f_out)
+            neighbors.append(j)
+
+        total_f = sum(f_to_wet_neighbor)
+        c_i_val = float(c_t[i])
+        M_i = float(V_t[i] * c_i_val)
+        if total_f > 0:
+            # Transfer only the mass that actually flows through faces
+            # to wet neighbours: per-edge mass-rate = f_ij * c_i. Any
+            # donor mass not carried by physical face flow to a wet
+            # neighbour is routed to ``mass_lost_to_dry``. This is the
+            # physically honest accounting: mass goes with the water
+            # that carried it, and water that vanished outside the face
+            # network cannot deposit mass into a downstream wet cell.
+            for f_out, j in zip(f_to_wet_neighbor, neighbors):
+                drain_source[j] += f_out * c_i_val
+            mass_to_wet_via_faces = total_f * dt_sec * c_i_val
+            unaccounted = M_i - mass_to_wet_via_faces
+            if unaccounted > 0:
+                lost += unaccounted
+        else:
+            # No outflow to wet neighbours -- entire donor mass is lost.
+            # Includes the all-neighbours-dry and ghost-only-outflow
+            # cases.
+            lost += M_i
+
+    return drain_source, lost
+
+
 class TransportEngine:
     def __init__(self, registry: VariableRegistry):
         # initialize left hand side of transport equation
         self.lhs = LHS(registry)
+        # Phase-D Unit C-beta: per-constituent mass-loss accumulator.
+        # Lazily populated -- one list entry appended per ``run()`` call
+        # that produces a non-zero loss for that constituent. Stays an
+        # empty dict for runs that do not opt into the wet/dry mask
+        # (Unit A), so the legacy code path is observable as an empty
+        # accumulator without any extra branching at every step.
+        self.mass_lost_to_dry: dict[str, list] = {}
 
     def run(
         self,
@@ -228,6 +390,22 @@ class TransportEngine:
         for constituent_name, constituent in constituents.items():
             constituent_value = registry.get_at_time(constituent_name, current_time)
             next_constituent_value = registry.get_at_time(constituent_name, current_time + time_step)
+
+            # Phase-D Unit C-beta: pre-solve wet->dry mass handoff.
+            # Computes a per-cell mass-rate source for cells going dry
+            # at t+1, adds it to the RHS so the implicit solve carries
+            # the redistributed mass in the same step, and returns the
+            # per-step ``lost`` scalar (donor mass that could not be
+            # apportioned to a wet face neighbour). Opt-in via Unit A's
+            # ``wet_dry_metric``: when ``WET_MASK`` is absent, both
+            # outputs are zero and the legacy behaviour is preserved.
+            drain_source, drain_lost = drain_newly_dry(
+                registry=registry,
+                current_time=current_time,
+                time_step=time_step,
+                constituent_name=constituent_name,
+            )
+
             # update right hand side of the matrix
             constituent.rhs.update_values(
                 registry=registry,
@@ -235,11 +413,39 @@ class TransportEngine:
                 time_step=time_step,
                 constituent_name=constituent_name,
             )
-        
+            # Inject the drain source. ``drain_source`` is already
+            # shaped to ``(nreal,)`` -- the same shape as ``rhs.values``
+            # -- and zeros out on the legacy path.
+            constituent.rhs.values[:] = constituent.rhs.values + drain_source
+
             # solve
             x = linalg.spsolve(A, constituent.rhs.values)
             x_full = xr.DataArray(np.zeros(constituent_value.shape), coords=constituent_value.coords)
             x_full[:len(x)] = x
+
+            # Phase-D Unit C-beta (continued): post-solve accumulation
+            # of the rule-3 wet-dry edge leak diagnostic exposed by
+            # ``LHS.update_values``. On edges where the donor side is
+            # wet at t+1 and the recipient is dry-at-t+1, the LHS
+            # includes the donor's diagonal advection contribution so
+            # the implicit solve sinks mass at rate ``|adv| * c[t+1,
+            # donor]``. That mass has left the wet domain (the dry
+            # recipient has no water to hold it) and is logged here as
+            # an honest accounting of the wet-side outflow loss.
+            leak_total = 0.0
+            wd_donors = getattr(self.lhs, "wet_dry_leak_donors", None)
+            if wd_donors is not None and wd_donors.size > 0:
+                wd_abs_adv = self.lhs.wet_dry_leak_abs_adv
+                dt_sec = float(registry.get(CHANGE_IN_TIME))
+                leak_total = float(
+                    np.sum(wd_abs_adv * x[wd_donors]) * dt_sec
+                )
+
+            step_lost = float(drain_lost) + float(leak_total)
+            if step_lost > 0:
+                self.mass_lost_to_dry.setdefault(
+                    constituent_name, []
+                ).append(step_lost)
 
             # Phase-D Unit B: lift the c~0 newly-wet artifact (opt-in
             # via Unit A's wet_dry_metric; no-op when WET_MASK is
