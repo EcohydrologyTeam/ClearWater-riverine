@@ -20,6 +20,7 @@ from clearwater_riverine.variables import(
     NFACE,
     NUMBER_OF_REAL_CELLS,
     VOLUME,
+    WET_MASK,
 )
 
 # matrix solver 
@@ -112,30 +113,140 @@ class LHS:
             flow_out_gate_indices = np.array([])
             flow_in_gate_indices = np.array([])            
 
-        # define edges where flow is flowing in versus out at current timestep
-        flow_out_indices = np.where(flow_across_face > 0)[0]
-        flow_out_indices_internal = np.where(
-            (flow_across_face > 0) & \
-            (np.isin(flow_across_face.nedge, self.internal_edges))
-        )[0]
-        flow_in_indices = np.where(
-            (flow_across_face < 0) & \
-            (np.isin(flow_across_face.nedge, self.internal_edges))
-        )[0]
+        # Phase-D Unit C-alpha: wet/dry edge filter and rule-1/3 amendment.
+        # Activated only when WET_MASK is in the registry (Unit-A opt-in);
+        # when WET_MASK is absent, the legacy canonical behaviour is
+        # preserved bit-identically.
+        adv = np.asarray(flow_across_face)
+        nedge_total = len(adv)
+        all_edge_idx = np.arange(nedge_total)
+        if WET_MASK in registry:
+            wet_t1_full = np.asarray(
+                registry.get_at_time(WET_MASK, current_time + time_step),
+                dtype=bool,
+            )
+            ef1_full = np.asarray(edges_face1).astype(np.int64)
+            ef2_full = np.asarray(edges_face2).astype(np.int64)
+            nface_total = wet_t1_full.shape[0]
+            ef1_ghost = ef1_full >= self.real_cell_count
+            ef2_ghost = ef2_full >= self.real_cell_count
+            # Clip indices so the mask lookup is in-bounds for ghosts;
+            # the ghost rows get OR'd back in below.
+            ef1_clip = np.clip(ef1_full, 0, nface_total - 1)
+            ef2_clip = np.clip(ef2_full, 0, nface_total - 1)
+            ef1_wet_or_ghost = ef1_ghost | wet_t1_full[ef1_clip]
+            ef2_wet_or_ghost = ef2_ghost | wet_t1_full[ef2_clip]
+            # edge_active: both endpoints wet at t+1 (or ghost). Gates
+            # off-diagonal couplings and all diffusion. Diffusion is
+            # symmetric and needs both wet; off-diagonal couplings link a
+            # wet donor only to a wet recipient (the dry-cell row stays
+            # clean for the rule-1 identity pin below).
+            edge_active = ef1_wet_or_ghost & ef2_wet_or_ghost
 
-        # find empty cells at next timestep
-        empty_cells = np.where(
-            (volume.values == 0) & \
-            (np.isin(volume.nface, np.arange(self.real_cell_count)))
-        )[0]
+            # Filtered topology subsets used by the diffusion fill.
+            active_internal_edges = self.internal_edges[
+                edge_active[self.internal_edges]
+            ]
+            active_real_edges_face1 = self.real_edges_face1[
+                edge_active[self.real_edges_face1]
+            ]
+            active_real_edges_face2 = self.real_edges_face2[
+                edge_active[self.real_edges_face2]
+            ]
 
-        # initialize arrays that will define the sparse matrix 
+            in_internal = np.isin(all_edge_idx, self.internal_edges)
+            # Off-diagonal advection couplings: require BOTH endpoints
+            # wet (edge_active) and internal. The dry recipient's row
+            # stays clean -- it is pinned to identity by rule 1.
+            flow_out_indices_internal = np.where(
+                (adv > 0) & edge_active & in_internal
+            )[0]
+            flow_in_indices = np.where(
+                (adv < 0) & edge_active & in_internal
+            )[0]
+            # Donor-diagonal advection contribution (rule 3 amended):
+            # the donor side is wet (or a ghost), the recipient may be
+            # dry. Adds +|adv| to the donor's diagonal so mass leaves
+            # the wet cell at rate |adv|*c[t+1, donor] via the implicit
+            # solve. Without this contribution the wet-dry edge silently
+            # traps the wet cell's outflow mass.
+            flow_out_indices = np.where(
+                (adv > 0) & ef1_wet_or_ghost
+            )[0]
+            flow_in_indices_diag = np.where(
+                (adv < 0) & ef2_wet_or_ghost & in_internal
+            )[0]
+
+            # Rule-1 dry-cell pinning. Every REAL cell with
+            # wet_mask[t+1]=False gets its diagonal pinned to identity
+            # via __fill_empty_cells. Covers persistently-dry AND
+            # wet->dry transition cells.
+            dry_cells_t1 = np.flatnonzero(
+                ~wet_t1_full[: int(self.real_cell_count)]
+            ).astype(np.int64)
+            empty_cells = dry_cells_t1
+
+            # Wet-dry leak diagnostic: record (donor, |adv|) per internal
+            # wet-dry edge so the post-solve diagnostic in C-beta can
+            # compute the mass that left the wet donor toward the dry
+            # recipient and add it to mass_lost_to_dry.
+            wet_dry_pos = (
+                (adv > 0) & ef1_wet_or_ghost & ~ef2_wet_or_ghost
+                & in_internal
+            )
+            wet_dry_neg = (
+                (adv < 0) & ef2_wet_or_ghost & ~ef1_wet_or_ghost
+                & in_internal
+            )
+            self.wet_dry_leak_donors = np.concatenate([
+                ef1_full[wet_dry_pos],
+                ef2_full[wet_dry_neg],
+            ])
+            self.wet_dry_leak_abs_adv = np.concatenate([
+                np.abs(adv[wet_dry_pos]),
+                np.abs(adv[wet_dry_neg]),
+            ])
+            self.dry_cells_t1 = dry_cells_t1
+        else:
+            # Legacy path: existing canonical behaviour bit-identical.
+            flow_out_indices = np.where(flow_across_face > 0)[0]
+            flow_out_indices_internal = np.where(
+                (flow_across_face > 0)
+                & (np.isin(flow_across_face.nedge, self.internal_edges))
+            )[0]
+            flow_in_indices = np.where(
+                (flow_across_face < 0)
+                & (np.isin(flow_across_face.nedge, self.internal_edges))
+            )[0]
+            # Legacy has a single flow_in_indices for both off-diagonal
+            # and donor-diagonal in the negative-adv case; keep that
+            # contract by aliasing.
+            flow_in_indices_diag = flow_in_indices
+            empty_cells = np.where(
+                (volume.values == 0)
+                & (np.isin(volume.nface, np.arange(self.real_cell_count)))
+            )[0]
+            active_internal_edges = self.internal_edges
+            active_real_edges_face1 = self.real_edges_face1
+            active_real_edges_face2 = self.real_edges_face2
+            # No leak diagnostic possible without WET_MASK; expose empty
+            # arrays so downstream consumers can treat absence uniformly.
+            self.wet_dry_leak_donors = np.array([], dtype=np.int64)
+            self.wet_dry_leak_abs_adv = np.array([], dtype=float)
+            self.dry_cells_t1 = np.array([], dtype=np.int64)
+
+        # initialize arrays that will define the sparse matrix
         self.start_index = 0
         self.end_index = 0
         self.__init_matrix_values(
             flow_out_indices,
+            flow_out_indices_internal,
             flow_in_indices,
+            flow_in_indices_diag,
             empty_cells,
+            active_internal_edges,
+            active_real_edges_face1,
+            active_real_edges_face2,
             flow_out_gate_indices,
             flow_in_gate_indices,
         )
@@ -147,6 +258,9 @@ class LHS:
             coefficient_to_diffusion_term,
             edges_face1,
             edges_face2,
+            active_internal_edges,
+            active_real_edges_face1,
+            active_real_edges_face2,
         )
         self.__fill_advection_values(
             flow_across_face,
@@ -155,6 +269,7 @@ class LHS:
             flow_out_indices,
             flow_out_indices_internal,
             flow_in_indices,
+            flow_in_indices_diag,
         )
         if self.has_gate_flow:
             self.__fill_advection_values(
@@ -164,19 +279,33 @@ class LHS:
                 flow_out_gate_indices,
                 flow_out_gate_indices,
                 flow_in_gate_indices,
+                flow_in_gate_indices,
             )
 
     def __init_matrix_values(
         self,
         flow_out_indices,
+        flow_out_indices_internal,
         flow_in_indices,
+        flow_in_indices_diag,
         empty_cells,
+        active_internal_edges,
+        active_real_edges_face1,
+        active_real_edges_face2,
         flow_out_gate_indices,
         flow_in_gate_indices,
-
     ):
+        # Pre-allocation accounts for the C-alpha split between
+        # donor-diagonal (gated by donor-wet) and off-diagonal (gated by
+        # edge_active) advection contributions, plus the active subsets
+        # of internal/real edges for the diffusion fill. On the legacy
+        # path the *_internal and *_diag sets equal the unsplit sets and
+        # the active subsets equal the unfiltered topology, so the total
+        # length matches the prior canonical pre-allocation.
         length_of_values = self.internal_edge_count * 2 + self.real_cell_count * 2 + \
-            len(flow_out_indices)* 2  + len(flow_in_indices)*2 + len(empty_cells) + \
+            len(flow_out_indices) + len(flow_out_indices_internal) + \
+            len(flow_in_indices) + len(flow_in_indices_diag) + \
+            len(empty_cells) + \
             len(self.real_edges_face1) + len(self.real_edges_face2) + \
             len(flow_out_gate_indices) + len(flow_in_gate_indices)
         # create empty placeholders that will be used to fill the CSR
@@ -220,39 +349,46 @@ class LHS:
         coefficient_to_diffusion_term,
         edges_face1,
         edges_face2,
+        active_internal_edges,
+        active_real_edges_face1,
+        active_real_edges_face2,
     ):
         """
-        Sum of coefficient to diffusion terms associated with each cell. 
+        Sum of coefficient to diffusion terms associated with each cell.
         The coefficient to the diffusion term is as follows:
            (Face vertical area x diffusion coefficient) / (distance between cells)
-        The coefficient to teh diffusion term is summed over all faces, and is multiplied by 
+        The coefficient to the diffusion term is summed over all faces, and is multiplied by
            the difference between the NEIGHBOR cell (N) and the REFERENCE cell (P);
            we therefore need to place values both on the diagonal and off-diagonal accordingly.
         Diffusion coefficients for ghost cells will get added to the RHS of the matrix.
+
+        Phase-D C-alpha: only ACTIVE edges (both endpoints wet at t+1, or
+        one a ghost) contribute. On the legacy path the active subsets
+        equal the unfiltered topology, so behaviour is bit-identical.
         """
-        # diagnoal terms
+        # diagonal terms
         self.__fill(
-            rows=edges_face1[self.real_edges_face1],
-            columns=edges_face1[self.real_edges_face1],
-            coefficients=coefficient_to_diffusion_term[self.real_edges_face1]
+            rows=edges_face1[active_real_edges_face1],
+            columns=edges_face1[active_real_edges_face1],
+            coefficients=coefficient_to_diffusion_term[active_real_edges_face1]
         )
         self.__fill(
-            rows = edges_face2[self.real_edges_face2],
-            columns = edges_face2[self.real_edges_face2],
-            coefficients=coefficient_to_diffusion_term[self.real_edges_face2]  
+            rows=edges_face2[active_real_edges_face2],
+            columns=edges_face2[active_real_edges_face2],
+            coefficients=coefficient_to_diffusion_term[active_real_edges_face2]
         )
 
         # off-diagonal terms
         self.__fill(
-            rows=edges_face1[self.internal_edges],
-            columns=edges_face2[self.internal_edges],
-            coefficients=coefficient_to_diffusion_term[self.internal_edges] * -1
+            rows=edges_face1[active_internal_edges],
+            columns=edges_face2[active_internal_edges],
+            coefficients=coefficient_to_diffusion_term[active_internal_edges] * -1
         )
 
         self.__fill(
-            rows=edges_face2[self.internal_edges],
-            columns=edges_face1[self.internal_edges], 
-            coefficients=coefficient_to_diffusion_term[self.internal_edges] * -1
+            rows=edges_face2[active_internal_edges],
+            columns=edges_face1[active_internal_edges],
+            coefficients=coefficient_to_diffusion_term[active_internal_edges] * -1
         )
 
 
@@ -264,6 +400,7 @@ class LHS:
         flow_out_indices,
         flow_out_indices_internal,
         flow_in_indices,
+        flow_in_indices_diag,
     ):
         """
         Advection coefficient values.
@@ -272,43 +409,53 @@ class LHS:
             is the reference cell (C_f = C_P)
           Where the flow across the face is negative, the concentration across the face (C_f)
             is the neighbor cell (C_f = C_N)
-        This function places those values in the matrix accordingly and subtracts the value from 
+        This function places those values in the matrix accordingly and subtracts the value from
           the corresponding partner cell (i.e., if C_f = C_P, then the value is placed on the diagonal for C_P
           and then that same value is subtracted from the neighbor cell (C_N) for mass balance -- or vice versa).
+
+        Phase-D C-alpha rule-3 amendment: when WET_MASK is in the
+        registry, the DIAGONAL contributions are gated by the donor side
+        being wet (``flow_out_indices`` / ``flow_in_indices_diag``) and
+        may include wet-dry edges, while the OFF-DIAGONAL couplings are
+        gated by both endpoints being wet (``flow_out_indices_internal``
+        / ``flow_in_indices``). On the legacy path the donor and active
+        sets coincide, so behaviour is bit-identical.
         """
         if len(flow_out_indices) > 0:
-            # where face flow is positive, the concentration across the face will be the REFERENCE CELL 
-            # so the the coefficient will go in the diagonal - both row and column will equal diag_cell
-            # Advection coefficient for timestep t is the flow across the face going from t to t+1 
+            # Donor-diagonal advection for positive flow (donor is f1).
+            # Includes wet-dry edges with wet donor under the C-alpha
+            # amendment; same set as the legacy path otherwise.
             self.__fill(
-                rows = edges_face1[flow_out_indices],
-                columns = edges_face1[flow_out_indices],
+                rows=edges_face1[flow_out_indices],
+                columns=edges_face1[flow_out_indices],
                 coefficients=flow_across_face[flow_out_indices]
             )
-
-            # subtract from corresponding neighbor cell (off-diagonal)
-            # for internal cells only
+        if len(flow_out_indices_internal) > 0:
+            # Off-diagonal coupling (recipient row receives -adv) for
+            # positive flow on internal both-wet edges only.
             self.__fill(
-                rows = edges_face2[flow_out_indices_internal],
-                columns = edges_face1[flow_out_indices_internal],
+                rows=edges_face2[flow_out_indices_internal],
+                columns=edges_face1[flow_out_indices_internal],
                 coefficients=flow_across_face[flow_out_indices_internal] * -1
-        )
+            )
 
         if len(flow_in_indices) > 0:
-            ## where face flopw is negative, the concentration across the face will be the neighbor cell ("N")
-            ## so the coefficient will be off-diagonal
-            ## This is internal cells only; external cells will be handled on the RHS
+            # Off-diagonal coupling (recipient row receives +adv) for
+            # negative flow on internal both-wet edges only.
             self.__fill(
                 rows=edges_face1[flow_in_indices],
                 columns=edges_face2[flow_in_indices],
                 coefficients=flow_across_face[flow_in_indices]
             )
-
-            ## do the opposite on the corresponding diagonal 
+        if len(flow_in_indices_diag) > 0:
+            # Donor-diagonal advection for negative flow (donor is f2).
+            # Includes wet-dry edges with wet donor under the C-alpha
+            # amendment; same set as ``flow_in_indices`` on the legacy
+            # path.
             self.__fill(
-                rows=edges_face2[flow_in_indices],
-                columns=edges_face2[flow_in_indices],
-                coefficients=flow_across_face[flow_in_indices] * -1,
+                rows=edges_face2[flow_in_indices_diag],
+                columns=edges_face2[flow_in_indices_diag],
+                coefficients=flow_across_face[flow_in_indices_diag] * -1,
             )
 
 
