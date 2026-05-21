@@ -181,6 +181,17 @@ class ClearwaterRiverine:
             self.__output_variables = model.get("output_variables", constituents)
             self.__mass_flux_calculation = model.get("mass_flux_calculation", False)
             self.crs = model.get("crs", None)
+            # Phase I-1 (2026-05-21): persist diffusion-dispatch
+            # method + params for registration after the registry is
+            # populated. ``_diffusion_method`` is one of
+            # {"constant", "elder", "eddy_viscosity", "array"};
+            # ``_diffusion_params`` is the method-specific kwargs
+            # dict (alpha for elder, schmidt for eddy_viscosity,
+            # file_path for array). For the legacy scalar config
+            # form, _diffusion_method == "constant" and
+            # _diffusion_params == {}.
+            self.__diffusion_method = model.get("_diffusion_method", "constant")
+            self.__diffusion_params = model.get("_diffusion_params", {})
             for category, data_sources_dict in data_sources.items():
                 self.__category_attr_map[category].update(data_sources_dict)
         else:
@@ -188,6 +199,9 @@ class ClearwaterRiverine:
             self._start_datetime = start_datetime
             self._end_datetime = end_datetime
             self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
+            # Phase I-1 default for the no-config path: constant diffusion.
+            self.__diffusion_method = "constant"
+            self.__diffusion_params = {}
         
         self.__chunked_mode: bool = self.__chunk_size is not None
         # Cross-chunk mass-balance accumulator (C3a). None until the first
@@ -833,6 +847,15 @@ class ClearwaterRiverine:
             continuity_correction=self.__continuity_correction,
         )
 
+        # Phase I-1 (2026-05-21): register the diffusion method code +
+        # method-specific parameters so ``calculate_coeff_to_diffusion_term``
+        # can dispatch correctly. The integer code map mirrors what
+        # the dispatcher reads: 0=constant, 1=elder, 2=eddy_viscosity,
+        # 3=array. ``constant`` is the default and registers nothing
+        # (preserving the legacy code path that just reads
+        # DIFFUSION_COEFFICIENT directly).
+        self._register_diffusion_method()
+
         # initialize constituents
         for constituent_name in list(constituents.keys()):
             self.__init_constituents(
@@ -871,6 +894,45 @@ class ClearwaterRiverine:
             point_sources_path=point_sources_path,
         )
 
+
+    def _register_diffusion_method(self) -> None:
+        """Register the diffusion-dispatch method + parameters on the registry.
+
+        Phase I-1 (2026-05-21): translates the config-side method
+        name and parameter dict into the FloatVariable entries the
+        dispatcher in ``utilities.calculate_coeff_to_diffusion_term``
+        reads. ``constant`` is the default and registers nothing.
+        """
+        from clearwater_data.variables.float import FloatVariable
+        method_codes = {"constant": 0, "elder": 1, "eddy_viscosity": 2, "array": 3}
+        method = self.__diffusion_method
+        if method not in method_codes:
+            raise ValueError(
+                f"Unknown diffusion method {method!r}. Expected one of "
+                f"{sorted(method_codes)}."
+            )
+        if method == "constant":
+            return
+        # Register method code so the dispatcher fires.
+        code = method_codes[method]
+        if "diffusion_method" in self.registry:
+            self.registry.unregister("diffusion_method")
+        self.registry.register("diffusion_method", FloatVariable(float(code)))
+        # Register method-specific scalar params. The dispatcher looks
+        # for these by name.
+        params = self.__diffusion_params or {}
+        if method == "elder" and "alpha" in params:
+            if "diffusion_alpha" in self.registry:
+                self.registry.unregister("diffusion_alpha")
+            self.registry.register(
+                "diffusion_alpha", FloatVariable(float(params["alpha"])),
+            )
+        if method == "eddy_viscosity" and "schmidt" in params:
+            if "diffusion_schmidt" in self.registry:
+                self.registry.unregister("diffusion_schmidt")
+            self.registry.register(
+                "diffusion_schmidt", FloatVariable(float(params["schmidt"])),
+            )
 
     def __populate_wet_mask(self):
         """Register ``WET_MASK`` on the current chunk window (Phase-D Unit A).

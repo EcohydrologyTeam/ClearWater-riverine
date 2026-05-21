@@ -656,20 +656,41 @@ class TransportEngine:
             # -- and zeros out on the legacy path.
             constituent.rhs.values[:] = constituent.rhs.values + drain_source
 
-            # Phase F T2-B (2026-05-21): per-constituent first-order
-            # decay. When ``constituent.decay_rate > 0`` (1/s, set from
-            # the per-day config value at Constituent init), add
-            # ``k * V[t+1]`` to the LHS diagonal so the implicit solve
-            # produces ``c[t+1] = c[t] / (1 + k*dt)`` in the steady-
-            # advection limit. Build a per-constituent A copy to avoid
-            # mutating the shared LHS matrix; no-op for conservative
-            # transport (default ``decay_rate=0``).
+            # Phase F T2-B + Phase I-3 (2026-05-21): per-constituent
+            # LHS diagonal modifications -- decay and point-source
+            # sinks. Each adds a positive value to the diagonal so
+            # the implicit solve preserves mass conservation; the
+            # additions are independent and may both fire on the
+            # same constituent. Build ``A_solve`` once if either
+            # contribution is non-zero.
+            #
+            # T2-B decay: ``A[i,i] += k * V[t+1]`` so the steady-
+            # advection limit yields ``c[t+1] = c[t] / (1 + k*dt)``.
+            # I-3 sink: ``A[i,i] += |Flow_Rate|`` at cells where
+            # the point-source ``Flow_Rate < 0`` (sink withdrawal
+            # at the cell's own concentration). Default behaviour
+            # (no decay + no sinks) is unchanged.
             decay_rate = float(getattr(constituent, "decay_rate", 0.0) or 0.0)
-            if decay_rate > 0.0:
-                volume_next = np.asarray(
-                    registry.get_at_time(VOLUME, current_time + time_step)
+            sink_diag = None
+            ps_flows_key = f"{constituent_name}_point_source_flows"
+            if ps_flows_key in registry:
+                ps_flows = np.asarray(
+                    registry.get_at_time(
+                        ps_flows_key, current_time + time_step
+                    )
                 )[: int(real_cell_count)]
-                diag_add = decay_rate * volume_next
+                if np.any(ps_flows < 0):
+                    sink_diag = np.where(ps_flows < 0, -ps_flows, 0.0)
+
+            if decay_rate > 0.0 or sink_diag is not None:
+                diag_add = np.zeros(int(real_cell_count), dtype=np.float64)
+                if decay_rate > 0.0:
+                    volume_next = np.asarray(
+                        registry.get_at_time(VOLUME, current_time + time_step)
+                    )[: int(real_cell_count)]
+                    diag_add += decay_rate * volume_next
+                if sink_diag is not None:
+                    diag_add += sink_diag
                 A_solve = A.copy()
                 A_solve.setdiag(A_solve.diagonal() + diag_add)
             else:

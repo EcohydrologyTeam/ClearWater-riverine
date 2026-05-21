@@ -64,6 +64,16 @@ from clearwater_riverine.variables import (
     VOLUME_ELEVATION_INFO,
     VOLUME_ELEVATION_VALUES,
     VOLUME_ELEVATION_LOOKUP,
+    # Phase I-1 (2026-05-21): variables required by the non-constant
+    # diffusion methods (Elder, eddy viscosity). Each is OPTIONAL in
+    # the source RAS HDF; the reader registers them only when the
+    # dataset is present, so existing decks that ship only the
+    # minimal output set continue to work with the constant-diffusion
+    # default path.
+    MANNINGS_N,
+    EDDY_VISCOSITY,
+    CELL_EDDY_VISCOSITY_X,
+    CELL_EDDY_VISCOSITY_Y,
     FACE_HYD_DEPTH,
     FACE_VEL_X,
     FACE_VEL_Y,
@@ -310,6 +320,25 @@ class RASHDFDataSource:
         self.all_datetimes = payload['all_datetimes']
 
 
+    def _optional_temporal_variables(self) -> dict:
+        """Return the diffusion-dispatch optional temporal variables.
+
+        Phase I-1 (2026-05-21): each entry is
+        ``(variable_name, space_dim)``. The reader consumes this
+        lazily and skips entries whose HDF path is absent, so adding
+        a new optional variable here does not require touching the
+        read loop and existing HDFs without these datasets continue
+        to load.
+        """
+        return {
+            FACE_VEL_X: NFACE,
+            FACE_VEL_Y: NFACE,
+            EDDY_VISCOSITY: NEDGE,
+            CELL_EDDY_VISCOSITY_X: NFACE,
+            CELL_EDDY_VISCOSITY_Y: NFACE,
+        }
+
+
     def __identify_gates(
         self,
         infile,
@@ -340,12 +369,20 @@ class RASHDFDataSource:
             FLOW_ACROSS_FACE: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Face Flow',
             VOLUME: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Volume',
             FACE_HYD_DEPTH: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Hydraulic Depth',
-            # Path scaffolding only: FACE_VEL_X / FACE_VEL_Y are NOT in
-            # temporal_variables, so __read_temporal_variables never reads
-            # them. Wiring them in is a 1-line add once their Phase-D
-            # consumer (depth/velocity diffusion closure) is ported.
             FACE_VEL_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity X',
             FACE_VEL_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Velocity - Velocity Y',
+            # Phase I-1 (2026-05-21): paths for the diffusion-dispatch
+            # consumers. MANNINGS_N is a static geometry attribute;
+            # EDDY_VISCOSITY (per-edge, per-time) and the CELL_EDDY_*
+            # X/Y components (per-cell, per-time) are optional
+            # temporal outputs. All are conditional: the reader checks
+            # ``hdf_path in infile`` before adding to the temporal /
+            # static read loop, so HDFs that ship only the minimal
+            # output set continue to work.
+            MANNINGS_N: f"Geometry/2D Flow Areas/{self.project_name}/Cells Center Manning's n",
+            EDDY_VISCOSITY: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Eddy Viscosity - Eddy Viscosity',
+            CELL_EDDY_VISCOSITY_X: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Eddy Viscosity - X',
+            CELL_EDDY_VISCOSITY_Y: f'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/{self.project_name}/Cell Eddy Viscosity - Y',
             'project_name': 'Geometry/2D Flow Areas/Attributes',
             'binary_time_stamps': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp',
             'volume elevation info': f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Info',
@@ -579,6 +616,17 @@ class RASHDFDataSource:
         )
         self.nedge = len(self.mesh[NEDGE])
 
+        # Phase I-1 (2026-05-21): optional static read for Manning's n.
+        # Required by the Elder diffusion method; absent from RAS HDFs
+        # that ship only the minimal output set. Skipped silently
+        # when absent; the diffusion dispatcher raises with a clear
+        # error if the user requests ``method=elder`` without it.
+        if self.paths[MANNINGS_N] in infile:
+            self.mesh[MANNINGS_N] = _hdf_to_xarray(
+                infile[self.paths[MANNINGS_N]],
+                (NFACE,),
+            )
+
     def __read_temporal_variables(
         self,
         infile: h5py.File,
@@ -596,6 +644,25 @@ class RASHDFDataSource:
             self.mesh[variable] = _hdf_to_xarray(
                 infile[hdf_path],
                 ('time', self.temporal_variables[variable]),
+                time_constraint=self.datetime_range_indices,
+            )
+
+        # Phase I-1 (2026-05-21): optional temporal reads for the
+        # diffusion-dispatch consumers. Each is read only when the
+        # HDF dataset exists; ``self.optional_temporal_variables`` is
+        # a (name, space-dim) iterable shared with the chunked-read
+        # path. Skipped silently when absent; the diffusion
+        # dispatcher raises ``NotImplementedError`` with a clear
+        # message at construction time if a method that needs the
+        # variable is requested but the variable isn't in the
+        # registry.
+        for variable, space_dim in self._optional_temporal_variables().items():
+            hdf_path = self.paths.get(variable)
+            if hdf_path is None or hdf_path not in infile:
+                continue
+            self.mesh[variable] = _hdf_to_xarray(
+                infile[hdf_path],
+                ('time', space_dim),
                 time_constraint=self.datetime_range_indices,
             )
 

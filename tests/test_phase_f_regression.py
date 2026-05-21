@@ -277,9 +277,13 @@ def test_t2a_point_sources_loads_and_registers(tmp_path):
         assert flows[:, 2:nreal].sum() == 0.0
 
 
-def test_t2a_point_sources_negative_flow_warns(tmp_path):
-    """Negative Flow_Rate (sink) emits a UserWarning that sink
-    handling is deferred."""
+def test_t2a_point_sources_negative_flow_loads_silently(tmp_path):
+    """Phase I-3 (2026-05-21): negative Flow_Rate (sink) is fully
+    supported via the LHS-diagonal modification in
+    ``TransportEngine.run``. The earlier T2-A "sinks not supported"
+    UserWarning is gone; sinks now load silently and are applied at
+    every transport step as ``A[i,i] += |Flow_Rate|``.
+    """
     ps_csv = tmp_path / "ps_sink.csv"
     pd.DataFrame({
         "Cell_Index": [0],
@@ -301,8 +305,18 @@ def test_t2a_point_sources_negative_flow_warns(tmp_path):
         simulation_directory=str(tmp_path),
         hydrodynamic_input=str(PLAN02 / PLAN02_HDF),
     )
-    with pytest.warns(UserWarning, match="negative Flow_Rate"):
-        cwr.ClearwaterRiverine(config_filepath=str(cfg_path))
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        model = cwr.ClearwaterRiverine(config_filepath=str(cfg_path))
+        # No "sinks not supported" warning fires.
+        sink_warnings = [
+            x for x in w if "negative Flow_Rate" in str(x.message)
+        ]
+        assert sink_warnings == [], (
+            "Sinks are supported in I-3; the T2-A warning must not fire."
+        )
+    # The sink loaded correctly.
+    assert model._constituents["tracer"].has_point_sources is True
 
 
 def test_t2a_point_sources_absent_is_no_op(tmp_path):
@@ -569,6 +583,59 @@ def test_h4_decay_rate_implicit_euler_first_order(tmp_path):
     final_mean = float(np.mean(c[-1, finite_cells]))
     assert final_mean < 100.0, (
         f"decay_rate=1/day should produce final mean < 100; got {final_mean:.4f}"
+    )
+
+
+def test_i3_point_source_sink_removes_mass(tmp_path):
+    """Phase I-3 numerical: a continuous point sink (Flow_Rate < 0)
+    at cell 0 pulls cell 0's concentration BELOW the BC=IC=100
+    equilibrium that a no-sink run would produce.
+
+    The LHS diagonal modification ``A[0,0] += |Flow_Rate|`` is the
+    only mechanism by which a sink can lower the cell's c[t+1]
+    relative to the conservative case; this test locks that effect.
+    """
+    # Two parallel models on the same fixture: one with a strong
+    # sink at cell 0, one without. Cell 0's concentration in the
+    # sink model must be strictly lower than in the no-sink model
+    # at the last finite timestep.
+    no_ps_cfg_path = _make_config(tmp_path, PLAN02, PLAN02_HDF)
+    m_no = cwr.ClearwaterRiverine(config_filepath=str(no_ps_cfg_path))
+    m_no.run()
+    tracer_no = np.asarray(m_no.registry.get("tracer"))
+
+    ps_csv = tmp_path / "ps_sink_h4.csv"
+    pd.DataFrame({
+        "Cell_Index": [0, 0],
+        "Datetime": ["2023-01-01 12:00:00", "2023-01-01 12:30:00"],
+        "Flow_Rate": [-5.0, -5.0],   # large sink
+        "Concentration": [0.0, 0.0],  # ignored for sinks
+    }).to_csv(ps_csv, index=False)
+    cfg_path = _make_config(
+        tmp_path, PLAN02, PLAN02_HDF,
+        constituents={
+            "tracer": {
+                "initial_conditions": {"provider": "float", "data": {"value": 100}},
+                "boundary_conditions": {"provider": "float", "data": {"value": 100}},
+                "point_sources": str(ps_csv),
+            }
+        },
+        simulation_directory=str(tmp_path),
+        hydrodynamic_input=str(PLAN02 / PLAN02_HDF),
+    )
+    m_sink = cwr.ClearwaterRiverine(config_filepath=str(cfg_path))
+    m_sink.run()
+    tracer_sink = np.asarray(m_sink.registry.get("tracer"))
+
+    # Find the last timestep where both runs have finite cell 0.
+    finite = np.isfinite(tracer_no[:, 0]) & np.isfinite(tracer_sink[:, 0])
+    if not finite.any():
+        pytest.skip("plan02 cell 0 not finite at any step in both runs")
+    last_t = int(np.where(finite)[0][-1])
+    assert tracer_sink[last_t, 0] < tracer_no[last_t, 0], (
+        f"Sink should pull cell 0 below conservative case; got "
+        f"sink={tracer_sink[last_t, 0]:.3f} vs no_sink="
+        f"{tracer_no[last_t, 0]:.3f}"
     )
 
 

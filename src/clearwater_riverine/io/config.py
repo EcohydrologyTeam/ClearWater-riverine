@@ -35,9 +35,37 @@ def init_from_config(
     constituents_config = config['constituents']
 
     data_sources = __init_data_sources(config, model_config["simulation_directory"])
-    data_sources['variable_data_sources'][DIFFUSION_COEFFICIENT] = FloatDataSource(**{
-        "value": model_config["diffusion_coefficient"]
-    })
+
+    # Phase I-1 (2026-05-21): the ``diffusion_coefficient`` config
+    # entry now accepts EITHER a scalar (legacy: constant diffusion)
+    # OR a structured dict ``{"method": "elder"|"eddy_viscosity"|
+    # "array"|"constant", "value": ..., "alpha": ..., "schmidt": ...,
+    # "file_path": ...}``. The dict form stores ``method`` and the
+    # method-specific params on the model_config for the model to
+    # register as the registry's ``diffusion_method`` integer code
+    # and method-specific scalars at init time. Scalar form preserves
+    # the previous behaviour byte-identically.
+    diff = model_config["diffusion_coefficient"]
+    if isinstance(diff, dict):
+        method = str(diff.get("method", "constant")).lower()
+        # Persist the parsed form on model_config so model.py can read it.
+        model_config["_diffusion_method"] = method
+        model_config["_diffusion_params"] = {
+            k: v for k, v in diff.items() if k != "method"
+        }
+        # The DIFFUSION_COEFFICIENT FloatDataSource always carries
+        # the scalar fallback ``value`` (default 0.0). Non-constant
+        # methods use it only when their per-cell data is unavailable.
+        data_sources['variable_data_sources'][DIFFUSION_COEFFICIENT] = FloatDataSource(
+            value=float(diff.get("value", 0.0)),
+        )
+    else:
+        # Scalar (legacy): constant method only.
+        model_config["_diffusion_method"] = "constant"
+        model_config["_diffusion_params"] = {}
+        data_sources['variable_data_sources'][DIFFUSION_COEFFICIENT] = FloatDataSource(
+            value=float(diff),
+        )
 
     return model_config, data_sources, constituents_config
 

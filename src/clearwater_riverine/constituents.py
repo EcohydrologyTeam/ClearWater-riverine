@@ -386,19 +386,12 @@ class Constituent:
             raise_on_nan=True,
             warn_on_negative=False,  # negative flow == sink: legitimate
         )
-        if (df['Flow_Rate'] < 0).any():
-            n_sinks = int((df['Flow_Rate'] < 0).sum())
-            warnings.warn(
-                f"Constituent {self._name!r}: point_sources CSV {filepath} "
-                f"contains {n_sinks} row(s) with negative Flow_Rate (sinks). "
-                "Phase F T2-A initial port implements RHS source mass "
-                "injection only; sink removal (LHS diagonal modification) "
-                "is not yet wired. Negative-Flow_Rate rows currently have "
-                "no effect on the transport solve. File an issue if your "
-                "application depends on point-sink withdrawals.",
-                UserWarning,
-                stacklevel=2,
-            )
+        # Phase I-3 (2026-05-21): sink rows (Flow_Rate < 0) are now
+        # fully supported via the LHS-diagonal modification in
+        # ``TransportEngine.run``. The earlier T2-A warning that said
+        # sinks were unsupported has been removed; negative-Flow_Rate
+        # rows now produce a per-step mass withdrawal at each sink
+        # cell's current concentration.
         _validate_constituent_values(
             df['Concentration'].to_numpy(),
             constituent_name=self._name,
