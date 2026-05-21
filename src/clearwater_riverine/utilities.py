@@ -12,21 +12,28 @@ from clearwater_data.variables.float import FloatVariable
 from clearwater_riverine.variables import (
     ADVECTION_COEFFICIENT,
     AVERAGE_DEPTH,
+    CELL_EDDY_VISCOSITY_X,
+    CELL_EDDY_VISCOSITY_Y,
     CHANGE_IN_TIME,
     COEFFICIENT_TO_DIFFUSION_TERM,
     DIFFUSION_COEFFICIENT,
+    EDDY_VISCOSITY,
     EDGE_FACE_CONNECTIVITY,
     EDGE_VERTICAL_AREA,
     EDGE_VELOCITY,
     FACES,
     FACE_HYD_DEPTH,
     FACE_TO_FACE_DISTANCE,
+    FACE_VEL_MAG,
+    FACE_VEL_X,
+    FACE_VEL_Y,
     FACE_X,
     FACE_Y,
     FLOW_ACROSS_FACE,
     LOOKUP_ELEVATION,
     LOOKUP_VOLUME,
     LOOKUP_WETTED_SURFACE_AREA,
+    MANNINGS_N,
     MAXIMUM_DEPTH,
     NUMBER_OF_REAL_CELLS,
     TIME,
@@ -77,27 +84,234 @@ def calculate_edge_vertical_area(
     return DataArrayVariable(vertical_area)
 
 
+def _cell_diffusion_to_edge(D_cell, edges_face1, edges_face2, nreal):
+    """Interpolate per-cell diffusion coefficients to edges via harmonic mean.
+
+    Phase F T2-C (2026-05-21): forward-port of the streaming helper used
+    by all non-constant diffusion methods (Elder, eddy viscosity, array).
+    At boundary edges (``edges_face2 > nreal``, i.e. ghost-on-side-2),
+    uses the real cell's value directly (no harmonic-mean blend with
+    ghost data). At interior edges, returns
+    ``2 * D1 * D2 / max(D1 + D2, eps)``.
+
+    Args:
+        D_cell: Per-cell diffusion values, shape (..., nface)
+        edges_face1: Face indices on side 1 of each edge, shape (nedge,)
+        edges_face2: Face indices on side 2 of each edge, shape (nedge,)
+        nreal: Number of real (non-ghost) cells. ``edges_face2 > nreal``
+            flags BC edges.
+
+    Returns:
+        D_edge: Per-edge diffusion values, shape matches ``D_cell[..., 0]``
+            with the leading dims preserved and the last axis = nedge.
+    """
+    D1 = D_cell[..., edges_face1]
+    D2 = D_cell[..., edges_face2]
+    ghost_mask = edges_face2 > nreal
+    return np.where(
+        ghost_mask,
+        D1,
+        2.0 * D1 * D2 / np.maximum(D1 + D2, 1e-30),
+    )
+
+
+def _calc_diffusion_elder(
+    registry: VariableRegistry,
+    alpha: float = 0.6,
+    g: float = 9.81,
+) -> np.ndarray:
+    """Elder (1959) depth-velocity scaling for diffusion (Phase F T2-C).
+
+    ``D_cell = alpha * u* * h``, where ``u* = V * sqrt(g) * n / h^(1/6)``
+    via Manning's. Requires ``MANNINGS_N``, ``FACE_HYD_DEPTH``, and
+    velocity magnitude (``FACE_VEL_MAG`` or both
+    ``FACE_VEL_X`` + ``FACE_VEL_Y``) in the registry. Raises with a
+    clear message when any are missing.
+
+    Returns per-edge ``D_edge`` of shape (time, nedge), suitable for
+    multiplying by ``edge_vertical_area / face_to_face_distance`` to
+    form the COEFFICIENT_TO_DIFFUSION_TERM.
+    """
+    if MANNINGS_N not in registry:
+        raise NotImplementedError(
+            "Elder diffusion method requires Manning's n in the registry. "
+            "Phase F T2-C ported the helper; wiring the canonical HDF "
+            "reader to register MANNINGS_N from 'Cells Center Manning's n' "
+            "is a follow-up commit (the path exists in io/hdf.py path "
+            "scaffolding but is not yet in __read_temporal_variables/"
+            "__read_static_variables). Until then, use "
+            "diffusion_coefficient as a scalar (constant method)."
+        )
+    if FACE_HYD_DEPTH not in registry:
+        raise ValueError(
+            "Elder diffusion method requires hydraulic depth. "
+            "Set wet_dry_metric to 'depth' or 'both' (which auto-registers "
+            "FACE_HYD_DEPTH from WSE - cell_min_elev), or re-run RAS with "
+            "'Cell Hydraulic Depth' temporal output enabled."
+        )
+    mannings_n = np.asarray(registry.get(MANNINGS_N))
+    depth = np.asarray(registry.get(FACE_HYD_DEPTH))
+
+    if FACE_VEL_MAG in registry:
+        vel_mag = np.asarray(registry.get(FACE_VEL_MAG))
+    elif FACE_VEL_X in registry and FACE_VEL_Y in registry:
+        vx = np.asarray(registry.get(FACE_VEL_X))
+        vy = np.asarray(registry.get(FACE_VEL_Y))
+        vel_mag = np.sqrt(vx * vx + vy * vy)
+    else:
+        raise NotImplementedError(
+            "Elder diffusion method requires cell velocity magnitude or "
+            "components. Phase F T2-C ported the helper; wiring "
+            "FACE_VEL_X / FACE_VEL_Y into the canonical HDF reader's "
+            "temporal_variables is a follow-up commit. Until then, use "
+            "diffusion_coefficient as a scalar (constant method)."
+        )
+
+    safe_depth = np.maximum(depth, 1e-10)
+    shear_velocity = vel_mag * np.sqrt(g) * mannings_n / safe_depth ** (1.0 / 6.0)
+    D_cell = alpha * shear_velocity * safe_depth
+
+    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+    f1 = ef[:, 0].astype(np.int64)
+    f2 = ef[:, 1].astype(np.int64)
+    nreal = int(registry.get(NUMBER_OF_REAL_CELLS)) - 1
+    return _cell_diffusion_to_edge(D_cell, f1, f2, nreal)
+
+
+def _calc_diffusion_eddy_viscosity(
+    registry: VariableRegistry,
+    Sc_t: float = 1.0,
+) -> np.ndarray:
+    """Eddy-viscosity diffusion: ``D = nu_t / Sc_t`` (Phase F T2-C).
+
+    Uses ``EDDY_VISCOSITY`` (per-edge, time-varying) if available.
+    Falls back to ``CELL_EDDY_VISCOSITY_X / Y`` magnitudes interpolated
+    to edges via harmonic mean.
+    """
+    if EDDY_VISCOSITY in registry:
+        return np.asarray(registry.get(EDDY_VISCOSITY)) / Sc_t
+    if CELL_EDDY_VISCOSITY_X in registry and CELL_EDDY_VISCOSITY_Y in registry:
+        nx = np.asarray(registry.get(CELL_EDDY_VISCOSITY_X))
+        ny = np.asarray(registry.get(CELL_EDDY_VISCOSITY_Y))
+        nu_t_cell = np.sqrt(nx * nx + ny * ny)
+        ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+        f1 = ef[:, 0].astype(np.int64)
+        f2 = ef[:, 1].astype(np.int64)
+        nreal = int(registry.get(NUMBER_OF_REAL_CELLS)) - 1
+        return _cell_diffusion_to_edge(nu_t_cell / Sc_t, f1, f2, nreal)
+    raise NotImplementedError(
+        "Eddy-viscosity diffusion method requires EDDY_VISCOSITY or "
+        "CELL_EDDY_VISCOSITY_X+Y in the registry. Phase F T2-C ported "
+        "the helper; wiring these into the canonical HDF reader is a "
+        "follow-up commit. Until then, use diffusion_coefficient as a "
+        "scalar (constant method)."
+    )
+
+
+def _calc_diffusion_array(
+    registry: VariableRegistry,
+    filepath: str | Path,
+    default_value: float = 0.0,
+) -> np.ndarray:
+    """Per-cell diffusion from a CSV (Phase F T2-C).
+
+    CSV columns (no header required by position; first two used):
+    ``cell_index, diffusion_coefficient``. Static values applied at
+    all timesteps.
+    """
+    df = pd.read_csv(filepath)
+    volume = registry.get(VOLUME)
+    nface = int(volume.sizes['nface'])
+    ntimes = int(volume.sizes['time'])
+    D_cell = np.full(nface, default_value, dtype=np.float64)
+    D_cell[df.iloc[:, 0].values.astype(int)] = df.iloc[:, 1].values
+    D_cell_tv = np.broadcast_to(D_cell, (ntimes, nface)).copy()
+    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+    f1 = ef[:, 0].astype(np.int64)
+    f2 = ef[:, 1].astype(np.int64)
+    nreal = int(registry.get(NUMBER_OF_REAL_CELLS)) - 1
+    return _cell_diffusion_to_edge(D_cell_tv, f1, f2, nreal)
+
+
 def calculate_coeff_to_diffusion_term(
         registry: VariableRegistry,
     ) -> np.array:
-    """ Calculate the coefficient to the diffusion term. 
+    """ Calculate the coefficient to the diffusion term.
 
     For each edge, this is calculated as:
-    (Edge vertical area * diffusion coefficient) / (distance between cells) 
-    
+    (Edge vertical area * diffusion coefficient) / (distance between cells)
+
+    Phase F T2-C (2026-05-21): when the registry carries a
+    ``DIFFUSION_METHOD`` string variable (a Python ``str`` registered
+    on the model at init time), this function dispatches to the
+    appropriate per-method helper (``_calc_diffusion_elder``,
+    ``_calc_diffusion_eddy_viscosity``, ``_calc_diffusion_array``).
+    Default behaviour (no ``DIFFUSION_METHOD`` registered) is constant
+    diffusion using the scalar ``DIFFUSION_COEFFICIENT``.
+
     Args:
         registry: VariableRegistry
 
     Returns:
         diffusion_array (np.array):     Array of diffusion coefficients associated with each edge
-
     """
     edge_vertical_area = registry.get(EDGE_VERTICAL_AREA)
     face_to_face_distance = registry.get(FACE_TO_FACE_DISTANCE)
-    diffusion_coefficient = registry.get(DIFFUSION_COEFFICIENT)
 
-    diffusion_array = edge_vertical_area * diffusion_coefficient / face_to_face_distance
-    return DataArrayVariable(diffusion_array)
+    # Phase F T2-C dispatch. ``diffusion_method`` is stored as a
+    # FloatVariable wrapping a flag (0=constant, 1=elder, 2=eddy,
+    # 3=array) when set by the model; absent means constant.
+    method_var = "diffusion_method"
+    if method_var in registry:
+        method_code = int(registry.get(method_var))
+    else:
+        method_code = 0  # constant
+
+    if method_code == 0:  # constant
+        diffusion_coefficient = registry.get(DIFFUSION_COEFFICIENT)
+        diffusion_array = edge_vertical_area * diffusion_coefficient / face_to_face_distance
+        return DataArrayVariable(diffusion_array)
+
+    # Non-constant: build D_edge (shape (time, nedge) or (nedge,))
+    if method_code == 1:  # elder
+        alpha = float(registry.get("diffusion_alpha")) if "diffusion_alpha" in registry else 0.6
+        D_edge = _calc_diffusion_elder(registry, alpha=alpha)
+    elif method_code == 2:  # eddy_viscosity
+        Sc_t = float(registry.get("diffusion_schmidt")) if "diffusion_schmidt" in registry else 1.0
+        D_edge = _calc_diffusion_eddy_viscosity(registry, Sc_t=Sc_t)
+    elif method_code == 3:  # array
+        if "diffusion_array_path" not in registry:
+            raise ValueError(
+                "Array diffusion method requires ``diffusion_array_path`` "
+                "registered on the registry (set by the model from "
+                "diffusion_coefficient.data.file_path in the config)."
+            )
+        # Stored as a FloatVariable wrapping a hash-or-index would be
+        # awkward; use the registry-attached attribute instead. The
+        # model passes the path via a custom registry helper.
+        from clearwater_data.variables.float import FloatVariable
+        fv = registry.get_variable("diffusion_array_path")
+        path = str(getattr(fv, "_path", "")) or ""
+        if not path:
+            raise ValueError("diffusion_array_path was registered but had no _path attr")
+        D_edge = _calc_diffusion_array(registry, filepath=path)
+    else:
+        raise ValueError(f"Unknown diffusion method code {method_code}")
+
+    # Multiply by edge_vertical_area / face_to_face_distance to form
+    # the COEFFICIENT_TO_DIFFUSION_TERM that the LHS consumes.
+    eva = np.asarray(edge_vertical_area)
+    f2f = np.asarray(face_to_face_distance)
+    diff_arr = eva * D_edge / np.maximum(f2f, 1e-30)
+    # Wrap in a DataArray that matches the time + nedge dims of
+    # edge_vertical_area for the registry.
+    return DataArrayVariable(
+        xr.DataArray(
+            diff_arr,
+            dims=edge_vertical_area.dims,
+            coords=edge_vertical_area.coords,
+        )
+    )
 
 
 def calculate_change_in_time(

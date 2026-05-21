@@ -28,6 +28,15 @@ DIFFUSION_COEFFICIENT = 'diffusion_coefficient'
 FACE_HYD_DEPTH = 'face_hydraulic_depth'  #optional output in HEC-RAS hdf file
 FACE_VEL_X = 'face_velocity_x'  #optional output in HEC-RAS hdf file
 FACE_VEL_Y = 'face_velocity_y'  #optional output in HEC-RAS hdf file
+# Phase F T2-C (2026-05-21): optional inputs needed by the diffusion
+# dispatch (Elder shear-velocity, eddy-viscosity, array-based). Each
+# is optional in the source HDF; the dispatcher checks for presence
+# and raises a clear error when a method requests data the HDF did
+# not write.
+MANNINGS_N = "mannings_n"
+EDDY_VISCOSITY = "eddy_viscosity"
+CELL_EDDY_VISCOSITY_X = "cell_eddy_viscosity_x"
+CELL_EDDY_VISCOSITY_Y = "cell_eddy_viscosity_y"
 VOLUME_ELEVATION_INFO = 'volume_elevation_info'
 VOLUME_ELEVATION_VALUES = 'volume_elevation_values'
 VOLUME_ELEVATION_LOOKUP = 'volume_elevation_lookup'
