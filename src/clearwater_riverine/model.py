@@ -1035,6 +1035,23 @@ class ClearwaterRiverine:
             self.registry,
             continuity_correction=self.__continuity_correction,
         )
+        # Phase H-1 (2026-05-21): refresh per-constituent point-source
+        # arrays for the new chunk's time window. Without this, the
+        # arrays remain bound to chunk 1's time axis (built during
+        # ``Constituent.__init__``) and RHS._calculate_point_sources'
+        # ``registry.get_at_time(flows_key, next_time)`` raises
+        # ``KeyError`` at the first stamp of chunk 2 because that
+        # stamp is past the registered axis. Re-read the CSV and
+        # re-register on the current chunk's grid; mirrors the
+        # WET_MASK and ADVECTION_COEFFICIENT refresh patterns above.
+        for constituent_name, constituent in self._constituents.items():
+            ps_path = self.__point_source_data_sources.get(constituent_name)
+            if ps_path is not None:
+                from pathlib import Path as _PathH1
+                constituent._load_point_sources(
+                    registry=self.registry,
+                    filepath=_PathH1(ps_path),
+                )
         for constituent_name, constituent in self._constituents.items():
             # C3b: on the first __load_new_chunk after from_checkpoint, the
             # in-memory registry holds chunk 1's array, not the end-of-prev-

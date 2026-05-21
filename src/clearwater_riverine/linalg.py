@@ -507,8 +507,24 @@ class LHS:
         self.rows[self.start_index:self.end_index] = rows
         self.columns[self.start_index:self.end_index] = columns
         self.coefficients[self.start_index: self.end_index] = coefficients
-        if np.isnan(self.coefficients).sum() > 0:
-            print('here')
+        # Phase H-5 (2026-05-21): replace the legacy ``print('here')``
+        # debug line with a real warning. NaN in LHS coefficients
+        # corrupts every constituent's implicit solve at this and
+        # subsequent steps; if it ever fires in production, the user
+        # needs a clear diagnostic, not a single-token stdout breadcrumb.
+        n_nan = int(np.isnan(self.coefficients).sum())
+        if n_nan > 0:
+            import warnings as _w
+            _w.warn(
+                f"LHS coefficient assembly produced {n_nan} NaN values "
+                f"(of {self.coefficients.size} total). The implicit "
+                "solve will produce NaN outputs; investigate the "
+                "source ADVECTION_COEFFICIENT or COEFFICIENT_TO_DIFFUSION_TERM "
+                "registry variables, and consider adding a defensive "
+                "isfinite check upstream of LHS.update_values.",
+                UserWarning,
+                stacklevel=2,
+            )
 
 class RHS:
     def __init__(

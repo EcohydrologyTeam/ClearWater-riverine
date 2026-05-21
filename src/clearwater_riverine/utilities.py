@@ -213,18 +213,42 @@ def _calc_diffusion_array(
     filepath: str | Path,
     default_value: float = 0.0,
 ) -> np.ndarray:
-    """Per-cell diffusion from a CSV (Phase F T2-C).
+    """Per-cell diffusion from a CSV (Phase F T2-C; Phase H-3 schema clarified).
 
-    CSV columns (no header required by position; first two used):
-    ``cell_index, diffusion_coefficient``. Static values applied at
-    all timesteps.
+    CSV schema (header required):
+
+        cell_index,diffusion_coefficient
+        0,0.01
+        1,0.02
+        ...
+
+    Static values applied at all timesteps; cells absent from the CSV
+    receive ``default_value``.
+
+    Phase H-3 (2026-05-21): the prior docstring claimed "no header
+    required" but ``pd.read_csv(filepath)`` uses ``header=0`` by
+    default and would silently consume the first DATA row as the
+    column-name row. Now requires a named header so the contract is
+    explicit and validated below.
     """
     df = pd.read_csv(filepath)
+    required = {"cell_index", "diffusion_coefficient"}
+    missing = required - {c.lower() for c in df.columns}
+    if missing:
+        raise ValueError(
+            f"Array diffusion CSV {filepath!r} missing required columns: "
+            f"{sorted(missing)}. Expected header row "
+            "'cell_index,diffusion_coefficient'."
+        )
+    # Normalize column names case-insensitively for robust lookup.
+    col_map = {c.lower(): c for c in df.columns}
+    cell_col = col_map["cell_index"]
+    diff_col = col_map["diffusion_coefficient"]
     volume = registry.get(VOLUME)
     nface = int(volume.sizes['nface'])
     ntimes = int(volume.sizes['time'])
     D_cell = np.full(nface, default_value, dtype=np.float64)
-    D_cell[df.iloc[:, 0].values.astype(int)] = df.iloc[:, 1].values
+    D_cell[df[cell_col].values.astype(int)] = df[diff_col].values
     D_cell_tv = np.broadcast_to(D_cell, (ntimes, nface)).copy()
     ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
     f1 = ef[:, 0].astype(np.int64)
@@ -597,6 +621,28 @@ def _apply_continuity_correction(
         or NUMBER_OF_REAL_CELLS not in registry
     ):
         return
+
+    # Phase H-5 (2026-05-21): defensive NaN guard at entry. If
+    # ``adv_coeff`` (a copy of FLOW_ACROSS_FACE) carries NaN at any
+    # edge / time step, the np.add.at / np.where downstream silently
+    # propagate NaN through ``Q``, ``r``, and the per-edge correction
+    # delta. The corrupted coefficient then flows into the LHS at
+    # linalg.py and into the ghost-cell BC flux, silently degrading
+    # the entire transport solve. RAS HDFs should not carry NaN at
+    # populated edges; if they do, the right behavior is to fail
+    # loudly here rather than mask the source defect.
+    if not np.all(np.isfinite(adv_coeff)):
+        n_nan = int(np.isnan(adv_coeff).sum())
+        n_inf = int(np.isinf(adv_coeff).sum())
+        raise ValueError(
+            f"FLOW_ACROSS_FACE / ADVECTION_COEFFICIENT contains "
+            f"{n_nan} NaN and {n_inf} Inf values at entry to "
+            "continuity_correction. The correction would propagate "
+            "these into the LHS coefficient matrix and silently "
+            "corrupt the WQ transport solve. Investigate the source "
+            "RAS HDF or any wet/dry amendments that may be writing "
+            "NaN to flow_across_face."
+        )
 
     nreal_count = int(registry.get(NUMBER_OF_REAL_CELLS))  # number of real cells
     nreal_attr = nreal_count - 1  # maximum real-cell index (streaming convention)

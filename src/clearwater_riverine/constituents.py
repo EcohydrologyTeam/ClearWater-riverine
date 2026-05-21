@@ -266,11 +266,8 @@ class Constituent:
         constituent = registry.get(self._name)
 
         # Phase F (2026-05-21) T2-D: validate BC source before it enters
-        # the registry. Raises on NaN, warns on negative values. BC
-        # interpolation can introduce NaN at the simulation window
-        # boundaries if the source time series doesn't cover the
-        # window; catching that early prevents silent diluton of the
-        # ghost-cell BC injection.
+        # the registry. Catches NaN/negative values that the source
+        # CSV already carries (a malformed input file).
         _validate_constituent_values(
             boundary,
             constituent_name=self._name,
@@ -291,6 +288,22 @@ class Constituent:
                 time=target_time,
                 method="linear"
             )
+            # Phase H-2 (2026-05-21): re-validate AFTER the
+            # interpolation step. Interpolating from a source CSV that
+            # ends before ``end_datetime`` (or starts after
+            # ``start_datetime``) extrapolates to NaN at the
+            # uncovered timestamps; pre-Phase-H this NaN flowed
+            # silently into the ghost-cell injection. The pre-interp
+            # validation above catches malformed source CSVs; the
+            # post-interp validation here catches the "BC CSV doesn't
+            # cover the simulation window" case that the pre-interp
+            # validation cannot.
+            _validate_constituent_values(
+                boundary,
+                constituent_name=self._name,
+                source_label="boundary_conditions (post-interpolation)",
+            )
+
             # reshape from (time, boundary_name) to (time, boundary_index)
             # then map boundary indices to their associated ghost cells
             boundary = boundary.sel(
