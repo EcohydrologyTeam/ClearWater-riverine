@@ -124,6 +124,18 @@ class Constituent:
         self.is_intensive: bool = bool(
             constituent_config.get("is_intensive", False)
         )
+        # Phase F T2-B (2026-05-21): first-order decay rate. Config
+        # value is per day (matches streaming convention and common
+        # water-quality literature for nutrients, BOD, pathogen
+        # die-off); stored internally as 1/s for direct use in
+        # ``k * V[t+1]`` diagonal adjustment. Default 0.0 (no decay)
+        # is conservative-transport behaviour. The transport engine
+        # adds ``k * V[t+1]`` to the LHS diagonal at each step when
+        # decay_rate > 0.
+        decay_rate_per_day = float(
+            constituent_config.get("decay_rate", 0.0) or 0.0
+        )
+        self.decay_rate: float = decay_rate_per_day / 86400.0
         self.__initial_condition_spatial_field = constituent_config["initial_conditions"]["data"].get(
             "spatial_field", "Cell_Index"  # Default to old config requriement
         )

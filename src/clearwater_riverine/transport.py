@@ -656,8 +656,27 @@ class TransportEngine:
             # -- and zeros out on the legacy path.
             constituent.rhs.values[:] = constituent.rhs.values + drain_source
 
+            # Phase F T2-B (2026-05-21): per-constituent first-order
+            # decay. When ``constituent.decay_rate > 0`` (1/s, set from
+            # the per-day config value at Constituent init), add
+            # ``k * V[t+1]`` to the LHS diagonal so the implicit solve
+            # produces ``c[t+1] = c[t] / (1 + k*dt)`` in the steady-
+            # advection limit. Build a per-constituent A copy to avoid
+            # mutating the shared LHS matrix; no-op for conservative
+            # transport (default ``decay_rate=0``).
+            decay_rate = float(getattr(constituent, "decay_rate", 0.0) or 0.0)
+            if decay_rate > 0.0:
+                volume_next = np.asarray(
+                    registry.get_at_time(VOLUME, current_time + time_step)
+                )[: int(real_cell_count)]
+                diag_add = decay_rate * volume_next
+                A_solve = A.copy()
+                A_solve.setdiag(A_solve.diagonal() + diag_add)
+            else:
+                A_solve = A
+
             # solve
-            x = linalg.spsolve(A, constituent.rhs.values)
+            x = linalg.spsolve(A_solve, constituent.rhs.values)
             x_full = xr.DataArray(np.zeros(constituent_value.shape), coords=constituent_value.coords)
             x_full[:len(x)] = x
 
