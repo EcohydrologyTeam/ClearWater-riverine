@@ -376,18 +376,18 @@ class ClearwaterRiverine:
     ) -> None:
         """Finalize the simulation.
 
-        Fork-compat optional kwargs:
-
-        ``save``: if False, skip the default write to the configured
-        output store. Useful when a caller has already written the
-        outputs by another path.
-
-        ``output_filepath``: if provided, log a warning that the
-        canonical output store is fixed at construction time
-        (``simulation_directory / model_outputs.zarr``) and the caller
-        should configure the destination via the model constructor.
-        The kwarg is accepted for fork-compat signature parity; it
-        does not redirect the actual write target.
+        Args:
+            save: when ``False``, skip the default write to the
+                configured output store.
+            output_filepath: accepted for streaming-repo signature
+                parity; canonical writes to the configured
+                ``simulation_directory / model_outputs.zarr`` (set at
+                construction time) and logs a warning rather than
+                silently redirecting. Phase F (2026-05-21) T1-H found
+                that the natural ``model_outputs.zarr`` plus the
+                validation script's fallback to ``nsm1_history.nc``
+                (orchestrator output) is sufficient for the streaming-
+                vs-canonical comparison without dual-writing.
 
         Default ``save=True, output_filepath=None`` preserves the
         prior no-arg behaviour.
