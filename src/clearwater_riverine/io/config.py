@@ -68,8 +68,9 @@ def __init_data_sources(
     data_source: dict[str, DataSource | ChunkedDataSource] = {
         'boundary_conditions': {},
         'initial_conditions': {},
+        'point_sources': {},
         'variable_data_sources': {},
-    }    
+    }
     # Initialize all constituent data sources
     for source_name, source_config in config["constituents"].items():
         boundary_conditions = source_config["boundary_conditions"]
@@ -77,6 +78,18 @@ def __init_data_sources(
 
         initial_conditions = source_config["initial_conditions"]
         data_source['initial_conditions'][source_name] = __init_single_data_source(source_name, initial_conditions, simulation_directory)
+
+        # Phase F T2-A (2026-05-21): optional point_sources block per
+        # constituent. The value is a direct path (string) to a CSV
+        # with fixed columns ``Cell_Index, Datetime, Flow_Rate
+        # (m^3/s; positive = source, negative = sink), Concentration
+        # (constituent units; ignored for sinks)``. No provider
+        # abstraction since the CSV schema is fixed. When absent the
+        # constituent transports without external point loads.
+        if "point_sources" in source_config:
+            ps_path = simulation_directory / Path(source_config["point_sources"])
+            validate_path(ps_path)
+            data_source['point_sources'][source_name] = str(ps_path)
 
     return data_source
 

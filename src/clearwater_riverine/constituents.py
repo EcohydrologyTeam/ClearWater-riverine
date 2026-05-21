@@ -105,6 +105,7 @@ class Constituent:
         boundary_conditions: xr.DataArray,
         constituent_config: dict,
         start_datetime: datetime,
+        point_sources_path: Optional[str | Path] = None,
     ):
         self._name = constituent_name
         self.__units = constituent_config.get("units", None)
@@ -138,7 +139,7 @@ class Constituent:
             boundary_conditions,
         )
 
-        ## Initialize 
+        ## Initialize
         self.register_constituent(registry)
 
         self.set_initial_conditions(
@@ -148,6 +149,19 @@ class Constituent:
         self.set_boundary_conditions(
             registry=registry,
         )
+
+        # Phase F T2-A (2026-05-21): load point sources if configured.
+        # Stored as DataArrays in the registry keyed by
+        # ``{name}_point_source_flows`` and
+        # ``{name}_point_source_concentrations``; the LHS reads the
+        # sink contribution and the RHS reads the source contribution
+        # from those registry entries.
+        self.has_point_sources: bool = False
+        if point_sources_path is not None:
+            self._load_point_sources(
+                registry=registry,
+                filepath=Path(point_sources_path),
+            )
 
         self.rhs = RHS(
             registry=registry,
@@ -291,7 +305,141 @@ class Constituent:
         # TODO: does there need to be a custom set method to set at custom locations?
         elif isinstance(boundary, (float, int)):
             constituent.loc[dict(nface=ghost_cells)] = boundary
-    
+
+
+    def _load_point_sources(
+        self,
+        registry: VariableRegistry,
+        filepath: Path,
+    ) -> None:
+        """Load per-cell, per-time point sources from CSV (Phase F T2-A).
+
+        CSV schema (fixed):
+
+            Cell_Index,Datetime,Flow_Rate,Concentration
+            42,2008-09-01 12:00:00,0.5,15.0
+            ...
+
+        ``Flow_Rate`` is volumetric (m^3/s in default SI units);
+        positive = source (mass added), negative = sink (cell loses
+        mass at its current concentration). ``Concentration`` is in
+        the constituent's reporting units and is ignored for sinks
+        (sink removal uses the cell's current concentration via the
+        implicit LHS diagonal).
+
+        The CSV is sorted per-cell, outer-merged onto the registry
+        time axis (so missing rows interpolate linearly between
+        knots), and stored on the registry as
+        ``{name}_point_source_flows`` and
+        ``{name}_point_source_concentrations`` -- DataArrays of shape
+        (time, nface). Cells with no source rows stay at zero.
+
+        Point-source volumetric flow is NOT propagated through the
+        hydrodynamic mesh (the HEC-RAS flow field is fixed); use this
+        for trace-level loadings that do not perturb the bulk flow.
+
+        Validation: NaN values in the CSV are not allowed (raises
+        ValueError per T2-D's _validate_constituent_values contract);
+        negative Concentration values warn (most species are
+        physically non-negative).
+        """
+        df = pd.read_csv(filepath, parse_dates=['Datetime'])
+        required = {'Cell_Index', 'Datetime', 'Flow_Rate', 'Concentration'}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"Constituent {self._name!r}: point_sources CSV {filepath} "
+                f"missing required columns: {sorted(missing)}. "
+                f"Expected schema: Cell_Index, Datetime, Flow_Rate, Concentration."
+            )
+        df['Cell_Index'] = df['Cell_Index'].astype(int)
+
+        _validate_constituent_values(
+            df['Flow_Rate'].to_numpy(),
+            constituent_name=self._name,
+            source_label="point_sources Flow_Rate",
+            raise_on_nan=True,
+            warn_on_negative=False,  # negative flow == sink: legitimate
+        )
+        if (df['Flow_Rate'] < 0).any():
+            n_sinks = int((df['Flow_Rate'] < 0).sum())
+            warnings.warn(
+                f"Constituent {self._name!r}: point_sources CSV {filepath} "
+                f"contains {n_sinks} row(s) with negative Flow_Rate (sinks). "
+                "Phase F T2-A initial port implements RHS source mass "
+                "injection only; sink removal (LHS diagonal modification) "
+                "is not yet wired. Negative-Flow_Rate rows currently have "
+                "no effect on the transport solve. File an issue if your "
+                "application depends on point-sink withdrawals.",
+                UserWarning,
+                stacklevel=2,
+            )
+        _validate_constituent_values(
+            df['Concentration'].to_numpy(),
+            constituent_name=self._name,
+            source_label="point_sources Concentration",
+            raise_on_nan=True,
+            warn_on_negative=True,
+        )
+
+        # Validate Cell_Index range against the mesh
+        nreal = int(registry.get(NUMBER_OF_REAL_CELLS))
+        bad = df[(df['Cell_Index'] < 0) | (df['Cell_Index'] >= nreal)]
+        if len(bad) > 0:
+            raise ValueError(
+                f"Constituent {self._name!r}: point_sources CSV {filepath} "
+                f"contains Cell_Index values outside [0, {nreal}): "
+                f"{sorted(bad['Cell_Index'].unique().tolist())}"
+            )
+
+        volume = registry.get(VOLUME)
+        model_times = pd.DatetimeIndex(volume.time.values)
+        ntime = len(model_times)
+        nface = volume.sizes['nface']
+
+        flows = np.zeros((ntime, nface), dtype=np.float64)
+        concs = np.zeros((ntime, nface), dtype=np.float64)
+
+        model_df = pd.DataFrame({'Datetime': model_times})
+        for cell_idx, group in df.groupby('Cell_Index'):
+            cell_idx = int(cell_idx)
+            group = group.sort_values('Datetime')
+            merged = pd.merge(
+                model_df,
+                group[['Datetime', 'Flow_Rate', 'Concentration']],
+                on='Datetime',
+                how='outer',
+            ).sort_values('Datetime')
+            merged['Flow_Rate'] = merged['Flow_Rate'].interpolate(method='linear').fillna(0)
+            merged['Concentration'] = merged['Concentration'].interpolate(method='linear').fillna(0)
+            merged = merged[merged['Datetime'].isin(model_df['Datetime'])]
+            flows[:, cell_idx] = merged['Flow_Rate'].values
+            concs[:, cell_idx] = merged['Concentration'].values
+
+        flows_da = xr.DataArray(
+            flows,
+            dims=('time', NFACE),
+            coords={'time': volume.time.values, NFACE: volume.nface.values},
+            attrs={'units': 'm^3/s', 'long_name': f'{self._name} point-source flow rate'},
+        )
+        concs_da = xr.DataArray(
+            concs,
+            dims=('time', NFACE),
+            coords={'time': volume.time.values, NFACE: volume.nface.values},
+            attrs={'units': self.__units or 'unknown',
+                   'long_name': f'{self._name} point-source concentration'},
+        )
+
+        flows_key = f"{self._name}_point_source_flows"
+        concs_key = f"{self._name}_point_source_concentrations"
+        if flows_key in registry:
+            registry.unregister(flows_key)
+        if concs_key in registry:
+            registry.unregister(concs_key)
+        registry.register(flows_key, DataArrayVariable(flows_da, space_dimension=NFACE))
+        registry.register(concs_key, DataArrayVariable(concs_da, space_dimension=NFACE))
+        self.has_point_sources = True
+
 
     def get_minimum_value(self, registry):
         constituent = registry.get(self._name)

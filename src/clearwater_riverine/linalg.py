@@ -628,10 +628,49 @@ class RHS:
         Calculates the Right Hand Side matrix,
             including the load at the current timestep for internal (real) cells,
             and known transport terms associated with connected external (ghost) cells.
+
+        Phase F T2-A (2026-05-21): also includes per-cell point-source
+        load (mass added per second from external sources for cells
+        with positive ``Flow_Rate``); see ``_calculate_point_sources``.
         """
         load = self._calculate_load(registry, current_time, time_step)
         ghost_cells_in, ghost_cells_out = self._calculate_ghost_cell_values(registry, current_time, time_step, constituent_name)
-        return load + ghost_cells_in + ghost_cells_out
+        point_sources = self._calculate_point_sources(registry, current_time, time_step, constituent_name)
+        return load + ghost_cells_in + ghost_cells_out + point_sources
+
+    def _calculate_point_sources(
+        self,
+        registry: VariableRegistry,
+        current_time: datetime,
+        time_step: timedelta,
+        constituent_name: str,
+    ):
+        """Per-cell point-source mass injection for the RHS (Phase F T2-A).
+
+        For cells flagged as sources (``Flow_Rate > 0``) the per-step
+        contribution is ``Flow_Rate × Concentration`` (mass per
+        second). The LHS handles sink removal via the diagonal so
+        sinks contribute zero to the RHS.
+
+        No-op when ``{constituent}_point_source_flows`` is not
+        registered (the common case when no constituent declared a
+        ``point_sources`` block in the config).
+        """
+        flows_key = f"{constituent_name}_point_source_flows"
+        if flows_key not in registry:
+            return np.zeros(int(self.real_cell_count))
+        concs_key = f"{constituent_name}_point_source_concentrations"
+        next_time = current_time + time_step
+        flows = np.asarray(
+            registry.get_at_time(flows_key, next_time)
+        )[: int(self.real_cell_count)]
+        concs = np.asarray(
+            registry.get_at_time(concs_key, next_time)
+        )[: int(self.real_cell_count)]
+        out = np.zeros(int(self.real_cell_count))
+        src_mask = flows > 0
+        out[src_mask] = flows[src_mask] * concs[src_mask]
+        return out
 
 
     def _transport_mechanisms(self, flowing_in: bool):

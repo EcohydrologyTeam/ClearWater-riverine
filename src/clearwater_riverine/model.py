@@ -153,9 +153,18 @@ class ClearwaterRiverine:
         self.__variable_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         self.__initial_condition_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
         self.__boundary_condition_data_sources: dict[str, DataSource | ChunkedDataSource] = {}
+        # Phase F T2-A (2026-05-21): optional per-constituent point-
+        # source CSV file paths. Keyed by constituent name; empty when
+        # no constituent in the config declares a ``point_sources``
+        # block. Stored as a path (str) rather than a DataSource
+        # because the CSV schema (Cell_Index, Datetime, Flow_Rate,
+        # Concentration) is fixed and does not need a provider
+        # abstraction.
+        self.__point_source_data_sources: dict[str, str] = {}
         self.__category_attr_map = {
             "boundary_conditions": self.__boundary_condition_data_sources,
             "initial_conditions": self.__initial_condition_data_sources,
+            "point_sources": self.__point_source_data_sources,
             "variable_data_sources": self.__variable_data_sources
         }
         self._constituents: dict[str: Constituent] = {}
@@ -846,13 +855,20 @@ class ClearwaterRiverine:
         if isinstance(boundary_conditions, DataArrayVariable):
             boundary_conditions = DataArrayVariable(boundary_conditions.get().interpolate_na(dim="time", method="linear"))
 
+        # Phase F T2-A (2026-05-21): optional point-source CSV path.
+        # Present only when the constituent's YAML declared a
+        # ``point_sources`` block; absent entries default to no point
+        # loads (backwards-compatible with existing configs).
+        point_sources_path = self.__point_source_data_sources.get(constituent_name)
+
         self._constituents[constituent_name] = Constituent(
             constituent_name=constituent_name,
             registry=self.registry,
             initial_conditions=initial_conditions,
             boundary_conditions=boundary_conditions,
             constituent_config=constituent_config,
-            start_datetime=self._start_datetime
+            start_datetime=self._start_datetime,
+            point_sources_path=point_sources_path,
         )
 
 
