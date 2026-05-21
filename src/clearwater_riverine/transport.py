@@ -542,7 +542,11 @@ def emit_mass_loss_warning(
 
 
 class TransportEngine:
-    def __init__(self, registry: VariableRegistry):
+    def __init__(
+        self,
+        registry: VariableRegistry,
+        reconstruct_newly_wet: bool = True,
+    ):
         # initialize left hand side of transport equation. ``self.lhs``
         # remains the extensive LHS (``is_intensive=False``). When any
         # constituent in a ``run()`` call is intensive, the engine
@@ -557,6 +561,10 @@ class TransportEngine:
         # (Unit A), so the legacy code path is observable as an empty
         # accumulator without any extra branching at every step.
         self.mass_lost_to_dry: dict[str, list] = {}
+        # Phase F (2026-05-21): opt-out for the newly-wet-cell
+        # reconstruction pass. See ClearwaterRiverine.__init__ for the
+        # rationale; this engine-level flag is the propagation point.
+        self._reconstruct_newly_wet: bool = bool(reconstruct_newly_wet)
 
     def run(
         self,
@@ -693,14 +701,22 @@ class TransportEngine:
             # Phase-D Unit B: lift the c~0 newly-wet artifact (opt-in
             # via Unit A's wet_dry_metric; no-op when WET_MASK is
             # absent from the registry).
-            x_full = reconstruct_newly_wet(
-                registry=registry,
-                current_time=current_time,
-                time_step=time_step,
-                constituent_name=constituent_name,
-                x_full=x_full,
-                next_constituent_value=next_constituent_value,
-            )
+            # Phase F (2026-05-21): also gated by the engine-level
+            # ``reconstruct_newly_wet`` flag. Default True preserves
+            # the Phase-D correctness behaviour; set False to match
+            # the streaming repo's reference-run configuration on
+            # dry-start RAS HDFs where the pass is O(N x edges) and
+            # newly-wet cells overwhelmingly lack a qualifying
+            # upstream neighbour anyway.
+            if self._reconstruct_newly_wet:
+                x_full = reconstruct_newly_wet(
+                    registry=registry,
+                    current_time=current_time,
+                    time_step=time_step,
+                    constituent_name=constituent_name,
+                    x_full=x_full,
+                    next_constituent_value=next_constituent_value,
+                )
 
             # update the value in the registry
             mask = np.isnan(next_constituent_value)

@@ -28,6 +28,73 @@ from clearwater_riverine.variables import (
 )
 
 
+def _validate_constituent_values(
+    values,
+    *,
+    constituent_name: str,
+    source_label: str,
+    raise_on_nan: bool = True,
+    warn_on_negative: bool = True,
+) -> None:
+    """Validate a constituent IC/BC source array before it enters the registry.
+
+    Phase F (2026-05-21) T2-D: catches the silent-propagation bug in
+    both repos where a malformed CSV (NaN rows, negative values) flowed
+    through the transport solve and produced non-physical output with
+    no diagnostic.
+
+    Args:
+        values: Scalar (int/float), numpy array, or xr.DataArray.
+        constituent_name: For diagnostic messages.
+        source_label: "initial_conditions" or "boundary_conditions".
+        raise_on_nan: When True (default), raise ValueError on any
+            NaN in the source. Set False to allow NaN through (e.g., a
+            data source that uses NaN as a sentinel for "use default").
+        warn_on_negative: When True (default), emit a UserWarning on
+            any negative value. Most water-quality constituents
+            (concentrations, biomass, temperature in deg C) are
+            physically non-negative; an early warning catches CSV
+            sign errors or interpolation artifacts.
+    """
+    if isinstance(values, (int, float)):
+        arr = np.asarray([values], dtype=np.float64)
+    elif isinstance(values, xr.DataArray):
+        arr = np.asarray(values.values)
+    else:
+        arr = np.asarray(values)
+    if arr.size == 0:
+        return
+    if raise_on_nan:
+        nan_mask = np.isnan(arr)
+        n_nan = int(nan_mask.sum())
+        if n_nan > 0:
+            raise ValueError(
+                f"Constituent {constituent_name!r}: {source_label} source "
+                f"contains {n_nan} NaN value(s) (of {arr.size} total). "
+                "NaN in IC/BC inputs propagates silently through the "
+                "transport solve and produces non-physical output. Fix "
+                "the source CSV/array (drop missing rows, fill via "
+                "interpolation, or supply a scalar default), or pass "
+                "``raise_on_nan=False`` if NaN is intentional."
+            )
+    if warn_on_negative:
+        try:
+            neg_mask = arr < 0
+            n_neg = int(neg_mask.sum())
+        except TypeError:
+            n_neg = 0  # non-numeric (e.g. boolean wet mask)
+        if n_neg > 0:
+            min_val = float(np.nanmin(arr))
+            warnings.warn(
+                f"Constituent {constituent_name!r}: {source_label} source "
+                f"contains {n_neg} negative value(s) (of {arr.size} total; "
+                f"min = {min_val:.4g}). Most water-quality constituents "
+                "are physically non-negative; check for sign errors in "
+                "the source CSV or interpolation artifacts.",
+                stacklevel=3,
+            )
+
+
 class Constituent:
     """Constituent class."""
     def __init__(
@@ -138,6 +205,14 @@ class Constituent:
         constituent = registry.get_at_time(self._name, start_datetime)
         initial = registry.get_at_time(f"{self._name}_initial", start_datetime)
 
+        # Phase F (2026-05-21) T2-D: validate IC source before it enters
+        # the registry. Raises on NaN, warns on negative values.
+        _validate_constituent_values(
+            initial,
+            constituent_name=self._name,
+            source_label="initial_conditions",
+        )
+
         if isinstance(initial, xr.DataArray):
             registry.set_at_time(
                 self._name,
@@ -163,6 +238,18 @@ class Constituent:
         # retrieve necessary variables
         boundary = registry.get(f"{self._name}_boundary")
         constituent = registry.get(self._name)
+
+        # Phase F (2026-05-21) T2-D: validate BC source before it enters
+        # the registry. Raises on NaN, warns on negative values. BC
+        # interpolation can introduce NaN at the simulation window
+        # boundaries if the source time series doesn't cover the
+        # window; catching that early prevents silent diluton of the
+        # ghost-cell BC injection.
+        _validate_constituent_values(
+            boundary,
+            constituent_name=self._name,
+            source_label="boundary_conditions",
+        )
         target_time = registry.get(self._name).time
         boundary_index = registry.get(BOUNDARY_FACE_INDEX)
         boundary_names = registry.get(BOUNDARY_NAME)

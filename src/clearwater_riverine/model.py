@@ -142,6 +142,8 @@ class ClearwaterRiverine:
         wet_dry_threshold: Optional[Dict[str, float]] = None,
         mass_loss_warn_threshold: Optional[float] = 0.01,
         zero_dry_initial_conditions: bool = False,
+        reconstruct_newly_wet: bool = True,
+        continuity_correction: str = "bc_only",
         _existing_output_store: bool = False,
     ) -> None:
         """
@@ -213,12 +215,46 @@ class ClearwaterRiverine:
         self.__wet_dry_v_min: float = float(_wdt.get("V_min", 0.1))
         self.__mass_loss_warn_threshold: Optional[float] = mass_loss_warn_threshold
         self.__zero_dry_initial_conditions: bool = bool(zero_dry_initial_conditions)
+        # Phase F (2026-05-21): per-cell volume-continuity correction
+        # mode. Default ``"bc_only"`` matches the streaming repo's
+        # historical default (Option B-lite: distribute per-cell
+        # residual across boundary edges only). ``"all_edges"`` invokes
+        # the full Option B (graph-Laplacian solve across all incident
+        # edges) and is required for RAS HDFs whose upstream BC was an
+        # Internal type in the original solution (e.g. Santiam-Salem,
+        # where Upstream and Santiam are Internal lines). ``"none"``
+        # skips the correction entirely (ADVECTION_COEFFICIENT equals
+        # the raw FLOW_ACROSS_FACE).
+        if continuity_correction not in ("bc_only", "all_edges", "none"):
+            raise ValueError(
+                f"Unknown continuity_correction mode {continuity_correction!r}. "
+                "Expected 'bc_only', 'all_edges', or 'none'."
+            )
+        self.__continuity_correction: str = continuity_correction
+        # Phase F (2026-05-21): opt-out for newly-wet reconstruction.
+        # Defaults to True (preserves the Phase-D Unit-B correctness
+        # behaviour for new models). Set False to match the streaming
+        # repo's reference-run configuration, which disables the pass
+        # because it is O(newly_wet_cells x edges) per step and becomes
+        # pathologically slow on RAS HDFs that start dry and wet up
+        # across thousands of cells per hour (e.g. the Santiam-Salem
+        # Sep 2008 deck, whose plan was configured with a fully-dry
+        # initial condition and propagates inflow across ~30k cells
+        # between simulation hours 10 and 20). When False, newly-wet
+        # cells inherit whatever the solver writes -- typically 0.0 for
+        # cells with no qualifying upstream neighbour -- matching the
+        # accepted tradeoff that produced the streaming locked baseline
+        # (Salem T bias -0.30 deg C, RMSE 0.62 deg C).
+        self.__reconstruct_newly_wet: bool = bool(reconstruct_newly_wet)
         self.plotter = None
 
         self.__init_model(constituents)
         self.__init_output_store()
         self.__init_chunks()
-        self.__transport_engine = TransportEngine(self.registry)
+        self.__transport_engine = TransportEngine(
+            self.registry,
+            reconstruct_newly_wet=self.__reconstruct_newly_wet,
+        )
 
         # Phase-D Unit D2: model-level IC-zeroing opt-in.
         # When ``zero_dry_initial_conditions=True`` AND ``WET_MASK`` is
@@ -778,6 +814,16 @@ class ClearwaterRiverine:
         # FACE_HYD_DEPTH) is available; opt-in via wet_dry_metric.
         self.__populate_wet_mask()
 
+        # Phase F (2026-05-21): register the continuity-corrected
+        # ADVECTION_COEFFICIENT. Must happen after FLOW_ACROSS_FACE and
+        # VOLUME are in the registry; consumed by the LHS instead of
+        # the raw FLOW_ACROSS_FACE.
+        from clearwater_riverine.utilities import register_advection_coefficient
+        register_advection_coefficient(
+            self.registry,
+            continuity_correction=self.__continuity_correction,
+        )
+
         # initialize constituents
         for constituent_name in list(constituents.keys()):
             self.__init_constituents(
@@ -825,10 +871,21 @@ class ClearwaterRiverine:
             return
         volume = self.registry.get(VOLUME)
         depth = None
-        if (
-            self.__wet_dry_metric in ("depth", "both")
-            and FACE_HYD_DEPTH in self.registry
-        ):
+        if self.__wet_dry_metric in ("depth", "both"):
+            # Phase F (2026-05-21): auto-register FACE_HYD_DEPTH when
+            # the wet-dry metric needs depth. Most RAS HDFs ship the
+            # "Cell Hydraulic Depth" temporal output, but minimal-output
+            # decks (e.g., the Santiam-Salem subset used in Phase F
+            # validation) only write Water Surface + Depth-via-lookup.
+            # In that case canonical computes it from WSE - cell-bed
+            # elevation via the calculated-variable path so depth-based
+            # wet-mask metrics work uniformly across all HDFs.
+            if FACE_HYD_DEPTH not in self.registry:
+                from clearwater_riverine.utilities import calculate_face_hyd_depth
+                self.registry.register(
+                    FACE_HYD_DEPTH,
+                    calculate_face_hyd_depth(self.registry),
+                )
             depth = self.registry.get(FACE_HYD_DEPTH)
         mask = compute_wet_mask(
             volume,
@@ -943,6 +1000,14 @@ class ClearwaterRiverine:
         self.__update_calculated_variables()
         # Phase-D Unit A: refresh WET_MASK for the new chunk's time window.
         self.__populate_wet_mask()
+        # Phase F (2026-05-21): refresh ADVECTION_COEFFICIENT (continuity
+        # correction is timestep-dependent, so it must be recomputed for
+        # each chunk's time window).
+        from clearwater_riverine.utilities import register_advection_coefficient
+        register_advection_coefficient(
+            self.registry,
+            continuity_correction=self.__continuity_correction,
+        )
         for constituent_name, constituent in self._constituents.items():
             # C3b: on the first __load_new_chunk after from_checkpoint, the
             # in-memory registry holds chunk 1's array, not the end-of-prev-

@@ -83,9 +83,14 @@ class LHS:
             rows / columns: point to the row and column of each cell
             coefficients: value in the specified row, column pair in the matrix 
         """
-        # get requried variables from registry
+        # get required variables from registry. Phase F (2026-05-21):
+        # consume the continuity-corrected ADVECTION_COEFFICIENT rather
+        # than the raw FLOW_ACROSS_FACE so the LHS sees fluxes that
+        # close per-cell volume continuity. The variable name is kept
+        # as ``flow_across_face`` for source-stability with the legacy
+        # body; semantically it is the corrected advection coefficient.
         flow_across_face = registry.get_at_time(
-            FLOW_ACROSS_FACE,
+            ADVECTION_COEFFICIENT,
             current_time
         )
         volume = registry.get_at_time(
@@ -751,7 +756,10 @@ class RHS:
         edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
 
         velocity_indices = np.where(condition(edge_velocity, 0))[0]
-        advection_coefficient = registry.get_at_time(FLOW_ACROSS_FACE, current_time)
+        # Phase F (2026-05-21): use the continuity-corrected
+        # ADVECTION_COEFFICIENT (closes per-cell mass balance) instead
+        # of the raw FLOW_ACROSS_FACE for the ghost-cell BC flux.
+        advection_coefficient = registry.get_at_time(ADVECTION_COEFFICIENT, current_time)
         diffusion_coefficient = registry.get_at_time(DIFFUSION_COEFFICIENT, current_time)
         diffusion_term = registry.get_at_time(COEFFICIENT_TO_DIFFUSION_TERM, current_time)
         index_list = np.intersect1d(velocity_indices, self.ghost_cells)
