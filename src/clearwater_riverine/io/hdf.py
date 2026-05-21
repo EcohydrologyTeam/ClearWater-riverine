@@ -6,6 +6,7 @@ from typing import (
     Union,
 )
 
+import warnings
 import h5py
 import xarray as xr
 # import variables
@@ -737,6 +738,46 @@ class RASHDFDataSource:
         for col in str_df:
             attributes[col] = str_df[col]
         boundary_attributes = attributes
+
+        # Phase F T2-E (2026-05-21): detect Internal-type BC lines.
+        # canonical (and the streaming repo it forward-ports from)
+        # reads only ``External Faces`` from the HDF; ``Internal
+        # Cells`` (a separate dataset with per-cell BC mass injection
+        # for BC lines that sit deep in the mesh rather than at the
+        # perimeter) is not yet wired. On a subset HDF whose extractor
+        # has converted Internal BCs into External-face
+        # representations (e.g. the Santiam-Salem Sep 2008 deck used
+        # in Phase F validation), the Type field reads as a flow
+        # category like ``Flow Hydrograph`` and this check is silent.
+        # On un-subset HDFs whose Type field still reads ``Internal``,
+        # warn so the user knows the Internal-Cells mass injection is
+        # being dropped. Fix is tracked in design/internal_bc_audit.md.
+        if 'Type' in boundary_attributes.columns:
+            internal_rows = boundary_attributes[
+                boundary_attributes['Type'].astype(str).str.lower() == 'internal'
+            ]
+            if not internal_rows.empty:
+                names = internal_rows.get('Name')
+                names_str = (
+                    ', '.join(str(n) for n in names.tolist())
+                    if names is not None else '(unnamed)'
+                )
+                warnings.warn(
+                    f"Detected {len(internal_rows)} Internal-type boundary "
+                    f"condition line(s) ({names_str}). Canonical (and the "
+                    "streaming repo it ports from) currently reads only the "
+                    "``External Faces`` dataset; the ``Internal Cells`` "
+                    "dataset is NOT wired, so mass injected at Internal-type "
+                    "BC lines is silently dropped from the transport solve. "
+                    "If your case study expects Internal-BC mass to enter "
+                    "the domain, either (a) run the subset extractor that "
+                    "converts Internal BCs into External-face representations "
+                    "(the Santiam-Salem Sep 2008 deck used in Phase F "
+                    "validation does this), or (b) await the Internal-Cells "
+                    "wiring follow-up. See design/internal_bc_audit.md.",
+                    UserWarning,
+                    stacklevel=3,
+                )
 
         # merge attributes and boundary condition data
         boundary_attributes['BC Line ID'] = boundary_attributes.index
