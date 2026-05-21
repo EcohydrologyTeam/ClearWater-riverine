@@ -65,6 +65,10 @@ from clearwater_riverine.transport import (
     # this module.
     zero_dry_initial_conditions as _zero_dry_initial_conditions_fn,
 )
+from clearwater_riverine.fork_compat import (
+    MeshView,
+    apply_update_concentration,
+)
 from clearwater_riverine.constituents import Constituent
 from clearwater_riverine.postproc_util import (
     accumulate_chunk_mass_balance,
@@ -251,12 +255,74 @@ class ClearwaterRiverine:
         """
         return self.__transport_engine
 
+    @property
+    def mesh(self) -> MeshView:
+        """Fork-compat view of the registry shaped like ``model.mesh``.
+
+        Returned object is a ``MeshView`` (see ``fork_compat.py``) that
+        proxies the subset of the xarray Dataset API the fork-side
+        orchestrators use: keyed reads, membership tests, sizes for
+        time / nface, the time and nface coord arrays, and ``nreal``.
+        Writes via ``mesh[name].loc[...] = arr`` mutate the registry
+        in place because the view returns the registry's own
+        DataArrays, not copies.
+
+        The mesh view is lazily constructed on first access and cached
+        on the instance; subsequent accesses return the same view.
+        """
+        view = getattr(self, "_mesh_view", None)
+        if view is None:
+            view = MeshView(self.registry)
+            self._mesh_view = view
+        return view
+
+    @property
+    def current_time(self):
+        """Read-only accessor for the model's current simulation time.
+
+        Public alias for the name-mangled ``__current_time`` attribute
+        so fork-compat callers (and tests) do not have to reach
+        through the mangled name.
+        """
+        return self.__current_time
+
     def run(self) -> None:
         while self.__current_time < self._end_datetime:
             self.update()
         self.finalize()
 
-    def update(self) -> None:
+    def update(self, update_concentration: Optional[dict] = None) -> None:
+        """Advance transport one step.
+
+        Fork-compat optional kwarg ``update_concentration`` accepts a
+        ``dict[str, np.ndarray | xr.DataArray]`` of per-constituent
+        overrides to apply at the current simulation time before the
+        transport solver reads its initial condition for the next
+        step. This mirrors the streaming fork's ``update(...)`` shape
+        and lets the Phase-2 ESM streaming orchestrator
+        (``08_run_coupled_v3_smoke.py``) inject TSM- and NSM1-evolved
+        values back into transport.
+
+        Default ``None`` preserves the prior no-arg behaviour and the
+        existing test surface bit-identically. Overrides are applied
+        to the first ``nreal + 1`` slots (real cells plus the
+        boundary ghost slot) at the current-time index, matching the
+        fork's slice semantics.
+        """
+        if update_concentration:
+            # ``nreal + 1`` = real cells plus the boundary ghost slot the
+            # fork orchestrator addresses with ``[0:nreal+1]``. The
+            # canonical Phase-D code uses the same convention.
+            nreal_plus_ghost = (
+                int(self.registry.get_variable(NUMBER_OF_REAL_CELLS).get()) + 1
+            )
+            apply_update_concentration(
+                self.registry,
+                self.__current_time,
+                nreal_plus_ghost,
+                update_concentration,
+            )
+
         # transport
         if self.__chunked_mode:
             self.__transport_chunked()
@@ -267,19 +333,54 @@ class ClearwaterRiverine:
         self.__increment_timestep()
 
 
-    def finalize(self) -> None:
+    def finalize(
+        self,
+        save: bool = True,
+        output_filepath: Optional[str] = None,
+    ) -> None:
+        """Finalize the simulation.
+
+        Fork-compat optional kwargs:
+
+        ``save``: if False, skip the default write to the configured
+        output store. Useful when a caller has already written the
+        outputs by another path.
+
+        ``output_filepath``: if provided, log a warning that the
+        canonical output store is fixed at construction time
+        (``simulation_directory / model_outputs.zarr``) and the caller
+        should configure the destination via the model constructor.
+        The kwarg is accepted for fork-compat signature parity; it
+        does not redirect the actual write target.
+
+        Default ``save=True, output_filepath=None`` preserves the
+        prior no-arg behaviour.
+        """
+        if output_filepath is not None:
+            warnings.warn(
+                "ClearwaterRiverine.finalize received output_filepath="
+                f"{output_filepath!r}; canonical writes to the output "
+                "store configured at __init__ "
+                "(simulation_directory/model_outputs.zarr). Set the "
+                "simulation_directory in the model config to control "
+                "the destination.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         if self.__chunked_mode:
             self.__finalize_chunk(is_last=True)
         else:
             if self.__mass_flux_calculation:
                 self.__calculate_mass_flux()
 
-            for variable_name in self.__output_variables:
-                variable = self.registry.get(variable_name)
-                self.__output_data_store.write(
-                    data=variable,
-                    parameter_name=variable_name,
-                )
+            if save:
+                for variable_name in self.__output_variables:
+                    variable = self.registry.get(variable_name)
+                    self.__output_data_store.write(
+                        data=variable,
+                        parameter_name=variable_name,
+                    )
 
         # Phase-D Unit D2: end-of-run wet-dry mass-loss warning.
         # Compares per-constituent total ``mass_lost_to_dry`` against
