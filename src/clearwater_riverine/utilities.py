@@ -1,9 +1,9 @@
 import warnings
+from pathlib import Path
 
-import numba
 import pandas as pd
 import numpy as np
-import xarray as xr 
+import xarray as xr
 
 from clearwater_data.variables import VariableRegistry
 from clearwater_data.variables.xarray import DataArrayVariable

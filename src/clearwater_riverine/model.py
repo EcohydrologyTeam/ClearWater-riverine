@@ -959,11 +959,22 @@ class ClearwaterRiverine:
                 init_template=init_template,
             )
         else:
+            # Phase G-4 (2026-05-21): pass the actual RAS time vector
+            # via the new ``time_coord`` kwarg so the zarr template
+            # carries the same non-uniform stamps the chunk write
+            # later targets. Falling back to start+end+time_step
+            # synthesized a uniform-hourly grid that, on a RAS HDF
+            # with 59/60/61-minute jitter, left every constituent
+            # variable all-NaN after finalize because the chunk write
+            # could not align stamps with the template. Phase F
+            # Santiam-Salem validation pre-G-4 reproduced this.
+            ras_times = pd.DatetimeIndex(self.registry.get(VOLUME).time.values)
             self.__output_data_store = ZarrDataStore(
                 store_path=self.__simulation_directory / "model_outputs.zarr",
                 start_date=self._start_datetime,
                 end_date=self._end_datetime,
                 time_step=timedelta(seconds=self._representative_dt_seconds()),
+                time_coord=ras_times,
                 variables=self.__output_variables,
                 spatial_field=NFACE,
                 spatial_field_values=self.registry.get(VOLUME).nface,

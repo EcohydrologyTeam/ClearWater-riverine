@@ -1,3 +1,13 @@
+# Phase G-1 (2026-05-21): ``from __future__ import annotations`` defers
+# annotation evaluation so the ``cwr.ClearwaterRiverine`` annotations
+# below do not resolve at import time. Without this, importing this
+# module while ``clearwater_riverine/__init__.py`` is mid-execution
+# (the ``from .model import ClearwaterRiverine`` line transitively
+# triggers ``from .postproc_util import ...``) hits a partially-
+# initialized package and raises ``AttributeError``. Annotations are
+# only used as type hints; this is the cheapest fix.
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Optional
 
