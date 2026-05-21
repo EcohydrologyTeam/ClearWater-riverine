@@ -1,7 +1,7 @@
 # Willamette / Santiam-Salem Validation Plan for Canonical ClearWater-Riverine
 
 **Date opened:** 2026-05-20
-**Status:** Scoped; planning decisions locked (Section 9); next action is F1 step 1
+**Status:** F1 committed & pushed (`9483fd0`); F2a script written (canonical runner uncommitted in modules-phase2-ESM-streaming); F2b execution blocked by lost-data discovery 2026-05-20 (see Section 13). Next action: Stage 01 regeneration.
 **Owner:** ClearWater-Riverine reintegration team
 **Purpose:** Reproduce the fork's Santiam-Salem Sep-2008 validation on the canonical `steissberg-riverine-merged` branch of `ClearWater-riverine`, locking in real-corridor scale evidence for the Phase-D forward-port.
 
@@ -296,4 +296,54 @@ The user provided context from prior Claude sessions covering:
 
 ---
 
-**End of plan.** Next concrete action: F1 step 1 (catalog every `transport.mesh[X]` and `transport.constituent_dict[X]` access in `08_run_coupled_v3_smoke.py`).
+## 13. Data-loss event 2026-05-20 and regeneration plan
+
+While preparing F2b execution we discovered the synthetic data the reference run consumed is gone from this machine. The user had deleted the parent folder thinking the git remote had everything, but `case_studies/santiam_salem/data/` is gitignored in both `modules-phase2-ESM` and `modules-phase2-ESM-streaming`, so the data was never pushed and the local copies were lost when the Trash was emptied. No Time Machine destination was configured.
+
+Files lost from disk:
+
+- `santiam_salem_subset_2008-09_hourly.p01.hdf` (the 158k-cell subset HDF the runner consumes as `--hdf`)
+- `synthetic_forcing.csv` (Stage 03 output)
+- `met_KSLE_2008-09_hourly.csv` and `met_KSLE_2008-09.csv` (Stage 06b NCDC download)
+- `synthetic_sediment.nc` (Stage 05 output)
+- `initial_layout.nc` (Stage 07 output)
+- `library_subset.nc` (Stage 01 intermediate)
+
+Sources still on disk (sufficient for full regeneration):
+
+- Full USGS RAS HDF (5.7 GB, 2,035,430-cell mesh): `/Users/todd/LargeProjects/ClearWater-riverine-case-study-Willamette/data/hecras_model/Santiam_Salem/Santiam_Salem.p01.hdf` (Feb 2022)
+- NWIS raw boundary-condition flows + temperatures at `…/Willamette/data/boundary_conditions/`
+- Observation-derived BCs for Sep 2008 at `…/Willamette/data/observed/derived_bcs_2008/` (8 files: `bc_santiam_*`, `bc_upstream_water_temp_C`)
+- The combined `observed_nutrients_meteorology_2008-09__obs_T.csv` (8.6 KB; intact via symlink under the legacy `synthetic_*` filename)
+- All Stage 01-07 scripts in the cloned `ClearWater-modules-phase2-ESM` repo (now at `main @ d6808f5`)
+
+### Regeneration sequence
+
+Each Stage script lives at `…/ClearWater-modules-phase2-ESM/case_studies/santiam_salem/scripts/`. The Stages produce inputs the runner (`08_run_coupled_v3_smoke_canonical.py`) needs.
+
+1. **Stage 01** (`01_extract_hydraulic_library.py`): crop the 2.035M-cell RAS HDF to a 5x3 km UTM bbox (~158k cells); emit `library_subset.nc`. Input to Stage 04e and Stage 02. Expected ~5-15 min.
+2. **Stage 04e** (`04e_extract_subset_timeseries.py`): extract 361 hourly stamps from the completed Sep 2008 unsteady run on the subset mesh; produces the timeseries NetCDF that Stage 06c transcodes. Expected ~5-15 min.
+3. **Stage 06c** (`06c_transcode_to_hecras_hdf.py`): write the CW-Riverine-readable HDF `santiam_salem_subset_2008-09_hourly.p01.hdf`. Expected ~5-10 min.
+4. **Stage 03** (`03_generate_synthetic_forcing.py`): build `synthetic_forcing.csv` from NWIS at Albany (USGS-14174000) and Santiam-at-Jefferson (USGS-14189000). Expected ~1-2 min.
+5. **Stage 06b** (`06b_download_ncdc_met.py`): download Salem airport (KSLE ASOS) hourly met for Sep 2008; produces `met_KSLE_2008-09_hourly.csv`. Network-dependent; expected ~1-5 min.
+6. **Stage 05** (`05_synthesize_sediment.py`): build `synthetic_sediment.nc` daily bed-change envelope. Expected ~1-5 min.
+7. **Stage 07** (`07_compute_initial_layout.py`): elevation + inundation-frequency rules for the 7 species; produces `initial_layout.nc`. Expected ~1-5 min.
+
+Stage 06 itself is skipped because its output (`observed_nutrients_meteorology_2008-09__obs_T.csv`) survived under a symlink.
+
+Total expected wall-clock: ~30-60 min for the chain.
+
+### Cost of the comparison shift
+
+Regenerated files will not be bit-identical to whatever produced the locked `-0.30 / 0.62` baseline because the Stage scripts may have evolved between `a688d5b` (the reference run's git_head) and the current HEAD `d6808f5`. The Salem T metric should still land very close to `-0.30 / 0.62` because the Stage math has been stable, but the precise expectation is now:
+
+- **Fresh fork baseline**: run the original `08_run_coupled_v3_smoke.py` against the regenerated inputs once; record its `validation_metrics.csv`. Call this `fork_repro_mumax_1_3`.
+- **Canonical**: run `08_run_coupled_v3_smoke_canonical.py` against the same regenerated inputs; record its `validation_metrics.csv`. Call this `canonical_test_mumax_1_3`.
+- **Compare**: fork_repro vs canonical, not canonical vs the locked screenshot. The screenshot stays as the historical reference but is not the active pass/fail gate.
+
+### State checkpoint at the end of 2026-05-20
+
+- F1 committed and pushed on canonical (`9483fd0`).
+- F2a runner script written but not committed; lives uncommitted at `/Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/scripts/08_run_coupled_v3_smoke_canonical.py`.
+- F2b first attempt errored on missing `synthetic_forcing.csv` (the lost-data discovery).
+- Next concrete action: **Stage 01** regeneration. Then 04e -> 06c -> 03 -> 06b -> 05 -> 07. Then F2b retry against fresh inputs. Then fork-side reproduction. Then comparison.

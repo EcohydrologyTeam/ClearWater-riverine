@@ -283,7 +283,12 @@ def drain_newly_dry(
     c_t = np.asarray(
         registry.get_at_time(constituent_name, current_time)
     )[:nreal]
-    dt_sec = float(registry.get(CHANGE_IN_TIME))
+    # Phase F (2026-05-21): use the caller's scalar time_step instead
+    # of float(registry.get(CHANGE_IN_TIME)) so the array-dt path
+    # (allowed by the relaxed cadence guard on non-uniform RAS HDFs)
+    # does not raise. The current-step dt is what the drain integrates
+    # against.
+    dt_sec = float(time_step.total_seconds())
     ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))  # (nedge, 2)
 
     lost = 0.0
@@ -665,7 +670,9 @@ class TransportEngine:
             wd_donors = getattr(lhs_for_constituent, "wet_dry_leak_donors", None)
             if wd_donors is not None and wd_donors.size > 0:
                 wd_abs_adv = lhs_for_constituent.wet_dry_leak_abs_adv
-                dt_sec = float(registry.get(CHANGE_IN_TIME))
+                # Phase F (2026-05-21): use the caller's scalar time_step
+                # so the array-dt path does not raise.
+                dt_sec = float(time_step.total_seconds())
                 leak_total = float(
                     np.sum(wd_abs_adv * x[wd_donors]) * dt_sec
                 )

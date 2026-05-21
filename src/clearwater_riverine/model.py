@@ -569,14 +569,61 @@ class ClearwaterRiverine:
         return model
 
 
+    def _current_dt_seconds(self) -> float:
+        """Return the dt for the current step in seconds.
+
+        Phase F (2026-05-21): when CHANGE_IN_TIME is a scalar (uniform
+        cadence), float() it. When it is a per-step array (the relaxed
+        cadence guard's non-uniform-stamp path), look up the actual dt
+        at the current time. This ensures ``current_time + time_step``
+        lands exactly on the next RAS stamp, which is the only thing
+        that lets the downstream ``get_at_time(VOLUME, ...)`` ``.sel``
+        succeed without a tolerance.
+        """
+        dt_raw = self.registry.get(CHANGE_IN_TIME)
+        try:
+            return float(dt_raw)
+        except (TypeError, ValueError):
+            return float(
+                self.registry.get_at_time(CHANGE_IN_TIME, self.__current_time)
+            )
+
+    def _representative_dt_seconds(self) -> float:
+        """Return a scalar dt in seconds for code paths that need it.
+
+        ``calculate_change_in_time`` (utilities.py) returns a
+        ``FloatVariable`` (scalar) when RAS stamps are uniform and a
+        ``DataArrayVariable`` (per-step array) otherwise. The C4
+        uniform-cadence precondition normally rules out the array
+        case, but the Phase-F relaxation (2026-05-21) allows up to 10%
+        drift. When that drift triggers the array case, ``__init_output_store``
+        and other call sites need a single representative dt. Use the
+        ``nanmedian`` of the per-step array as the representative; it
+        is the natural fit when the array is "near-uniform with drift"
+        and the ``nan`` skip handles the final-slot NaN padding
+        ``calculate_change_in_time`` inserts via
+        ``np.insert(dt, len(dt), np.nan)``.
+        """
+        dt_raw = self.registry.get(CHANGE_IN_TIME)
+        try:
+            val = float(dt_raw)
+            if np.isnan(val):
+                # Scalar but NaN is unusable; fall through to array path.
+                raise ValueError("scalar dt is NaN")
+            return val
+        except (TypeError, ValueError):
+            # Per-step array. Use the nanmedian across the run as the
+            # representative scalar (skips the trailing NaN that
+            # ``calculate_change_in_time`` appends so the array length
+            # matches the time axis).
+            return float(np.nanmedian(np.asarray(dt_raw)))
+
     def __increment_timestep(self):
         """Increment the model timestep.
 
-        ``calculate_change_in_time`` (utilities.py) returns a ``FloatVariable``
-        (scalar) when RAS stamps are uniform and a ``DataArrayVariable``
-        (per-step array) otherwise. The C4 uniform-cadence precondition
-        (__init_model) normally rules out the array case, but this scalar/
-        array fallback is cheap robustness if it ever slips through.
+        Uses ``_representative_dt_seconds`` for the scalar/array
+        fallback; when the array path is active, looks up dt at the
+        current time for per-step accuracy.
         """
         dt_raw = self.registry.get(CHANGE_IN_TIME)
         try:
@@ -626,13 +673,31 @@ class ClearwaterRiverine:
             'hydrodynamic_model'
         ].all_datetimes
         diffs = np.diff(np.asarray(all_dts.values))
-        if len(diffs) > 1 and not np.all(diffs == diffs[0]):
-            raise ValueError(
-                "Non-uniform RAS output cadence detected (timestamps "
-                "differ in spacing). The chunked transport design "
-                "(Phase-C B3/B4) assumes a uniform timestep. Re-export "
-                "the RAS run at a single uniform interval."
+        if len(diffs) > 1:
+            # Tolerance-based uniform-cadence check (Phase-F 2026-05-21
+            # relaxation). Real-world HEC-RAS unsteady outputs occasionally
+            # slip the wall-clock stamp by +/- 1 minute on an otherwise
+            # hourly grid (observed on the USGS Santiam-Salem 2008 plan:
+            # 59 / 60 / 61 minute diffs across 361 stamps). The original
+            # exact-equality check (np.all(diffs == diffs[0])) over-rejected
+            # those plans even though the C4 tolerance-based chunk-boundary
+            # detection (>= next-unfired-boundary) is designed to absorb
+            # exactly this kind of drift. Allow up to 10 percent deviation
+            # from the median spacing; anything larger is a genuine
+            # cadence change (e.g. hourly mixed with daily, or sparse months)
+            # and still fails loudly.
+            median_dt = float(np.median(diffs.astype("timedelta64[ns]").astype(np.int64)))
+            dev = np.abs(
+                diffs.astype("timedelta64[ns]").astype(np.int64) - median_dt
             )
+            if median_dt > 0 and float(np.max(dev)) > 0.10 * median_dt:
+                raise ValueError(
+                    "Non-uniform RAS output cadence detected (timestamps "
+                    "vary by more than 10% from the median spacing). The "
+                    "chunked transport design (Phase-C B3/B4) assumes a "
+                    "near-uniform timestep. Re-export the RAS run at a "
+                    "single uniform interval."
+                )
 
         # Loud precondition (Finding #3, Phase-C C1a). io/hdf.py
         # __read_temporal_variables reads GATE_FLOW into the RAS mesh, but
@@ -813,7 +878,7 @@ class ClearwaterRiverine:
                 store_path=self.__simulation_directory / "model_outputs.zarr",
                 start_date=self._start_datetime,
                 end_date=self._end_datetime,
-                time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
+                time_step=timedelta(seconds=self._representative_dt_seconds()),
                 variables=self.__output_variables,
                 chunk_size=self.__chunk_size,
                 spatial_field=NFACE,
@@ -825,7 +890,7 @@ class ClearwaterRiverine:
                 store_path=self.__simulation_directory / "model_outputs.zarr",
                 start_date=self._start_datetime,
                 end_date=self._end_datetime,
-                time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
+                time_step=timedelta(seconds=self._representative_dt_seconds()),
                 variables=self.__output_variables,
                 spatial_field=NFACE,
                 spatial_field_values=self.registry.get(VOLUME).nface,
@@ -969,7 +1034,10 @@ class ClearwaterRiverine:
         self.__transport_engine.run(
             registry=self.registry,
             current_time=self.__current_time,
-            time_step=timedelta(seconds=self.registry.get(CHANGE_IN_TIME)),
+            # Phase F: use the per-step actual dt (not the median)
+            # so ``current_time + time_step`` lands on the next exact
+            # RAS stamp. This matters for non-uniform stamps.
+            time_step=timedelta(seconds=self._current_dt_seconds()),
             constituents=self._constituents,
             mass_flux_calculation=self.__mass_flux_calculation
          )

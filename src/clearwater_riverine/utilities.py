@@ -107,9 +107,16 @@ def calculate_change_in_time(
     if np.all(dt[:-1] == dt[0]):
         return FloatVariable(dt[0])
     else:
+        # Phase F (2026-05-21): also carry the ``time`` coordinate so
+        # ``get_at_time(CHANGE_IN_TIME, t)`` can ``.sel`` by timestamp.
+        # The previous DataArray had ``dims=('time')`` but no coord
+        # values along that dim; ``.sel(time=Timestamp)`` then routed
+        # through positional fancy-indexing and raised
+        # ``invalid indexer array, does not have integer dtype``.
         dt = xr.DataArray(
             dt,
-            dims=('time'),
+            dims=('time',),
+            coords={'time': times.values},
             attrs={'Units': 's'}
         )
         return DataArrayVariable(dt)

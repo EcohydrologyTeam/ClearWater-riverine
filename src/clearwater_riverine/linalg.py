@@ -277,7 +277,19 @@ class LHS:
 
         # fill in matrix values
         self.__fill_empty_cells(empty_cells)
-        self.__fill_load_values(volume, faces, registry.get(CHANGE_IN_TIME))
+        # Phase F (2026-05-21): the LHS load coefficient (V/dt) needs a
+        # scalar dt for this time step. When the RAS HDF has uniform
+        # stamps, ``registry.get(CHANGE_IN_TIME)`` returns a
+        # FloatVariable that float() unwraps cleanly. When the HDF has
+        # near-uniform stamps that pass the relaxed cadence guard but
+        # produce a per-step array, ``registry.get(CHANGE_IN_TIME)``
+        # returns the full (time,) DataArray, which then broadcasts
+        # against the per-cell volume to a 2-D shape and fails. Pass
+        # the caller's ``time_step`` (already a scalar timedelta) so
+        # the load uses this step's dt directly without going through
+        # the array path.
+        dt_seconds_for_load = float(time_step.total_seconds())
+        self.__fill_load_values(volume, faces, dt_seconds_for_load)
         self.__fill_diffusion_values(
             coefficient_to_diffusion_term,
             edges_face1,
@@ -546,7 +558,7 @@ class RHS:
         # solver[self.input_array[t].nonzero()] = self.input_array[t][self.input_array[t].nonzero()] 
         self.values[:] = self.__calculate_rhs(registry, current_time, time_step, constituent_name)
 
-    def _calculate_load(self, registry: VariableRegistry, current_time: datetime):
+    def _calculate_load(self, registry: VariableRegistry, current_time: datetime, time_step: timedelta):
         """Calculate the load 
         Returns:
             load (xr.DataArray):            (M/T) Calculated as volume (L3) * concentration (M/L3) / time (T).
@@ -555,7 +567,10 @@ class RHS:
             VOLUME,
             current_time
         )[0:self.real_cell_count]
-        delta_time = registry.get(CHANGE_IN_TIME)
+        # Phase F (2026-05-21): scalar dt from the caller's time_step
+        # (array-dt path makes this broadcast to 2-D otherwise; same
+        # root cause as the LHS __fill_load_values site).
+        delta_time = float(time_step.total_seconds())
         load = volume * self.concentrations / delta_time
         return load
     
@@ -609,7 +624,7 @@ class RHS:
             including the load at the current timestep for internal (real) cells,
             and known transport terms associated with connected external (ghost) cells.
         """
-        load = self._calculate_load(registry, current_time)
+        load = self._calculate_load(registry, current_time, time_step)
         ghost_cells_in, ghost_cells_out = self._calculate_ghost_cell_values(registry, current_time, time_step, constituent_name)
         return load + ghost_cells_in + ghost_cells_out
 
@@ -694,9 +709,20 @@ class RHS:
                                                 Populated with values previously associated with edges between a ghost and internal cell,
                                                 now the values falls on the indices associated with the internal cell. 
         """    
-        edge_array[index_list] = abs(mesh_array[index_list])
-        values = np.where(edge_array != 0)[0]
-        face_array[np.array(internal_cell_index)] = edge_array[values]
+        # Phase F (2026-05-21): the original implementation filtered
+        # ``edge_array`` to non-zero entries (``values``) but left
+        # ``internal_cell_index`` at its full length, then tried to
+        # assign 52 filtered values into 100 internal-cell slots ->
+        # ValueError. The fix: filter the internal-cell index by the
+        # same non-zero mask so the two sides line up. Surfaced on the
+        # Santiam-Salem 2008 fixture where Upstream + Santiam together
+        # supply 100 ghost edges but only ~52 carry non-zero BC values
+        # at a given time step.
+        abs_vals = np.abs(np.asarray(mesh_array)[index_list])
+        nz_mask = abs_vals != 0
+        icl = np.asarray(internal_cell_index)
+        edge_array[np.asarray(index_list)[nz_mask]] = abs_vals[nz_mask]
+        face_array[icl[nz_mask]] = abs_vals[nz_mask]
         return face_array
 
     def _ghost_cell(
@@ -773,7 +799,13 @@ class RHS:
                     current_time + time_step,
                 )
             )[external_cell_index]
-            dt_sec = float(registry.get(CHANGE_IN_TIME))
+            # Phase F (2026-05-21): use the caller's scalar time_step
+            # directly. Previously this read registry.get(CHANGE_IN_TIME)
+            # and cast it to float, which fails on the per-step array
+            # path the relaxed cadence guard now allows through. The
+            # incoming time_step parameter is already a scalar timedelta
+            # for this step.
+            dt_sec = float(time_step.total_seconds())
             step_mass_in = float(
                 np.sum(adv_mag * edge_concentrations) * dt_sec
             )
