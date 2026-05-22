@@ -734,6 +734,21 @@ def _apply_bc_only_correction(
     interior_residual_l1 = 0.0
 
     for t in range(n_steps):
+        # Phase I-4 / F12 (2026-05-21): defensive dt=0 guard.
+        # The Phase F cadence guard rejects > 10% deviation but a
+        # perfectly-zero dt (degenerate / duplicate timestamp) is
+        # not caught by that guard. Division by zero in
+        # ``target_total = r_i / dt[t]`` would silently produce
+        # inf/NaN and corrupt every adv_coeff entry it touches.
+        # Skip this timestep with a warning instead.
+        if dt[t] == 0:
+            warnings.warn(
+                f"continuity_correction (bc_only): dt[{t}] == 0 -- "
+                "skipping this timestep. RAS output has a duplicate "
+                "timestamp; investigate the source HDF.",
+                stacklevel=4,
+            )
+            continue
         ff_t = adv_coeff[t]
         Q = np.zeros(n_face)
         np.add.at(Q, f1, -ff_t)
@@ -880,6 +895,16 @@ def _apply_all_edges_correction(
     worst_unconverged_t = -1
 
     for t in range(n_steps):
+        # Phase I-4 / F12 (2026-05-21): defensive dt=0 guard
+        # (mirrors the bc_only path; same rationale).
+        if dt[t] == 0:
+            warnings.warn(
+                f"continuity_correction (all_edges): dt[{t}] == 0 -- "
+                "skipping this timestep. RAS output has a duplicate "
+                "timestamp; investigate the source HDF.",
+                stacklevel=4,
+            )
+            continue
         ff_t = adv_coeff[t]
         dV = V[t + 1, :nreal_count] - V[t, :nreal_count]
 
