@@ -62,7 +62,13 @@ More broadly, ANY RAS HDF with at least one Internal-type BC line will silently 
 
 `io/hdf.py:__define_boundary_hydrodynamics` now inspects the `Geometry/Boundary Condition Lines/Attributes` table's `Type` field. If any row reads `Internal` (case-insensitive), a `UserWarning` is emitted listing the affected BC names and explaining the limitation. The warning fires on every model construction from an un-subset HDF with Internal BCs.
 
-## Fix plan (future Tier 3 work)
+## Phase I-2 partial closure (2026-05-21)
+
+Canonical now reads the `Geometry/Boundary Condition Lines/Internal Cells` dataset when present and stores the parsed DataFrame on `RASHDFDataSource.internal_cells`. The warning text in `__define_boundary_hydrodynamics` no longer claims the data is "silently dropped" — it now reports the count of Internal-Cells entries and explains that the per-cell BC mass routing requires per-cell BC flow attribution data that HEC-RAS does NOT write to the standard output set.
+
+This is the practical-progress version of T2-E's eventual fix. The full routing through `T2-A point_sources` requires either (a) the user to derive per-cell BC flow attribution from RAS internals (custom HDF post-processing), or (b) HEC-RAS to start writing per-cell BC flow contributions as a standard output variable, which is a HEC-RAS issue not a Riverine issue. Phase J or later will revisit when one of those preconditions is met.
+
+## Fix plan (future Tier 3 / Phase J work)
 
 To fully resolve, the HDF reader needs to:
 

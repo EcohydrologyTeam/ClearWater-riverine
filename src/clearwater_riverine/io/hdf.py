@@ -300,6 +300,11 @@ class RASHDFDataSource:
             'paths': self.paths,
             'gate_names': self.gate_names,
             'all_datetimes': self.all_datetimes,
+            # Phase I-2 (2026-05-21): round-trip Internal Cells data
+            # so the cache hit path matches the cache miss path
+            # exactly. ``None`` on HDFs that have no Internal BCs
+            # (the common case).
+            'internal_cells': self.internal_cells,
         }
 
     def __rehydrate_static(self, payload: Dict[str, Any]) -> None:
@@ -318,6 +323,10 @@ class RASHDFDataSource:
         self.paths = payload['paths']
         self.gate_names = payload['gate_names']
         self.all_datetimes = payload['all_datetimes']
+        # Phase I-2 (2026-05-21): cache-miss path defaults to None
+        # when the key is absent so older cache payloads (pre-I-2)
+        # rehydrate cleanly without forcing a full rebuild.
+        self.internal_cells = payload.get('internal_cells', None)
 
 
     def _optional_temporal_variables(self) -> dict:
@@ -391,6 +400,13 @@ class RASHDFDataSource:
             'area_elevation_values': f'Geometry/2D Flow Areas/{self.project_name}/Faces Area Elevation Values',
             'normalunitvector_length': f'Geometry/2D Flow Areas/{self.project_name}/Faces NormalUnitVector and Length',
             'boundary_condition_external_faces': 'Geometry/Boundary Condition Lines/External Faces',
+            # Phase I-2 (2026-05-21): Internal Cells path. Per-cell
+            # mass-injection lookup for BC lines drawn through the
+            # interior of the 2D mesh (rather than the perimeter).
+            # Optional; absent on most subset HDFs (the Santiam-Salem
+            # subset's BCs were flattened from Internal -> External-
+            # face representations by the case-study subset extractor).
+            'boundary_condition_internal_cells': 'Geometry/Boundary Condition Lines/Internal Cells',
             'boundary_condition_attributes': 'Geometry/Boundary Condition Lines/Attributes/',
             'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions',
             VOLUME_ELEVATION_INFO: f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Info',
@@ -806,19 +822,20 @@ class RASHDFDataSource:
             attributes[col] = str_df[col]
         boundary_attributes = attributes
 
-        # Phase F T2-E (2026-05-21): detect Internal-type BC lines.
-        # canonical (and the streaming repo it forward-ports from)
-        # reads only ``External Faces`` from the HDF; ``Internal
-        # Cells`` (a separate dataset with per-cell BC mass injection
-        # for BC lines that sit deep in the mesh rather than at the
-        # perimeter) is not yet wired. On a subset HDF whose extractor
-        # has converted Internal BCs into External-face
-        # representations (e.g. the Santiam-Salem Sep 2008 deck used
-        # in Phase F validation), the Type field reads as a flow
-        # category like ``Flow Hydrograph`` and this check is silent.
-        # On un-subset HDFs whose Type field still reads ``Internal``,
-        # warn so the user knows the Internal-Cells mass injection is
-        # being dropped. Fix is tracked in design/internal_bc_audit.md.
+        # Phase F T2-E + Phase I-2 (2026-05-21): detect Internal-type
+        # BC lines and read the ``Internal Cells`` dataset when
+        # present. The dataset is parsed onto ``self.internal_cells``
+        # (a DataFrame with BC Line ID, Cell Index, Station Start,
+        # Station End columns); a follow-up commit will join this with
+        # the BC line's time-series and route the per-cell mass
+        # injection through the T2-A point_sources infrastructure.
+        # Until then, the warning is informative ("detected and
+        # parsed, full routing pending") rather than alarming.
+        self.internal_cells = None
+        ic_path = self.paths.get('boundary_condition_internal_cells')
+        if ic_path is not None and ic_path in infile:
+            self.internal_cells = pd.DataFrame(infile[ic_path][()])
+
         if 'Type' in boundary_attributes.columns:
             internal_rows = boundary_attributes[
                 boundary_attributes['Type'].astype(str).str.lower() == 'internal'
@@ -829,19 +846,26 @@ class RASHDFDataSource:
                     ', '.join(str(n) for n in names.tolist())
                     if names is not None else '(unnamed)'
                 )
+                n_cells = (
+                    len(self.internal_cells)
+                    if self.internal_cells is not None else 0
+                )
                 warnings.warn(
                     f"Detected {len(internal_rows)} Internal-type boundary "
-                    f"condition line(s) ({names_str}). Canonical (and the "
-                    "streaming repo it ports from) currently reads only the "
-                    "``External Faces`` dataset; the ``Internal Cells`` "
-                    "dataset is NOT wired, so mass injected at Internal-type "
-                    "BC lines is silently dropped from the transport solve. "
-                    "If your case study expects Internal-BC mass to enter "
-                    "the domain, either (a) run the subset extractor that "
-                    "converts Internal BCs into External-face representations "
-                    "(the Santiam-Salem Sep 2008 deck used in Phase F "
-                    "validation does this), or (b) await the Internal-Cells "
-                    "wiring follow-up. See design/internal_bc_audit.md.",
+                    f"condition line(s) ({names_str}) with {n_cells} "
+                    "Internal Cells entries. Phase I-2 (2026-05-21) reads "
+                    "the Internal Cells dataset onto "
+                    "``self.internal_cells``; the full per-cell mass "
+                    "routing through the T2-A point_sources "
+                    "infrastructure requires the BC line's per-cell flow "
+                    "attribution time-series, which RAS does not write "
+                    "to the standard output set. This is tracked as "
+                    "Phase J work. For Phase I, if your case study "
+                    "expects Internal-BC mass to enter the domain, "
+                    "run the subset extractor that converts Internal "
+                    "BCs into External-face representations (the "
+                    "Santiam-Salem Sep 2008 deck used in Phase F "
+                    "validation does this). See design/internal_bc_audit.md.",
                     UserWarning,
                     stacklevel=3,
                 )
