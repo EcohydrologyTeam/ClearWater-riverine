@@ -1,0 +1,95 @@
+name: CI
+
+# Phase I-6 (2026-05-21): CI infrastructure for the ClearWater-riverine
+# canonical repo. Designed to catch the G-1/G-2-class import-time
+# defects that the Phase F regression suite was passing past silently
+# (the canonical package's source could not be imported on a fresh
+# install for several weeks; tests were passing only because a
+# shadowed install was in PYTHONPATH).
+#
+# Architectural principles (matches the substrate's CI):
+#   #4 Windows is the primary deployment platform
+#   #5 HPC/Linux is first-class
+# macOS is included because it is the project author's primary
+# development platform.
+
+on:
+  push:
+    branches: [main, "steissberg-*"]
+  pull_request:
+    branches: [main, "steissberg-*"]
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.13"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/Library/Caches/pip
+            ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py${{ matrix.python-version }}-
+            pip-${{ runner.os }}-
+
+      - name: Upgrade pip toolchain
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      # clearwater_data is not on PyPI; install from GitHub at the
+      # branch canonical Riverine is currently coupled to. When the
+      # substrate cuts a v0.4 release on PyPI this step becomes a
+      # pyproject.toml dependency.
+      - name: Install clearwater_data substrate
+        run: python -m pip install "git+https://github.com/EcohydrologyTeam/ClearWater-data.git@steissberg-clearwater-data-chunked-reader"
+
+      - name: Install package in editable mode
+        run: python -m pip install -e .
+
+      # Phase I-6 critical step: import-time smoke test. Catches the
+      # G-1 (missing ``from pathlib import Path`` in utilities.py)
+      # and G-2 (circular import in postproc_util.py) class of
+      # defects on a clean install BEFORE the test suite runs.
+      # Phase F regression suite was passing 21/21 against canonical
+      # for weeks while ``import clearwater_riverine`` raised
+      # NameError/AttributeError on a clean install; this gate
+      # prevents that.
+      - name: Import-time smoke test
+        run: |
+          python -c "import clearwater_riverine; print('clearwater_riverine:', clearwater_riverine.__file__)"
+          python -c "from clearwater_riverine import ClearwaterRiverine; print('ClearwaterRiverine:', ClearwaterRiverine)"
+          python -c "from clearwater_riverine.io.hdf import RASHDFDataSource; print('RASHDFDataSource imports OK')"
+          python -c "from clearwater_riverine.utilities import _apply_continuity_correction, calculate_face_hyd_depth; print('utilities OK')"
+          python -c "from clearwater_riverine.linalg import LHS, RHS; from clearwater_riverine.transport import TransportEngine; print('numerical kernels OK')"
+          python -c "from clearwater_riverine.constituents import Constituent, _validate_constituent_values; print('constituents OK')"
+
+      - name: Install test dependencies
+        run: python -m pip install pytest pytest-cov
+
+      - name: Show installed packages
+        run: python -m pip list
+
+      - name: Run Phase F + Phase H regression suite
+        run: pytest tests/test_phase_f_regression.py -v --tb=short
+
+      - name: Run full test suite
+        if: success()
+        run: pytest tests/ -v --tb=short
+        continue-on-error: true   # The non-Phase-F tests are legacy and may have unrelated failures
