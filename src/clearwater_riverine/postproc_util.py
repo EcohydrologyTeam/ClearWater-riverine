@@ -60,7 +60,7 @@ def accumulate_chunk_mass_balance(
     c = acc.setdefault(
         constituent_name, {"boundaries": {}, "start": None, "end": None}
     )
-    nreal = registry.get(NUMBER_OF_REAL_CELLS)
+    nreal = registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()
 
     if c["start"] is None:
         v = registry.get_at_time(VOLUME, start_datetime)[0:nreal]
@@ -77,13 +77,13 @@ def accumulate_chunk_mass_balance(
             "total_mass": float((v * x).sum().item()),
         }
 
-    boundary_index = registry.get(BOUNDARY_FACE_INDEX)
-    boundary_names = registry.get(BOUNDARY_NAME)
-    flow = registry.get(FLOW_ACROSS_FACE)
+    boundary_index = registry.get_variable(BOUNDARY_FACE_INDEX).get_data()
+    boundary_names = registry.get_variable(BOUNDARY_NAME).get_data()
+    flow = registry.get_variable(FLOW_ACROSS_FACE).get_data()
     if drop_last_slot:
         flow = flow.isel(time=slice(0, -1))
-    dt = registry.get(CHANGE_IN_TIME)
-    mass_flux = registry.get(f"{constituent_name}_mass_flux")
+    dt = registry.get_variable(CHANGE_IN_TIME).get_data()
+    mass_flux = registry.get_variable(f"{constituent_name}_mass_flux").get_data()
 
     for boundary_name in np.unique(boundary_names):
         edges_mask = boundary_names == boundary_name
@@ -191,7 +191,7 @@ def calculate_global_mass_balance(
         raise ValueError("Rerun model with `mass_flux_calculation` set to True.")
 
     # calculate starting mass
-    real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
+    real_cell_count = registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()
     volume_start = registry.get_at_time(VOLUME, start_datetime)[0:real_cell_count]
     volume_end = registry.get_at_time(VOLUME, end_datetime)[0:real_cell_count]
     if calculate_answer:
@@ -234,8 +234,8 @@ def _calculate_boundary_data(
     answer_value: float,
 ):
     # get boundary information
-    boundary_index = registry.get(BOUNDARY_FACE_INDEX)
-    boundary_names = registry.get(BOUNDARY_NAME)
+    boundary_index = registry.get_variable(BOUNDARY_FACE_INDEX).get_data()
+    boundary_names = registry.get_variable(BOUNDARY_NAME).get_data()
 
     records = [] 
     for boundary_name in np.unique(boundary_names):
@@ -244,12 +244,12 @@ def _calculate_boundary_data(
         boundary_edges = boundary_index[edges_mask]
 
         # get flow, volume, and mass
-        boundary_flow = registry.get(FLOW_ACROSS_FACE).sel(nedge=boundary_edges)
-        boundary_volume = boundary_flow * registry.get(CHANGE_IN_TIME)
+        boundary_flow = registry.get_variable(FLOW_ACROSS_FACE).get_data().sel(nedge=boundary_edges)
+        boundary_volume = boundary_flow * registry.get_variable(CHANGE_IN_TIME).get_data()
         if calculate_answer == True:
             boundary_mass = boundary_volume * answer_value
         else:
-            boundary_mass = registry.get(f"{constituent_name}_mass_flux").sel(nedge=boundary_edges)
+            boundary_mass = registry.get_variable(f"{constituent_name}_mass_flux").get_data().sel(nedge=boundary_edges)
     
         # calculate totals, 
         metrics = {
@@ -321,7 +321,7 @@ def _percent_error(
 def _calculate_mass_flux(
     registry: VariableRegistry,
 ):
-    negative_condition = registry.get(FLOW_ACROSS_FACE)
+    negative_condition = registry.get_variable(FLOW_ACROSS_FACE).get_data()
 
 def _run_simulation(ras_hdf, diff_coef, intl_cnd, bndry):
     """Returns a Clearwater Riverine Simulation object that has water quality results"""

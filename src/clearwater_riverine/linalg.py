@@ -39,10 +39,10 @@ class LHS:
         hydrodynamic and topological information from the model grid. 
 
         """
-        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
-        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
-        self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
-        self.real_cell_index = registry.get(NUMBER_OF_REAL_CELLS) - 1
+        edges_face1 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[0]
+        edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
+        self.real_cell_count = registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()
+        self.real_cell_index = registry.get_variable(NUMBER_OF_REAL_CELLS).get_data() - 1
 
         self.internal_edges = np.where(
             (edges_face1 <= self.real_cell_index) & (edges_face2 <= self.real_cell_index)
@@ -103,15 +103,15 @@ class LHS:
         )
 
         # topology information
-        faces = registry.get(VOLUME)[FACES]
-        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
-        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+        faces = registry.get_variable(VOLUME).get_data()[FACES]
+        edges_face1 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[0]
+        edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
 
         if self.has_gate_flow:
-            gate_flow = registry.get(
+            gate_flow = registry.get_variable(
                 GATE_FLOW,
                 current_time
-            )
+            ).get_data()
             flow_out_gate_indices = np.where(gate_flow > 0)
             flow_in_gate_indices = np.where(gate_flow < 0)
         else:
@@ -284,10 +284,10 @@ class LHS:
         self.__fill_empty_cells(empty_cells)
         # Phase F (2026-05-21): the LHS load coefficient (V/dt) needs a
         # scalar dt for this time step. When the RAS HDF has uniform
-        # stamps, ``registry.get(CHANGE_IN_TIME)`` returns a
+        # stamps, ``registry.get_variable(CHANGE_IN_TIME).get_data()`` returns a
         # FloatVariable that float() unwraps cleanly. When the HDF has
         # near-uniform stamps that pass the relaxed cadence guard but
-        # produce a per-step array, ``registry.get(CHANGE_IN_TIME)``
+        # produce a per-step array, ``registry.get_variable(CHANGE_IN_TIME).get_data()``
         # returns the full (time,) DataArray, which then broadcasts
         # against the per-cell volume to a 2-D shape and fails. Pass
         # the caller's ``time_step`` (already a scalar timedelta) so
@@ -315,8 +315,8 @@ class LHS:
         if self.has_gate_flow:
             self.__fill_advection_values(
                 flow_across_face,
-                registry.get(GATE_CONNECTIVITY).T[0],
-                registry.get(GATE_CONNECTIVITY).T[1],
+                registry.get_variable(GATE_CONNECTIVITY).get_data().T[0],
+                registry.get_variable(GATE_CONNECTIVITY).get_data().T[1],
                 flow_out_gate_indices,
                 flow_out_gate_indices,
                 flow_in_gate_indices,
@@ -534,9 +534,9 @@ class RHS:
         """
         Initialize the right-hand side matrix of concentrations based on user-defined boundary conditions.
         """
-        self.real_cell_index = registry.get(NUMBER_OF_REAL_CELLS) - 1
-        self.real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
-        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+        self.real_cell_index = registry.get_variable(NUMBER_OF_REAL_CELLS).get_data() - 1
+        self.real_cell_count = registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()
+        edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
 
         self.values = np.zeros(self.real_cell_count)
         self.ghost_cells = np.where(edges_face2 > self.real_cell_index)[0]
@@ -736,8 +736,8 @@ class RHS:
         diffusion_edge = None
         diffusion_face = None
 
-        nface = registry.get(NFACE)
-        nedge = registry.get(NEDGE) 
+        nface = registry.get_variable(NFACE).get_data()
+        nedge = registry.get_variable(NEDGE).get_data() 
 
         if advection:
             advection_edge = np.zeros(nedge)
@@ -807,8 +807,8 @@ class RHS:
             EDGE_VELOCITY,
             current_time,
         )
-        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
-        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+        edges_face1 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[0]
+        edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
 
         velocity_indices = np.where(condition(edge_velocity, 0))[0]
         # Phase F (2026-05-21): use the continuity-corrected
@@ -821,7 +821,7 @@ class RHS:
         internal_cell_index = edges_face1[index_list]
         external_cell_index = edges_face2[index_list]
 
-        concentration_multipliers = np.zeros(registry.get(NFACE))
+        concentration_multipliers = np.zeros(registry.get_variable(NFACE).get_data())
         concentration_multipliers[internal_cell_index] = registry.get_at_time(
             constituent_name,
             current_time + time_step
@@ -863,7 +863,7 @@ class RHS:
                 )
             )[external_cell_index]
             # Phase F (2026-05-21): use the caller's scalar time_step
-            # directly. Previously this read registry.get(CHANGE_IN_TIME)
+            # directly. Previously this read registry.get_variable(CHANGE_IN_TIME).get_data()
             # and cast it to float, which fails on the per-step array
             # path the relaxed cadence guard now allows through. The
             # incoming time_step parameter is already a scalar timedelta

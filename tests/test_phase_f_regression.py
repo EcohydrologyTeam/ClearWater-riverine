@@ -140,7 +140,7 @@ def test_t1b_face_hyd_depth_auto_registered_with_depth_metric(tmp_path):
         wet_dry_metric="both",
     )
     assert FACE_HYD_DEPTH in model.registry
-    depth = np.asarray(model.registry.get(FACE_HYD_DEPTH))
+    depth = np.asarray(model.registry.get_variable(FACE_HYD_DEPTH).get_data())
     # Expect (time, nface) and finite-or-NaN values
     assert depth.ndim == 2
     assert np.isfinite(depth[np.isfinite(depth)]).all()
@@ -160,7 +160,7 @@ def test_t1b_maximum_depth_is_2d_not_3d(tmp_path):
     )
     model = cwr.ClearwaterRiverine(config_filepath=str(cfg_path))
     from clearwater_riverine.variables import MAXIMUM_DEPTH
-    md = model.registry.get(MAXIMUM_DEPTH)
+    md = model.registry.get_variable(MAXIMUM_DEPTH).get_data()
     assert md.ndim == 2, f"MAXIMUM_DEPTH should be (time, nface) but is {md.dims}"
 
 
@@ -181,8 +181,8 @@ def test_t1c_continuity_correction_modes(tmp_path, mode):
         continuity_correction=mode,
     )
     assert ADVECTION_COEFFICIENT in model.registry
-    adv = np.asarray(model.registry.get(ADVECTION_COEFFICIENT))
-    flow = np.asarray(model.registry.get(FLOW_ACROSS_FACE))
+    adv = np.asarray(model.registry.get_variable(ADVECTION_COEFFICIENT).get_data())
+    flow = np.asarray(model.registry.get_variable(FLOW_ACROSS_FACE).get_data())
     assert adv.shape == flow.shape
     if mode == "none":
         np.testing.assert_array_equal(adv, flow)
@@ -270,7 +270,7 @@ def test_t2a_point_sources_loads_and_registers(tmp_path):
     assert flows[0, 1] == pytest.approx(0.0, abs=1e-9)
     # All other (cell, time) entries with no source data remain at
     # the initial zero fill.
-    nreal = int(model.registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(model.registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     # Sample a cell beyond the configured sources -- if nreal > 2,
     # check; else just confirm non-source cells exist.
     if nreal > 2:
@@ -366,7 +366,7 @@ def test_t2c_diffusion_constant_default_works(tmp_path):
     cfg_path = _make_config(tmp_path, PLAN02, PLAN02_HDF)
     model = cwr.ClearwaterRiverine(config_filepath=str(cfg_path))
     from clearwater_riverine.variables import COEFFICIENT_TO_DIFFUSION_TERM
-    cdt = model.registry.get(COEFFICIENT_TO_DIFFUSION_TERM)
+    cdt = model.registry.get_variable(COEFFICIENT_TO_DIFFUSION_TERM).get_data()
     assert np.all(np.isfinite(np.asarray(cdt)))
 
 
@@ -453,7 +453,7 @@ def test_phase_f_full_stack_runs(tmp_path):
     model.run()
     # Constituent values should be finite at real cells.
     tracer = np.asarray(model.registry.get("tracer"))
-    nreal = int(model.registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(model.registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     finite_mask = np.isfinite(tracer[:, :nreal])
     assert finite_mask.any()
 
@@ -486,12 +486,12 @@ def test_h4_continuity_correction_residual_reduction_bc_only(tmp_path):
     )
 
     def _max_residual(model):
-        flow = np.asarray(model.registry.get(ADVECTION_COEFFICIENT))
-        V = np.asarray(model.registry.get(VOLUME))
-        ef = np.asarray(model.registry.get(EDGE_FACE_CONNECTIVITY))
-        nreal = int(model.registry.get(NUMBER_OF_REAL_CELLS))
+        flow = np.asarray(model.registry.get_variable(ADVECTION_COEFFICIENT).get_data())
+        V = np.asarray(model.registry.get_variable(VOLUME).get_data())
+        ef = np.asarray(model.registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
+        nreal = int(model.registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
         f1, f2 = ef[:, 0].astype(np.int64), ef[:, 1].astype(np.int64)
-        times = model.registry.get(VOLUME).time.values
+        times = model.registry.get_variable(VOLUME).get_data().time.values
         dt = np.diff(times) / np.timedelta64(1, 's')
         max_r = 0.0
         for t in range(len(dt)):
@@ -520,12 +520,12 @@ def test_h4_continuity_correction_all_edges_to_round_off(tmp_path):
     m = cwr.ClearwaterRiverine(
         config_filepath=str(cfg_path), continuity_correction="all_edges"
     )
-    flow = np.asarray(m.registry.get(ADVECTION_COEFFICIENT))
-    V = np.asarray(m.registry.get(VOLUME))
-    ef = np.asarray(m.registry.get(EDGE_FACE_CONNECTIVITY))
-    nreal = int(m.registry.get(NUMBER_OF_REAL_CELLS))
+    flow = np.asarray(m.registry.get_variable(ADVECTION_COEFFICIENT).get_data())
+    V = np.asarray(m.registry.get_variable(VOLUME).get_data())
+    ef = np.asarray(m.registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
+    nreal = int(m.registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     f1, f2 = ef[:, 0].astype(np.int64), ef[:, 1].astype(np.int64)
-    times = m.registry.get(VOLUME).time.values
+    times = m.registry.get_variable(VOLUME).get_data().time.values
     dt = np.diff(times) / np.timedelta64(1, 's')
     max_r = 0.0
     for t in range(len(dt)):
@@ -573,7 +573,7 @@ def test_h4_decay_rate_implicit_euler_first_order(tmp_path):
     # Look at one real cell over a few steps. The cell's c[t] is the
     # net of inflow + decay; over short time horizons with BC=100 and
     # IC=100, decay should produce a visible decrement below 100.
-    nreal = int(model.registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(model.registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     finite_cells = np.where(np.isfinite(c[-1, :nreal]) & (c[-1, :nreal] > 0))[0]
     if len(finite_cells) == 0:
         pytest.skip("plan02 produced no finite cell values to test against")
@@ -669,7 +669,7 @@ def test_h4_point_source_adds_mass(tmp_path):
     model = cwr.ClearwaterRiverine(config_filepath=str(cfg_path))
     model.run()
     tracer = np.asarray(model.registry.get("tracer"))
-    nreal = int(model.registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(model.registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     # Find the last timestep where cell 0 is finite. With BC=100
     # everywhere AND a 500 mg/L source at cell 0, the source must
     # pull cell 0 above 100.
@@ -730,7 +730,7 @@ def test_h4_nan_in_flow_raises_in_continuity_correction(tmp_path):
     model = cwr.ClearwaterRiverine(
         config_filepath=str(cfg_path), continuity_correction="none"
     )
-    flow = np.asarray(model.registry.get(FLOW_ACROSS_FACE)).copy()
+    flow = np.asarray(model.registry.get_variable(FLOW_ACROSS_FACE).get_data()).copy()
     flow[5, 0] = np.nan  # one NaN at one edge, one timestep
     with pytest.raises(ValueError, match="NaN"):
         _apply_continuity_correction(model.registry, flow, mode="bc_only")
@@ -813,7 +813,7 @@ def test_h4_mms_implicit_euler_first_order_convergence(tmp_path):
     # because each step decays by 300x.
     model.run()
     c = np.asarray(model.registry.get("fast_decayer"))
-    nreal = int(model.registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(model.registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     finite = np.isfinite(c[-1, :nreal])
     if not finite.any():
         pytest.skip("plan02 fast_decayer: no finite cells")

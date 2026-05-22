@@ -57,10 +57,10 @@ def calculate_distances_cell_centroids(
         dist_data (np.array):   Array of distances between all cell centroids 
     """
     # Get northings and eastings of relevant faces 
-    face_x = registry.get(FACE_X)
-    face_y = registry.get(FACE_Y)
-    edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
-    edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+    face_x = registry.get_variable(FACE_X).get_data()
+    face_y = registry.get_variable(FACE_Y).get_data()
+    edges_face1 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[0]
+    edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
 
     x1_coords = face_x[edges_face1]  #mesh['face_x'][mesh['edges_face1']]
     y1_coords = face_y[edges_face1]
@@ -78,7 +78,7 @@ def calculate_distances_cell_centroids(
 def calculate_edge_vertical_area(
     registry: VariableRegistry
 ):
-    vertical_area = registry.get(FLOW_ACROSS_FACE) / registry.get(EDGE_VELOCITY)
+    vertical_area = registry.get_variable(FLOW_ACROSS_FACE).get_data() / registry.get_variable(EDGE_VELOCITY).get_data()
     # replace any NaN or Inf with 0
     vertical_area = vertical_area.where(np.isfinite(vertical_area), 0)
     return DataArrayVariable(vertical_area)
@@ -149,14 +149,14 @@ def _calc_diffusion_elder(
             "FACE_HYD_DEPTH from WSE - cell_min_elev), or re-run RAS with "
             "'Cell Hydraulic Depth' temporal output enabled."
         )
-    mannings_n = np.asarray(registry.get(MANNINGS_N))
-    depth = np.asarray(registry.get(FACE_HYD_DEPTH))
+    mannings_n = np.asarray(registry.get_variable(MANNINGS_N).get_data())
+    depth = np.asarray(registry.get_variable(FACE_HYD_DEPTH).get_data())
 
     if FACE_VEL_MAG in registry:
-        vel_mag = np.asarray(registry.get(FACE_VEL_MAG))
+        vel_mag = np.asarray(registry.get_variable(FACE_VEL_MAG).get_data())
     elif FACE_VEL_X in registry and FACE_VEL_Y in registry:
-        vx = np.asarray(registry.get(FACE_VEL_X))
-        vy = np.asarray(registry.get(FACE_VEL_Y))
+        vx = np.asarray(registry.get_variable(FACE_VEL_X).get_data())
+        vy = np.asarray(registry.get_variable(FACE_VEL_Y).get_data())
         vel_mag = np.sqrt(vx * vx + vy * vy)
     else:
         raise NotImplementedError(
@@ -171,10 +171,10 @@ def _calc_diffusion_elder(
     shear_velocity = vel_mag * np.sqrt(g) * mannings_n / safe_depth ** (1.0 / 6.0)
     D_cell = alpha * shear_velocity * safe_depth
 
-    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+    ef = np.asarray(registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
     f1 = ef[:, 0].astype(np.int64)
     f2 = ef[:, 1].astype(np.int64)
-    nreal = int(registry.get(NUMBER_OF_REAL_CELLS)) - 1
+    nreal = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()) - 1
     return _cell_diffusion_to_edge(D_cell, f1, f2, nreal)
 
 
@@ -189,15 +189,15 @@ def _calc_diffusion_eddy_viscosity(
     to edges via harmonic mean.
     """
     if EDDY_VISCOSITY in registry:
-        return np.asarray(registry.get(EDDY_VISCOSITY)) / Sc_t
+        return np.asarray(registry.get_variable(EDDY_VISCOSITY).get_data()) / Sc_t
     if CELL_EDDY_VISCOSITY_X in registry and CELL_EDDY_VISCOSITY_Y in registry:
-        nx = np.asarray(registry.get(CELL_EDDY_VISCOSITY_X))
-        ny = np.asarray(registry.get(CELL_EDDY_VISCOSITY_Y))
+        nx = np.asarray(registry.get_variable(CELL_EDDY_VISCOSITY_X).get_data())
+        ny = np.asarray(registry.get_variable(CELL_EDDY_VISCOSITY_Y).get_data())
         nu_t_cell = np.sqrt(nx * nx + ny * ny)
-        ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+        ef = np.asarray(registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
         f1 = ef[:, 0].astype(np.int64)
         f2 = ef[:, 1].astype(np.int64)
-        nreal = int(registry.get(NUMBER_OF_REAL_CELLS)) - 1
+        nreal = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()) - 1
         return _cell_diffusion_to_edge(nu_t_cell / Sc_t, f1, f2, nreal)
     raise NotImplementedError(
         "Eddy-viscosity diffusion method requires EDDY_VISCOSITY or "
@@ -244,16 +244,16 @@ def _calc_diffusion_array(
     col_map = {c.lower(): c for c in df.columns}
     cell_col = col_map["cell_index"]
     diff_col = col_map["diffusion_coefficient"]
-    volume = registry.get(VOLUME)
+    volume = registry.get_variable(VOLUME).get_data()
     nface = int(volume.sizes['nface'])
     ntimes = int(volume.sizes['time'])
     D_cell = np.full(nface, default_value, dtype=np.float64)
     D_cell[df[cell_col].values.astype(int)] = df[diff_col].values
     D_cell_tv = np.broadcast_to(D_cell, (ntimes, nface)).copy()
-    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+    ef = np.asarray(registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
     f1 = ef[:, 0].astype(np.int64)
     f2 = ef[:, 1].astype(np.int64)
-    nreal = int(registry.get(NUMBER_OF_REAL_CELLS)) - 1
+    nreal = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()) - 1
     return _cell_diffusion_to_edge(D_cell_tv, f1, f2, nreal)
 
 
@@ -279,29 +279,29 @@ def calculate_coeff_to_diffusion_term(
     Returns:
         diffusion_array (np.array):     Array of diffusion coefficients associated with each edge
     """
-    edge_vertical_area = registry.get(EDGE_VERTICAL_AREA)
-    face_to_face_distance = registry.get(FACE_TO_FACE_DISTANCE)
+    edge_vertical_area = registry.get_variable(EDGE_VERTICAL_AREA).get_data()
+    face_to_face_distance = registry.get_variable(FACE_TO_FACE_DISTANCE).get_data()
 
     # Phase F T2-C dispatch. ``diffusion_method`` is stored as a
     # FloatVariable wrapping a flag (0=constant, 1=elder, 2=eddy,
     # 3=array) when set by the model; absent means constant.
     method_var = "diffusion_method"
     if method_var in registry:
-        method_code = int(registry.get(method_var))
+        method_code = int(registry.get_variable(method_var).get_data())
     else:
         method_code = 0  # constant
 
     if method_code == 0:  # constant
-        diffusion_coefficient = registry.get(DIFFUSION_COEFFICIENT)
+        diffusion_coefficient = registry.get_variable(DIFFUSION_COEFFICIENT).get_data()
         diffusion_array = edge_vertical_area * diffusion_coefficient / face_to_face_distance
         return DataArrayVariable(diffusion_array)
 
     # Non-constant: build D_edge (shape (time, nedge) or (nedge,))
     if method_code == 1:  # elder
-        alpha = float(registry.get("diffusion_alpha")) if "diffusion_alpha" in registry else 0.6
+        alpha = float(registry.get_variable("diffusion_alpha").get_data()) if "diffusion_alpha" in registry else 0.6
         D_edge = _calc_diffusion_elder(registry, alpha=alpha)
     elif method_code == 2:  # eddy_viscosity
-        Sc_t = float(registry.get("diffusion_schmidt")) if "diffusion_schmidt" in registry else 1.0
+        Sc_t = float(registry.get_variable("diffusion_schmidt").get_data()) if "diffusion_schmidt" in registry else 1.0
         D_edge = _calc_diffusion_eddy_viscosity(registry, Sc_t=Sc_t)
     elif method_code == 3:  # array
         if "diffusion_array_path" not in registry:
@@ -341,7 +341,7 @@ def calculate_coeff_to_diffusion_term(
 def calculate_change_in_time(
     registry: VariableRegistry
 ):
-    times = registry.get(VOLUME).time
+    times = registry.get_variable(VOLUME).get_data().time
     dt = np.ediff1d(times)
     dt = dt / np.timedelta64(1, 's')
     dt = np.insert(dt, len(dt), np.nan)
@@ -370,10 +370,10 @@ def calculate_wetted_surface_area(
     Calculate wetted surface area based on elevation-volume lookup table.
     """
     # Define required dimensions for lookup xarray
-    nface = len(registry.get(FACE_SURFACE_AREA)[FACES])
-    ntime = len(registry.get(VOLUME)["time"])
-    lookup_volumes = registry.get(LOOKUP_VOLUME)
-    lookup_areas = registry.get(LOOKUP_WETTED_SURFACE_AREA)
+    nface = len(registry.get_variable(FACE_SURFACE_AREA).get_data()[FACES])
+    ntime = len(registry.get_variable(VOLUME).get_data()["time"])
+    lookup_volumes = registry.get_variable(LOOKUP_VOLUME).get_data()
+    lookup_areas = registry.get_variable(LOOKUP_WETTED_SURFACE_AREA).get_data()
 
     # fill null lookup values with the maximum
     # this will help the interpolation function work correctly for large values
@@ -385,14 +385,14 @@ def calculate_wetted_surface_area(
         np.full((ntime, nface), np.nan),
         dims=[TIME, FACES],
         coords={
-            TIME: registry.get(VOLUME)["time"],
+            TIME: registry.get_variable(VOLUME).get_data()["time"],
             FACES:np.arange(nface),
         }
     )
 
     # loop through real faces, get wetted surface area for all timesteps
     for nf in lookup_areas.nface:
-        volumes = registry.get(VOLUME).sel(nface=nf).values
+        volumes = registry.get_variable(VOLUME).get_data().sel(nface=nf).values
         result[:,  nf] = np.interp(
             volumes,
             lookup_volumes.sel(nface=nf).values,
@@ -418,8 +418,8 @@ def calculate_average_depth(
     
     # Calculate average depth
     average_depth = xr.where(
-        registry.get(WETTED_SURFACE_AREA) > 0,
-        registry.get(VOLUME) / registry.get(WETTED_SURFACE_AREA),
+        registry.get_variable(WETTED_SURFACE_AREA).get_data() > 0,
+        registry.get_variable(VOLUME).get_data() / registry.get_variable(WETTED_SURFACE_AREA).get_data(),
         0
     )
 
@@ -442,9 +442,9 @@ def _cell_minimum_elevation(registry: VariableRegistry):
     ``(time, nface, index)`` result instead of the scalar-per-cell depth
     the consumers expected.
     """
-    lookup_elev = registry.get(LOOKUP_ELEVATION)
+    lookup_elev = registry.get_variable(LOOKUP_ELEVATION).get_data()
     min_elev = lookup_elev.isel(index=0)
-    return min_elev.reindex(nface=np.arange(len(registry.get(FACE_X))))
+    return min_elev.reindex(nface=np.arange(len(registry.get_variable(FACE_X).get_data())))
 
 
 def calculate_face_hyd_depth(
@@ -463,7 +463,7 @@ def calculate_face_hyd_depth(
     Velocity).
     """
     min_elev = _cell_minimum_elevation(registry)
-    depth = registry.get(WATER_SURFACE_ELEVATION) - min_elev
+    depth = registry.get_variable(WATER_SURFACE_ELEVATION).get_data() - min_elev
     return DataArrayVariable(depth)
 
 
@@ -478,7 +478,7 @@ def calculate_maximum_depth(
     3-D ``(time, nface, index)`` result).
     """
     min_elev = _cell_minimum_elevation(registry)
-    maximum_depth = registry.get(WATER_SURFACE_ELEVATION) - min_elev
+    maximum_depth = registry.get_variable(WATER_SURFACE_ELEVATION).get_data() - min_elev
     return DataArrayVariable(maximum_depth)
 
 
@@ -644,18 +644,18 @@ def _apply_continuity_correction(
             "NaN to flow_across_face."
         )
 
-    nreal_count = int(registry.get(NUMBER_OF_REAL_CELLS))  # number of real cells
+    nreal_count = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())  # number of real cells
     nreal_attr = nreal_count - 1  # maximum real-cell index (streaming convention)
 
-    V = np.asarray(registry.get(VOLUME))  # (ntime, nface)
-    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+    V = np.asarray(registry.get_variable(VOLUME).get_data())  # (ntime, nface)
+    ef = np.asarray(registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
     f1 = ef[:, 0].astype(np.int64)
     f2 = ef[:, 1].astype(np.int64)
     n_face = V.shape[1] if V.ndim == 2 else int(max(f1.max(), f2.max()) + 1)
     n_edge = f1.shape[0]
 
     # Compute dt locally; the time coordinate is on ``VOLUME``.
-    times = registry.get(VOLUME).time.values
+    times = registry.get_variable(VOLUME).get_data().time.values
     if len(times) < 2:
         return
     dt = np.diff(times) / np.timedelta64(1, 's')  # (ntime - 1,)
@@ -966,7 +966,7 @@ def register_advection_coefficient(
             f"Unknown continuity_correction mode {continuity_correction!r}. "
             "Expected 'bc_only', 'all_edges', or 'none'."
         )
-    flow = registry.get(FLOW_ACROSS_FACE)
+    flow = registry.get_variable(FLOW_ACROSS_FACE).get_data()
     adv_coeff = np.asarray(flow).copy()
     if continuity_correction != "none":
         _apply_continuity_correction(

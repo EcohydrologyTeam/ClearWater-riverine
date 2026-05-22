@@ -86,7 +86,7 @@ def reconstruct_newly_wet(
         return x_full
 
     next_time = current_time + time_step
-    nreal = int(registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
 
     # Identify newly-wet cells via the mask (spec §5 criterion).
     wet_t = np.asarray(
@@ -123,7 +123,7 @@ def reconstruct_newly_wet(
         )
     except (KeyError, ValueError):
         adv_t1 = None
-    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))
+    ef = np.asarray(registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
     bc_input = np.asarray(next_constituent_value.values)
 
     # Track first-pass reconstructions so a second pass can use them as
@@ -258,7 +258,7 @@ def drain_newly_dry(
             to a wet face neighbour. The caller adds this to
             ``mass_lost_to_dry`` for the constituent.
     """
-    nreal = int(registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     drain_source = np.zeros(nreal)
 
     if WET_MASK not in registry:
@@ -284,12 +284,12 @@ def drain_newly_dry(
         registry.get_at_time(constituent_name, current_time)
     )[:nreal]
     # Phase F (2026-05-21): use the caller's scalar time_step instead
-    # of float(registry.get(CHANGE_IN_TIME)) so the array-dt path
+    # of float(registry.get_variable(CHANGE_IN_TIME).get_data()) so the array-dt path
     # (allowed by the relaxed cadence guard on non-uniform RAS HDFs)
     # does not raise. The current-step dt is what the drain integrates
     # against.
     dt_sec = float(time_step.total_seconds())
-    ef = np.asarray(registry.get(EDGE_FACE_CONNECTIVITY))  # (nedge, 2)
+    ef = np.asarray(registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())  # (nedge, 2)
 
     lost = 0.0
     # Per-cell loop. ``going_dry`` is typically a handful of cells per
@@ -414,7 +414,7 @@ def zero_dry_initial_conditions(
     if wet0.all():
         return {}
 
-    nreal = int(registry.get(NUMBER_OF_REAL_CELLS))
+    nreal = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
     V0_full = np.asarray(registry.get_at_time(VOLUME, current_time))
     dry_mask_real = ~wet0[:nreal]
     if not dry_mask_real.any():
@@ -591,7 +591,7 @@ class TransportEngine:
             current_time,
             time_step,
         )
-        real_cell_count = registry.get(NUMBER_OF_REAL_CELLS)
+        real_cell_count = registry.get_variable(NUMBER_OF_REAL_CELLS).get_data()
         A_extensive = csr_matrix(
             (self.lhs.coefficients, (self.lhs.rows, self.lhs.columns)),
             shape=(real_cell_count, real_cell_count),

@@ -194,7 +194,7 @@ class Constituent:
             self._name,
             DataArrayVariable(
                 xr.full_like(
-                    registry.get(VOLUME),
+                    registry.get_variable(VOLUME).get_data(),
                     np.nan
                 )
                 .rename(self._name)
@@ -262,8 +262,8 @@ class Constituent:
     ):
         """Define boundary conditions for the Constituent."""
         # retrieve necessary variables
-        boundary = registry.get(f"{self._name}_boundary")
-        constituent = registry.get(self._name)
+        boundary = registry.get_variable(f"{self._name}_boundary").get_data()
+        constituent = registry.get_variable(self._name).get_data()
 
         # Phase F (2026-05-21) T2-D: validate BC source before it enters
         # the registry. Catches NaN/negative values that the source
@@ -273,11 +273,11 @@ class Constituent:
             constituent_name=self._name,
             source_label="boundary_conditions",
         )
-        target_time = registry.get(self._name).time
-        boundary_index = registry.get(BOUNDARY_FACE_INDEX)
-        boundary_names = registry.get(BOUNDARY_NAME)
-        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
-        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+        target_time = registry.get_variable(self._name).get_data().time
+        boundary_index = registry.get_variable(BOUNDARY_FACE_INDEX).get_data()
+        boundary_names = registry.get_variable(BOUNDARY_NAME).get_data()
+        edges_face1 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[0]
+        edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
 
         # find cells associated with each cell
         ghost_cells = edges_face2[boundary_index]
@@ -401,7 +401,7 @@ class Constituent:
         )
 
         # Validate Cell_Index range against the mesh
-        nreal = int(registry.get(NUMBER_OF_REAL_CELLS))
+        nreal = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())
         bad = df[(df['Cell_Index'] < 0) | (df['Cell_Index'] >= nreal)]
         if len(bad) > 0:
             raise ValueError(
@@ -410,7 +410,7 @@ class Constituent:
                 f"{sorted(bad['Cell_Index'].unique().tolist())}"
             )
 
-        volume = registry.get(VOLUME)
+        volume = registry.get_variable(VOLUME).get_data()
         model_times = pd.DatetimeIndex(volume.time.values)
         ntime = len(model_times)
         nface = volume.sizes['nface']
@@ -460,11 +460,11 @@ class Constituent:
 
 
     def get_minimum_value(self, registry):
-        constituent = registry.get(self._name)
+        constituent = registry.get_variable(self._name).get_data()
         return constituent.min()
 
     def get_maximum_value(self, registry):
-        constituent = registry.get(self._name)
+        constituent = registry.get_variable(self._name).get_data()
         return constituent.max()
 
 
@@ -473,16 +473,16 @@ class Constituent:
         registry: VariableRegistry,
     ):
         # advection / diffusion coefficients from n timestep are used
-        advection_coefficient = registry.get(FLOW_ACROSS_FACE)[:-1]
-        diffusion_coefficient = registry.get(COEFFICIENT_TO_DIFFUSION_TERM)[:-1]
-        edges_face1 = registry.get(EDGE_FACE_CONNECTIVITY).T[0]
-        edges_face2 = registry.get(EDGE_FACE_CONNECTIVITY).T[1]
+        advection_coefficient = registry.get_variable(FLOW_ACROSS_FACE).get_data()[:-1]
+        diffusion_coefficient = registry.get_variable(COEFFICIENT_TO_DIFFUSION_TERM).get_data()[:-1]
+        edges_face1 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[0]
+        edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
 
         # concentrations from n+1 timestep are used:
         # indexing here shifts the data accordingly 
         negative_condition = advection_coefficient < 0
-        parent_concentration = registry.get(self._name)[1:].sel(nface=edges_face1)
-        neighbor_concentration = registry.get(self._name)[1:].sel(nface=edges_face2)
+        parent_concentration = registry.get_variable(self._name).get_data()[1:].sel(nface=edges_face1)
+        neighbor_concentration = registry.get_variable(self._name).get_data()[1:].sel(nface=edges_face2)
 
         # coerce times so the xarray where function will work
         # think it makes most sense to assign the coordinates of advection coefficient
@@ -494,11 +494,11 @@ class Constituent:
             negative_condition,
             advection_coefficient * neighbor_concentration,
             advection_coefficient * parent_concentration
-        ) * registry.get(CHANGE_IN_TIME)
+        ) * registry.get_variable(CHANGE_IN_TIME).get_data()
 
         diffusion_mass_flux = diffusion_coefficient * \
             (neighbor_concentration - parent_concentration) * \
-            registry.get(CHANGE_IN_TIME)
+            registry.get_variable(CHANGE_IN_TIME).get_data()
 
         total_mass_flux = advection_mass_flux + diffusion_mass_flux
 

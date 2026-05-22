@@ -435,7 +435,7 @@ class ClearwaterRiverine:
 
             if save:
                 for variable_name in self.__output_variables:
-                    variable = self.registry.get(variable_name)
+                    variable = self.registry.get_variable(variable_name).get_data()
                     self.__output_data_store.write(
                         data=variable,
                         parameter_name=variable_name,
@@ -639,7 +639,7 @@ class ClearwaterRiverine:
         that lets the downstream ``get_at_time(VOLUME, ...)`` ``.sel``
         succeed without a tolerance.
         """
-        dt_raw = self.registry.get(CHANGE_IN_TIME)
+        dt_raw = self.registry.get_variable(CHANGE_IN_TIME).get_data()
         try:
             return float(dt_raw)
         except (TypeError, ValueError):
@@ -663,7 +663,7 @@ class ClearwaterRiverine:
         ``calculate_change_in_time`` inserts via
         ``np.insert(dt, len(dt), np.nan)``.
         """
-        dt_raw = self.registry.get(CHANGE_IN_TIME)
+        dt_raw = self.registry.get_variable(CHANGE_IN_TIME).get_data()
         try:
             val = float(dt_raw)
             if np.isnan(val):
@@ -684,7 +684,7 @@ class ClearwaterRiverine:
         fallback; when the array path is active, looks up dt at the
         current time for per-step accuracy.
         """
-        dt_raw = self.registry.get(CHANGE_IN_TIME)
+        dt_raw = self.registry.get_variable(CHANGE_IN_TIME).get_data()
         try:
             dt_seconds = float(dt_raw)
         except (TypeError, ValueError):
@@ -947,7 +947,7 @@ class ClearwaterRiverine:
         """
         if self.__wet_dry_metric is None:
             return
-        volume = self.registry.get(VOLUME)
+        volume = self.registry.get_variable(VOLUME).get_data()
         depth = None
         if self.__wet_dry_metric in ("depth", "both"):
             # Phase F (2026-05-21): auto-register FACE_HYD_DEPTH when
@@ -964,7 +964,7 @@ class ClearwaterRiverine:
                     FACE_HYD_DEPTH,
                     calculate_face_hyd_depth(self.registry),
                 )
-            depth = self.registry.get(FACE_HYD_DEPTH)
+            depth = self.registry.get_variable(FACE_HYD_DEPTH).get_data()
         mask = compute_wet_mask(
             volume,
             depth,
@@ -1017,7 +1017,7 @@ class ClearwaterRiverine:
                 variables=self.__output_variables,
                 chunk_size=self.__chunk_size,
                 spatial_field=NFACE,
-                spatial_field_values=self.registry.get(VOLUME).nface,
+                spatial_field_values=self.registry.get_variable(VOLUME).get_data().nface,
                 init_template=init_template,
             )
         else:
@@ -1030,7 +1030,7 @@ class ClearwaterRiverine:
             # variable all-NaN after finalize because the chunk write
             # could not align stamps with the template. Phase F
             # Santiam-Salem validation pre-G-4 reproduced this.
-            ras_times = pd.DatetimeIndex(self.registry.get(VOLUME).time.values)
+            ras_times = pd.DatetimeIndex(self.registry.get_variable(VOLUME).get_data().time.values)
             self.__output_data_store = ZarrDataStore(
                 store_path=self.__simulation_directory / "model_outputs.zarr",
                 start_date=self._start_datetime,
@@ -1039,7 +1039,7 @@ class ClearwaterRiverine:
                 time_coord=ras_times,
                 variables=self.__output_variables,
                 spatial_field=NFACE,
-                spatial_field_values=self.registry.get(VOLUME).nface,
+                spatial_field_values=self.registry.get_variable(VOLUME).get_data().nface,
                 init_template=init_template,
             )
 
@@ -1192,7 +1192,7 @@ class ClearwaterRiverine:
         for variable_name in self.__output_variables:
             # calculate mass flux, if necessary                
             # TODO: clean up chunk indexing
-            variable = self.registry.get(variable_name).isel(time=slice(0, -1))
+            variable = self.registry.get_variable(variable_name).get_data().isel(time=slice(0, -1))
             self.__output_data_store.write_chunk(
                 data=variable,
                 parameter_name=variable_name,
