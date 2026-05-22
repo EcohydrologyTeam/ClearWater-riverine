@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 This release represents a major scalability refactor that was anticipated in the v0.7.1 notes.
 The core I/O layer, transport engine, and constituent system were overhauled, and significant
 new capabilities were added for chunked/zarr output, visualization, and post-processing.
+A key enabler is the new **[ClearWater-data](https://github.com/EcohydrologyTeam/ClearWater-data)** package — a purpose-built shared data layer (Xarray + Dask + Zarr) created to provide zero-copy data exchange across all ClearWater components, such as [ClearWater-Modules](https://github.com/EcohydrologyTeam/ClearWater-modules). ClearWater-data v0.1.0 was released alongside the spring 2026 refactors of both repositories.
 
 ---
 
@@ -104,7 +105,7 @@ new capabilities were added for chunked/zarr output, visualization, and post-pro
   directory from which Python/Jupyter was launched), fixing coupling bugs when
   `riverine.yml` is called from ClearWater-modules (#133).
 - Data paths moved into the `data/` subtree; configs aligned accordingly (related to
-  ClearWater-data #7).
+  [ClearWater-data #7](https://github.com/EcohydrologyTeam/ClearWater-data/issues/7)).
 - `sumwere_creek_coarse` example dataset added to the repo for self-contained demos.
 - `example_config.yml` updated to match new pathing conventions.
 
@@ -140,6 +141,7 @@ new capabilities were added for chunked/zarr output, visualization, and post-pro
 
 ### 🔧 Dependencies & Tooling
 
+- **[ClearWater-data](https://github.com/EcohydrologyTeam/ClearWater-data) added as a dependency** — new shared data library (Xarray + Dask + Zarr) providing zero-copy data exchange protocols across ClearWater components.
 - **Pixi manifest migrated** from `pixi.toml` to `pyproject.toml` (issues #118, #119).
 - Dependencies audited: core runtime dependencies restored to top-level `pyproject.toml`;
   remaining pixi-managed deps moved from PyPI to `conda-forge` for better cross-platform
