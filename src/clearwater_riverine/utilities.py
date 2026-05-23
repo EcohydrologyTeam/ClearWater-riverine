@@ -1,6 +1,7 @@
 import warnings
 from pathlib import Path
 
+import numba
 import pandas as pd
 import numpy as np
 import xarray as xr
@@ -43,6 +44,161 @@ from clearwater_riverine.variables import (
     WATER_SURFACE_ELEVATION,
     WETTED_SURFACE_AREA,
 )
+
+
+# -----------------------------------------------------------------------------
+# Geometry-derived fallbacks for missing RAS optional temporal outputs.
+#
+# Some RAS plans are configured without "Cell Volume" or "Face Flow" in the
+# unsteady output set (e.g. the Corvallis_Santiam plan, Phase J+1 2026-05-23).
+# Both variables are deterministic from quantities the run DOES output
+# (``Water Surface``, ``Face Velocity``) plus the static lookup tables RAS
+# already writes into the geometry group:
+#
+#   * ``Cells Volume Elevation Info / Values``  -> V(WSE) per cell
+#   * ``Faces Area Elevation Info  / Values``   -> A(WSE) per face
+#
+# These three helpers are direct ports of the kernels in the streaming fork's
+# ``utilities.py`` (``_compute_cell_volumes``, ``_compute_face_areas``). They
+# are private and gated by opt-in flags on the reader -- absence of the RAS
+# output still raises a loud error by default, naming both the RAS option to
+# enable AND the YAML / CLI flag to opt into the fallback. See
+# ``RASHDFDataSource.__init__`` for the gating logic and
+# ``design/missing_temporal_fallback.md`` for the fidelity notes.
+#
+# Numerical fidelity (validated against the Santiam-Salem fixture; results
+# recorded in the design note):
+#   * Cell Volume:  RAS uses the same lookup table internally; agreement is
+#                   sub-0.1% for any cell well inside its tabulated range.
+#   * Face Flow:    post-hoc reconstruction (face_area * edge_velocity); RAS's
+#                   actual face flow embeds the full SWE momentum balance.
+#                   Typically within a few percent for well-resolved steady
+#                   flow; larger error at wet/dry edges. NOT a substitute for
+#                   re-running RAS with the optional outputs enabled.
+# -----------------------------------------------------------------------------
+@numba.njit
+def _linear_interpolate(x0, x1, y0, y1, xi):
+    """Linear interpolation: return y(xi) given the two bracketing points."""
+    m = (y1 - y0) / (x1 - x0)
+    return m * (xi - x0) + y0
+
+
+@numba.njit
+def _compute_cell_volumes(
+    water_surface_elev_arr: np.ndarray,
+    cells_surface_area_arr: np.ndarray,
+    starting_index_arr: np.ndarray,
+    count_arr: np.ndarray,
+    elev_arr: np.ndarray,
+    vol_arr: np.ndarray,
+) -> np.ndarray:
+    """Compute per-cell volumes from WSE via the RAS volume-elevation lookup.
+
+    The above-table extrapolation uses ``V_max + (WSE - Z_max) * surface_area``,
+    which assumes a horizontal water surface across the cell. Mark Jensen
+    (USACE/HEC) confirmed the validity of this method on Jul 29, 2022.
+
+    Cells whose ``starting_index`` is past the end of the values array, or
+    whose ``count`` is zero, are ghost cells: their volume is 0.
+    """
+    ntimes, ncells = water_surface_elev_arr.shape
+    cell_volumes = np.zeros((ntimes, ncells))
+
+    for time in range(ntimes):
+        for cell in range(ncells):
+            water_surface_elev = water_surface_elev_arr[time, cell]
+            surface_area = cells_surface_area_arr[cell]
+            index = starting_index_arr[cell]
+            count = count_arr[cell]
+
+            if index >= len(elev_arr) or count == 0:
+                cell_volumes[time, cell] = 0.0
+                continue
+
+            elev = elev_arr[index:index + count]
+            vol = vol_arr[index:index + count]
+
+            if water_surface_elev > elev[-1]:
+                cell_volumes[time, cell] = (
+                    vol[-1] + (water_surface_elev - elev[-1]) * surface_area
+                )
+            elif water_surface_elev == elev[-1]:
+                cell_volumes[time, cell] = vol[-1]
+            elif water_surface_elev <= elev[0]:
+                cell_volumes[time, cell] = vol[0]
+            else:
+                cell_volumes[time, cell] = 0.0  # default; replaced below
+                npts = len(elev)
+                for i in range(npts - 1, -1, -1):
+                    if elev[i] < water_surface_elev:
+                        cell_volumes[time, cell] = _linear_interpolate(
+                            elev[i], elev[i + 1],
+                            vol[i], vol[i + 1],
+                            water_surface_elev,
+                        )
+                        break
+
+    return cell_volumes
+
+
+@numba.njit
+def _compute_face_areas(
+    water_surface_elev_arr: np.ndarray,
+    faces_lengths_arr: np.ndarray,
+    faces_cell_indexes_arr: np.ndarray,
+    starting_index_arr: np.ndarray,
+    count_arr: np.ndarray,
+    elev_arr: np.ndarray,
+    area_arr: np.ndarray,
+) -> np.ndarray:
+    """Compute per-edge wetted cross-section areas from WSE via the RAS face
+    area-elevation lookup.
+
+    Per the RAS convention, each face is keyed by its ``Cell 0`` (the cell
+    on side 1 of the edge); the face's WSE is taken from that cell. Above-
+    table extrapolation uses ``A_max + (WSE - Z_max) * face_length``. Mark
+    Jensen confirmation noted above.
+    """
+    ntimes, _ = water_surface_elev_arr.shape
+    nfaces = len(faces_lengths_arr)
+    face_areas = np.zeros((ntimes, nfaces))
+
+    for time in range(ntimes):
+        for face in range(nfaces):
+            cell = faces_cell_indexes_arr[face]
+            water_surface_elev = water_surface_elev_arr[time, cell]
+            index = starting_index_arr[face]
+            count = count_arr[face]
+
+            if index >= len(elev_arr) or count == 0:
+                face_areas[time, face] = 0.0
+                continue
+
+            elev = elev_arr[index:index + count]
+            area = area_arr[index:index + count]
+
+            if water_surface_elev > elev[-1]:
+                face_areas[time, face] = (
+                    area[-1]
+                    + (water_surface_elev - elev[-1]) * faces_lengths_arr[face]
+                )
+            elif water_surface_elev == elev[-1]:
+                face_areas[time, face] = area[-1]
+            elif water_surface_elev <= elev[0]:
+                face_areas[time, face] = area[0]
+            else:
+                face_areas[time, face] = 0.0  # default; replaced below
+                npts = len(elev)
+                for i in range(npts - 1, -1, -1):
+                    if elev[i] < water_surface_elev:
+                        face_areas[time, face] = _linear_interpolate(
+                            elev[i], elev[i + 1],
+                            area[i], area[i + 1],
+                            water_surface_elev,
+                        )
+                        break
+
+    return face_areas
 
 
 def calculate_distances_cell_centroids(
