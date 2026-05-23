@@ -31,6 +31,10 @@ from clearwater_riverine.mesh import (
     instantiate_model_mesh,
     load_model_mesh
 )
+from clearwater_riverine.utilities import (
+    _compute_cell_volumes,
+    _compute_face_areas,
+)
 from clearwater_riverine.variables import (
     BOUNDARY_CONDITION_LINE_ID,
     BOUNDARY_FACE_INDEX,
@@ -148,6 +152,37 @@ class RASHDFDataSource:
         self.calculated_variables = kwargs.pop("calculated_variables", {})
         self.__rebuild_mesh: bool = kwargs.pop("rebuild_mesh", False)
         self.__mesh_cache_dir = kwargs.pop("mesh_cache_dir", None)
+        # Phase J+1 (Corvallis 2026-05-23): per-variable opt-ins for the
+        # geometry-derived fallbacks. Default ``False`` is fail-loud: if
+        # the corresponding required temporal dataset is absent in the
+        # HDF, ``__probe_temporal_fallbacks`` raises with the RAS option
+        # to enable AND the YAML / CLI flag to opt in. Set to ``True``
+        # to synthesize the variable from the static lookup table + WSE.
+        # See ``utilities._compute_cell_volumes`` /
+        # ``utilities._compute_face_areas`` for the reconstruction and
+        # ``design/missing_temporal_fallback.md`` for the fidelity
+        # validation against the Santiam-Salem fixture.
+        self._allow_cell_volume_fallback: bool = bool(
+            kwargs.pop("allow_cell_volume_fallback", False)
+        )
+        self._allow_face_flow_fallback: bool = bool(
+            kwargs.pop("allow_face_flow_fallback", False)
+        )
+        # Set by ``__probe_temporal_fallbacks`` once the HDF is open.
+        # When True, the corresponding ``__read_temporal_variables``
+        # branch synthesizes the variable from the cached lookup tables
+        # rather than reading from disk.
+        self._volume_fallback_active: bool = False
+        self._face_flow_fallback_active: bool = False
+        # Lookup-table DataFrames cached by ``__preload_fallback_lookups``.
+        # ``None`` until preload runs; absence is checked at synthesis
+        # time so a stale cache load cannot silently skip the preload.
+        self._volume_elev_info_df: Optional[pd.DataFrame] = None
+        self._volume_elev_values_df: Optional[pd.DataFrame] = None
+        self._face_area_elev_info_df: Optional[pd.DataFrame] = None
+        self._face_area_elev_values_df: Optional[pd.DataFrame] = None
+        self._face_length_df: Optional[pd.DataFrame] = None
+        self._face_cell_indexes_df: Optional[pd.DataFrame] = None
 
         self.mesh = instantiate_model_mesh()
         self.temporal_variables = {
@@ -190,6 +225,27 @@ class RASHDFDataSource:
         ## TODO: add datetime validation somewhere
         # self.__validate_datetime_range()
 
+        # Phase J+1 (2026-05-23) -- pre-flight schema check.
+        # Runs BEFORE any expensive static-build / cache work. Detects:
+        #   (a) RAS 2025 (Mesh Version 2.0) layout, which the current
+        #       reader cannot consume; raises with a pointer to the
+        #       design spec so the user sees the actionable error in
+        #       seconds, not after a 60-second mesh walk.
+        #   (b) Missing required optional temporal outputs (Cell Volume,
+        #       Face Flow). If absent AND the corresponding fallback flag
+        #       is False, raises with the RAS option to enable AND the
+        #       YAML / CLI flag to opt into the fallback. If absent AND
+        #       the fallback flag is True, marks the fallback as active
+        #       (lookup-table DataFrames are loaded later in
+        #       __probe_temporal_fallbacks after self.paths is built).
+        # See design/ras2025_format_analysis.md and
+        # design/missing_temporal_fallback.md for the underlying
+        # robustness rationale: real-world RAS plans frequently ship
+        # without the optional outputs and on the newer schema, and
+        # users deserve immediate, actionable feedback rather than a
+        # deep init-time crash.
+        self.__preflight_schema_check()
+
         # --- static-geometry cache (Phase-C C1b) ---------------------
         # __build_static_from_hdf walks thousands of small geometry
         # datasets plus the per-cell volume-elevation lookup loop; on a
@@ -227,6 +283,7 @@ class RASHDFDataSource:
         # Hit path: rehydrate the static state and skip the HDF walk.
         # Any unexpected payload shape falls through to a clean rebuild,
         # so a cache can never produce incorrect data.
+        rehydrated_from_cache = False
         if (
             not cache_disabled
             and not self.__rebuild_mesh
@@ -236,19 +293,262 @@ class RASHDFDataSource:
             if payload is not None:
                 try:
                     self.__rehydrate_static(payload)
-                    return
+                    rehydrated_from_cache = True
                 except Exception:
                     pass
 
-        # Miss / forced rebuild / stale: full static build from the HDF.
-        self.__build_static_from_hdf()
+        if not rehydrated_from_cache:
+            # Miss / forced rebuild / stale: full static build from the HDF.
+            self.__build_static_from_hdf()
 
-        # Best-effort cache write (a write failure must not break a run).
-        if not cache_disabled and cache_path is not None:
+            # Best-effort cache write (a write failure must not break a run).
+            if not cache_disabled and cache_path is not None:
+                try:
+                    write_cache(cache_path, self.__static_payload())
+                except Exception:
+                    pass
+
+        # Phase J+1 (Corvallis 2026-05-23): probe for the optional
+        # temporal datasets ``Cell Volume`` and ``Face Flow`` and either
+        # set the fallback flags + preload lookup tables, or fail loud
+        # with an actionable error. Runs after both the cache-hit and
+        # cache-miss paths, so the behaviour is the same whether the
+        # static state came from disk or from a fresh HDF walk. The
+        # lookup tables are intentionally NOT cached on disk -- they
+        # are only needed when a fallback is active, they are cheap to
+        # re-read (a few MB), and skipping the cache means changing
+        # the ``allow_*_fallback`` flag between runs does not require
+        # cache invalidation.
+        self.__probe_temporal_fallbacks()
+
+    def __preflight_schema_check(self) -> None:
+        """Pre-flight schema detection. Runs BEFORE expensive static build.
+
+        Fail-fast pass that catches the two classes of HDF that the current
+        reader cannot consume, with clean actionable errors:
+
+        1. **RAS 2025 layout** (Mesh ``Version 2.0``,
+           ``Geometry/2D Flow Areas/Mesh/...``). The current reader
+           targets the v5/6/7+ schema and is not v2025-compatible.
+           Raises ``NotImplementedError`` pointing at the design spec
+           that maps the v2025 layout for the future v2025 reader work.
+        2. **Missing required optional temporal outputs** (``Cell Volume``,
+           ``Face Flow``). Raises ``KeyError`` if absent AND the
+           corresponding ``allow_*_fallback`` flag is False. Real-world
+           RAS plans frequently ship without these in the optional
+           output set; the user must either re-run RAS with them
+           enabled or opt into the geometry-derived fallback. The
+           fail-fast pre-flight surfaces this before a 60-second mesh
+           walk, so the user can re-act in seconds.
+
+        Does NOT preload the lookup-table DataFrames; that happens later
+        in ``__probe_temporal_fallbacks`` after ``self.paths`` is built.
+
+        Robustness motivation (see ``design/ras2025_format_analysis.md``
+        and ``design/missing_temporal_fallback.md``): real-world models
+        span multiple RAS schema versions and output configurations.
+        Treating the case-study workflow as the only configuration
+        produces a reader that crashes deep in init on representative
+        real-world plans. Pre-flight detection shifts those crashes to
+        clean, actionable errors at launch time.
+        """
+        with h5py.File(self.ras_hdf_path, 'r') as infile:
+            # ---- 1. RAS 2025 layout detection ----
+            # The v2025 fingerprint: ``Geometry/2D Flow Areas/Mesh/``
+            # exists as a group AND has a ``Version`` attribute >= 2.0
+            # (per Muncie 2025 inspection 2026-05-23, the value is
+            # literally the string '2.0'). The v5/6/7+ layout has no
+            # such ``Mesh`` group; project names live as siblings under
+            # ``Geometry/2D Flow Areas/<name>``.
+            v2025_path = 'Geometry/2D Flow Areas/Mesh'
+            if v2025_path in infile:
+                mesh_group = infile[v2025_path]
+                version = mesh_group.attrs.get('Version', None)
+                if version is not None:
+                    if isinstance(version, (bytes, np.bytes_)):
+                        version = version.decode('utf-8', errors='replace')
+                    elif isinstance(version, np.ndarray):
+                        version = str(version.flat[0])
+                    raise NotImplementedError(
+                        f"RAS 2025 HDF layout detected (Mesh Version "
+                        f"{version!r}, ``{v2025_path}/`` present). The "
+                        f"current reader targets the RAS v5/6/7+ schema. "
+                        f"The fallback kernels (``utilities._compute_"
+                        f"cell_volumes`` / ``_compute_face_areas``) are "
+                        f"forward-compatible with v2025; the v2025 work "
+                        f"is in the reader's translation layer (deriving "
+                        f"Cells Surface Area + Faces NormalUnitVector "
+                        f"and Length from the consolidated ``Mesh/...`` "
+                        f"tables). Not yet implemented. See "
+                        f"``design/ras2025_format_analysis.md`` and "
+                        f"``design/ras2025_reader_design_spec.md``."
+                    )
+
+            # ---- 2. Required temporal outputs presence check ----
+            # Read project_name directly (the same way
+            # __build_static_from_hdf does later) so we can template
+            # the Cell Volume / Face Flow paths without depending on
+            # the full __set_internal_paths pass.
+            #
+            # If ``Geometry/2D Flow Areas/Attributes`` is absent on a
+            # file that ALSO lacks the v2025 ``Geometry/2D Flow Areas/
+            # Mesh`` marker, the file is most likely a RAS 2025 plan or
+            # results sub-file (separate from the geometry sub-file).
+            # Raise NotImplementedError with the v2025 pointer rather
+            # than a generic schema-error.
             try:
-                write_cache(cache_path, self.__static_payload())
-            except Exception:
-                pass
+                project_name = infile[
+                    'Geometry/2D Flow Areas/Attributes'
+                ][()][0][0].decode('UTF-8')
+            except (KeyError, IndexError, AttributeError) as e:
+                # If we couldn't find Attributes, this is either v2025
+                # (which splits geometry into a separate sub-file -- the
+                # plan/results sub-file we may have been handed lacks
+                # the geometry tree entirely) or an unrecognized
+                # schema. Either way, point at the v2025 design spec
+                # because that's the most likely cause for any modern
+                # RAS plan that fails this check.
+                raise NotImplementedError(
+                    f"This HDF lacks the legacy ``Geometry/2D Flow "
+                    f"Areas/Attributes`` dataset that the v5/6/7+ "
+                    f"reader requires ({e!r}). Likely causes:\n"
+                    f"  (1) RAS 2025 splits the project across multiple "
+                    f"      sub-files (Geometries/, Plans/, Results/, "
+                    f"      Boundary Conditions/, etc.). The current "
+                    f"      reader cannot consume the v2025 layout. "
+                    f"      See ``design/ras2025_format_analysis.md`` "
+                    f"      and ``design/ras2025_reader_design_spec.md``.\n"
+                    f"  (2) Unrecognised HDF variant. Pass a RAS 5.0.7+ "
+                    f"      ``.pXX.hdf`` plan file (combined geometry + "
+                    f"      results)."
+                ) from e
+
+            ts_base = (
+                'Results/Unsteady/Output/Output Blocks/Base Output/'
+                f'Unsteady Time Series/2D Flow Areas/{project_name}'
+            )
+            volume_path = f'{ts_base}/Cell Volume'
+            face_flow_path = f'{ts_base}/Face Flow'
+
+            if volume_path not in infile:
+                if not self._allow_cell_volume_fallback:
+                    raise KeyError(
+                        f"Required temporal variable 'Cell Volume' is "
+                        f"absent from the HEC-RAS HDF (expected at "
+                        f"'{volume_path}'). The RAS plan that produced "
+                        f"this HDF did not write 'Cell Volume' to its "
+                        f"output set.\n\n"
+                        f"Two ways forward:\n"
+                        f"  (1) Re-run the RAS plan with 'Cell Volume' "
+                        f"enabled (RAS Mapper -> Plan -> Output Options).\n"
+                        f"  (2) Opt into the geometry-derived fallback "
+                        f"(V from WSE via the per-cell volume-elevation "
+                        f"lookup): set "
+                        f"``model.allow_cell_volume_fallback: true`` in "
+                        f"the YAML config, or pass "
+                        f"``--allow-cell-volume-fallback`` on the runner "
+                        f"CLI. See ``design/missing_temporal_fallback.md`` "
+                        f"for the fidelity validation."
+                    )
+
+            if face_flow_path not in infile:
+                if not self._allow_face_flow_fallback:
+                    raise KeyError(
+                        f"Required temporal variable 'Face Flow' is "
+                        f"absent from the HEC-RAS HDF (expected at "
+                        f"'{face_flow_path}'). The RAS plan that produced "
+                        f"this HDF did not write 'Face Flow' to its "
+                        f"output set.\n\n"
+                        f"Two ways forward:\n"
+                        f"  (1) Re-run the RAS plan with 'Face Flow' "
+                        f"enabled (RAS Mapper -> Plan -> Output Options).\n"
+                        f"  (2) Opt into the geometry-derived fallback "
+                        f"(face_flow = wetted_face_area * edge_velocity, "
+                        f"signed, with wetted face area from the per-face "
+                        f"area-elevation lookup): set "
+                        f"``model.allow_face_flow_fallback: true`` in the "
+                        f"YAML config, or pass "
+                        f"``--allow-face-flow-fallback`` on the runner "
+                        f"CLI. NOTE: this is a post-hoc reconstruction "
+                        f"and does NOT embed the full SWE momentum "
+                        f"balance RAS used. Agreement with RAS-native "
+                        f"Face Flow is typically a few percent for "
+                        f"well-resolved flow, larger at wet/dry edges. "
+                        f"See ``design/missing_temporal_fallback.md``."
+                    )
+
+    def __probe_temporal_fallbacks(self) -> None:
+        """Preload lookup-table DataFrames + set fallback-active flags.
+
+        Pre-flight (``__preflight_schema_check``) has already raised
+        cleanly if either Cell Volume or Face Flow is absent AND the
+        corresponding opt-in flag is False. By the time this runs, the
+        only remaining cases per variable are:
+
+        1. Dataset present in the HDF -> no-op.
+        2. Dataset absent, opt-in flag True -> set fallback flag,
+           preload the lookup-table DataFrames as instance attrs, emit
+           one-shot warning naming the reconstruction formula.
+
+        Called once per ``__init__`` after the static state is loaded
+        (so ``self.paths`` is populated and the lookup-table paths can
+        be resolved).
+        """
+        with h5py.File(self.ras_hdf_path, 'r') as infile:
+            volume_present = self.paths[VOLUME] in infile
+            face_flow_present = self.paths[FLOW_ACROSS_FACE] in infile
+
+            # --- Cell Volume ---------------------------------------------
+            # Pre-flight has already raised if absent + flag False.
+            # Reaching here with not-present means the flag is True;
+            # load lookup tables and emit the activation warning.
+            if not volume_present:
+                self._volume_fallback_active = True
+                self._volume_elev_info_df = _hdf_to_dataframe(
+                    infile[self.paths['volume elevation info']]
+                )
+                self._volume_elev_values_df = _hdf_to_dataframe(
+                    infile[self.paths['volume_elevation_values']]
+                )
+                warnings.warn(
+                    "Cell Volume fallback ACTIVE. This run is "
+                    "synthesizing per-cell volumes from the RAS "
+                    "volume-elevation lookup table and Water Surface "
+                    "at each timestep. Agreement with RAS-native Cell "
+                    "Volume output is typically sub-0.1% for well-"
+                    "wetted cells; see design/missing_temporal_fallback.md.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+            # --- Face Flow ----------------------------------------------
+            # Same: pre-flight has already handled the absent + flag-False
+            # case. Here we just preload + emit activation warning.
+            if not face_flow_present:
+                self._face_flow_fallback_active = True
+                self._face_area_elev_info_df = _hdf_to_dataframe(
+                    infile[self.paths['area_elevation_info']]
+                )
+                self._face_area_elev_values_df = _hdf_to_dataframe(
+                    infile[self.paths['area_elevation_values']]
+                )
+                self._face_length_df = _hdf_to_dataframe(
+                    infile[self.paths['normalunitvector_length']]
+                )
+                self._face_cell_indexes_df = _hdf_to_dataframe(
+                    infile[self.paths[EDGE_FACE_CONNECTIVITY]]
+                )
+                warnings.warn(
+                    "Face Flow fallback ACTIVE. This run is synthesizing "
+                    "per-edge face flow as signed (face_area * "
+                    "edge_velocity), with face area interpolated from "
+                    "the RAS area-elevation lookup. Agreement with RAS-"
+                    "native Face Flow depends on flow regime; validate "
+                    "results before drawing transport conclusions. See "
+                    "design/missing_temporal_fallback.md.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     def __build_static_from_hdf(self) -> None:
         """Walk the HEC-RAS HDF and populate all static state.
@@ -408,7 +708,43 @@ class RASHDFDataSource:
             # face representations by the case-study subset extractor).
             'boundary_condition_internal_cells': 'Geometry/Boundary Condition Lines/Internal Cells',
             'boundary_condition_attributes': 'Geometry/Boundary Condition Lines/Attributes/',
+            # Phase J+1 (2026-05-23): the BC results group has lived
+            # at three different paths over the lifetime of the HEC-RAS
+            # HDF schema; ClearWater encounters at least two of them in
+            # the wild and must resolve which is present at read time.
+            #
+            # Trajectory (so the next person who hits a new HDF lands
+            # at the right place):
+            #
+            #   Pre-5.0.7 / legacy  ->  top-level
+            #     ``.../Unsteady Time Series/Boundary Conditions``
+            #     (used by the Santiam-Salem synthetic subset and the
+            #     original ClearWater test fixtures)
+            #
+            #   RAS 5.0.7+ / modern  ->  per-2D-area
+            #     ``.../Unsteady Time Series/2D Flow Areas/<name>/Boundary Conditions``
+            #     (used by the Corvallis_Santiam HDF and most real-world
+            #     plans produced by recent HEC-RAS builds)
+            #
+            #   RAS 2025+            ->  reorganised again, see
+            #     ``design/ras2025_format_analysis.md`` §2.7. The current
+            #     reader is fail-loud on v2025 (see
+            #     ``__preflight_schema_check``); a separate v2025 reader
+            #     is the planned path forward.
+            #
+            # The two string entries below are the legacy and modern
+            # paths. The actual path used at read time is resolved by
+            # ``__resolve_boundary_condition_fixes_path`` (see below),
+            # which detects the layout once per file and overwrites
+            # ``boundary_condition_fixes`` so both
+            # ``__define_boundary_hydrodynamics`` and
+            # ``__fix_boundary_data`` see a consistent value.
             'boundary_condition_fixes': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Boundary Conditions',
+            'boundary_condition_fixes_per_area': (
+                'Results/Unsteady/Output/Output Blocks/Base Output/'
+                'Unsteady Time Series/2D Flow Areas/'
+                f'{self.project_name}/Boundary Conditions'
+            ),
             VOLUME_ELEVATION_INFO: f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Info',
             VOLUME_ELEVATION_VALUES: f'Geometry/2D Flow Areas/{self.project_name}/Cells Volume Elevation Values',
             'gate_path': 'Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/SA 2D Area Conn',
@@ -643,24 +979,141 @@ class RASHDFDataSource:
                 (NFACE,),
             )
 
+    def __synthesize_volume_for_chunk(self) -> xr.DataArray:
+        """Compute per-cell volume for the current chunk from WSE.
+
+        The WSE slab is already on ``self.mesh`` (read earlier in
+        ``__read_temporal_variables``). The lookup-table DataFrames were
+        cached at init by ``__probe_temporal_fallbacks``.
+
+        Returns an ``xr.DataArray`` with dims ``(time, nface)`` matching
+        the shape of the read-from-disk variant.
+        """
+        wse_arr = self.mesh[WATER_SURFACE_ELEVATION].values
+        cell_area_arr = self.mesh[FACE_SURFACE_AREA].values
+        info = self._volume_elev_info_df
+        values = self._volume_elev_values_df
+        cell_volumes = _compute_cell_volumes(
+            wse_arr.astype(np.float64, copy=False),
+            cell_area_arr.astype(np.float64, copy=False),
+            info['Starting Index'].values.astype(np.int64),
+            info['Count'].values.astype(np.int64),
+            values['Elevation'].values.astype(np.float64),
+            values['Volume'].values.astype(np.float64),
+        )
+        return xr.DataArray(
+            data=cell_volumes,
+            dims=('time', NFACE),
+            attrs={
+                'Units': 'ft3 or m3 (RAS-native; matches Water Surface units)',
+                'long_name': 'Cell Volume (synthesized from WSE + lookup table)',
+                'fallback_active': 1,
+            },
+        )
+
+    def __synthesize_face_flow_for_chunk(self) -> xr.DataArray:
+        """Compute per-edge face flow for the current chunk.
+
+        Uses ``face_flow = signed(face_area * edge_velocity)`` where the
+        face area comes from the per-face area-elevation lookup and the
+        edge velocity is RAS's direct output. This matches the SIGN
+        convention the canonical LHS expects (positive = leaving
+        ``edges_face1``), unlike the streaming fork's ``abs(...)`` form.
+        """
+        wse_arr = self.mesh[WATER_SURFACE_ELEVATION].values
+        edge_vel_arr = self.mesh[EDGE_VELOCITY].values
+        info = self._face_area_elev_info_df
+        values = self._face_area_elev_values_df
+        lengths = self._face_length_df['Face Length'].values.astype(np.float64)
+        # ``Cell 0`` is the cell on side 1 of each edge -- the WSE source
+        # used by the per-face area-elevation lookup. Matches the
+        # streaming fork's convention.
+        cell0 = self._face_cell_indexes_df['Cell 0'].values.astype(np.int64)
+        face_areas = _compute_face_areas(
+            wse_arr.astype(np.float64, copy=False),
+            lengths,
+            cell0,
+            info['Starting Index'].values.astype(np.int64),
+            info['Count'].values.astype(np.int64),
+            values['Z'].values.astype(np.float64),
+            values['Area'].values.astype(np.float64),
+        )
+        # Signed reconstruction: positive = leaving edges_face1.
+        face_flow = face_areas * edge_vel_arr
+        return xr.DataArray(
+            data=face_flow,
+            dims=('time', NEDGE),
+            attrs={
+                'Units': 'ft3/s or m3/s (RAS-native units)',
+                'long_name': 'Face Flow (synthesized from face_area * edge_velocity)',
+                'fallback_active': 1,
+            },
+        )
+
     def __read_temporal_variables(
         self,
         infile: h5py.File,
     ):
+        # Phase J+1 (Corvallis 2026-05-23): defer VOLUME / FLOW_ACROSS_FACE
+        # to a second pass so WATER_SURFACE_ELEVATION is on the mesh
+        # before any fallback synthesis runs. The fallback kernels need
+        # this chunk's WSE slab, and the lookup tables they consume were
+        # cached at init by ``__probe_temporal_fallbacks``.
+        deferred = (VOLUME, FLOW_ACROSS_FACE)
         for variable in self.temporal_variables.keys():
+            if variable in deferred:
+                continue
             hdf_path = self.paths[variable]
             if hdf_path not in infile:
                 raise KeyError(
                     f"Required temporal variable '{variable}' is absent from "
                     f"the HEC-RAS HDF (expected dataset: '{hdf_path}'). This "
-                    f"RAS run did not output it; fallback computation of this "
-                    f"variable from geometry/volume is not yet ported on this "
-                    f"branch."
+                    f"RAS run did not output it; no geometry-derived fallback "
+                    f"is defined for this variable."
                 )
             self.mesh[variable] = _hdf_to_xarray(
                 infile[hdf_path],
                 ('time', self.temporal_variables[variable]),
                 time_constraint=self.datetime_range_indices,
+            )
+
+        # ---- VOLUME ----------------------------------------------------
+        # Direct read when the dataset is present, synthesis when the
+        # opt-in fallback was activated by ``__probe_temporal_fallbacks``.
+        # The probe already raised on the absent-without-opt-in case,
+        # so an absent dataset here implies the fallback is active.
+        vol_path = self.paths[VOLUME]
+        if vol_path in infile:
+            self.mesh[VOLUME] = _hdf_to_xarray(
+                infile[vol_path],
+                ('time', self.temporal_variables[VOLUME]),
+                time_constraint=self.datetime_range_indices,
+            )
+        elif self._volume_fallback_active:
+            self.mesh[VOLUME] = self.__synthesize_volume_for_chunk()
+        else:
+            # Defensive: probe should have caught this. Re-raise here so
+            # a bypassed probe still fails loud rather than silently
+            # producing a mesh missing VOLUME.
+            raise KeyError(
+                f"Required temporal variable 'volume' is absent and the "
+                f"Cell Volume fallback is not active. Probe step bypassed."
+            )
+
+        # ---- FLOW_ACROSS_FACE -----------------------------------------
+        ff_path = self.paths[FLOW_ACROSS_FACE]
+        if ff_path in infile:
+            self.mesh[FLOW_ACROSS_FACE] = _hdf_to_xarray(
+                infile[ff_path],
+                ('time', self.temporal_variables[FLOW_ACROSS_FACE]),
+                time_constraint=self.datetime_range_indices,
+            )
+        elif self._face_flow_fallback_active:
+            self.mesh[FLOW_ACROSS_FACE] = self.__synthesize_face_flow_for_chunk()
+        else:
+            raise KeyError(
+                f"Required temporal variable 'face_flow' is absent and the "
+                f"Face Flow fallback is not active. Probe step bypassed."
             )
 
         # Phase I-1 (2026-05-21): optional temporal reads for the
@@ -799,11 +1252,61 @@ class RASHDFDataSource:
         test_df.at[0, 'Wetted Surface Area'] = 0
         return test_df
 
+    def __resolve_boundary_condition_fixes_path(
+        self,
+        infile: h5py.File,
+    ) -> str:
+        """Resolve which HDF group holds the per-BC-line results.
+
+        Phase J+1 (Corvallis 2026-05-23): HEC-RAS HDFs store the
+        ``Boundary Conditions`` results group in one of two locations
+        depending on the RAS version that produced the file:
+
+          legacy : Results/Unsteady/Output/Output Blocks/Base Output/
+                   Unsteady Time Series/Boundary Conditions
+          modern : Results/Unsteady/Output/Output Blocks/Base Output/
+                   Unsteady Time Series/2D Flow Areas/<name>/Boundary Conditions
+
+        The legacy layout is used by the Santiam-Salem synthetic
+        subset HDF and the package's older test fixtures. The modern
+        layout is what RAS 5.0.7+ writes natively (e.g., the
+        Corvallis_Santiam.p01.hdf produced by the user's RAS 5.0.7
+        run on the 933,827-cell Willamette mesh).
+
+        We try the legacy path first to preserve byte-identical
+        behaviour on existing case studies, then fall back to the
+        per-2D-area path. The resolved value is cached on
+        ``self.paths['boundary_condition_fixes']`` so the second
+        consumer (``__fix_boundary_data``) reads the same group.
+        """
+        for key in ("boundary_condition_fixes",
+                    "boundary_condition_fixes_per_area"):
+            path = self.paths.get(key)
+            if path is None:
+                continue
+            if path in infile:
+                self.paths['boundary_condition_fixes'] = path
+                return path
+        raise KeyError(
+            "Boundary Conditions results group not found in HDF at "
+            f"either layout:\n"
+            f"  legacy: {self.paths.get('boundary_condition_fixes')!r}\n"
+            f"  modern: {self.paths.get('boundary_condition_fixes_per_area')!r}\n"
+            "Inspect the HDF with h5dump or h5py to find the BC group "
+            "and add the path to __parse_paths."
+        )
+
     def __define_boundary_hydrodynamics(
         self,
         infile: h5py.File
     ):
         """Read necessary information on hydrodynamics."""
+        # Phase J+1 (Corvallis 2026-05-23): resolve the BC results path
+        # before any read of ``boundary_condition_fixes``. Updates
+        # ``self.paths['boundary_condition_fixes']`` in place so the
+        # downstream ``__fix_boundary_data`` consumer sees the same
+        # value without needing its own lookup.
+        self.__resolve_boundary_condition_fixes_path(infile)
         # Pull important boundary information from the HDF file.
         external_faces = pd.DataFrame(
             infile[self.paths['boundary_condition_external_faces']][()]
@@ -899,13 +1402,36 @@ class RASHDFDataSource:
         """
         Fixes a HEC-RAS bug in designating faces associated with
         boundary conditions.
+
+        Phase J+1 (Corvallis 2026-05-23): the fix relies on a legacy
+        per-BC-line ``<name> - Flow per Face`` dataset whose ``Faces``
+        attribute the reader compares against
+        ``Geometry/Boundary Condition Lines/External Faces``. Modern
+        RAS HDFs (5.0.7+, e.g., the Corvallis_Santiam plan-13 output)
+        do not write this dataset — they only emit per-BC-line ``Flow``
+        and ``Stage`` arrays. When the dataset is absent for a given
+        BC line, skip the bug fix for that line (the ``External Faces``
+        data is taken as authoritative). When all BC lines lack the
+        dataset, return the input unchanged so the caller proceeds
+        with the original face mapping.
         """
         df_ls = []
+        n_fix_applied = 0
+        n_fix_skipped = 0
 
         # Identify correct boundary faces
         for boundary in boundary_data.Name.unique():
             fix_path = self.paths['boundary_condition_fixes']
             fpath = f"{fix_path}/{boundary} - Flow per Face"
+            # Phase J+1 (Corvallis 2026-05-23): graceful skip when the
+            # legacy per-face dataset is absent for this BC line.
+            if fpath not in infile:
+                n_fix_skipped += 1
+                fixed_df = boundary_data[
+                    boundary_data.Name == boundary
+                ]
+                df_ls.append(fixed_df)
+                continue
             attrs = _parse_attributes(infile[fpath])
             boundary_faces_fix = attrs['Faces']
             boundary_faces_orig = boundary_data[
@@ -925,6 +1451,19 @@ class RASHDFDataSource:
                 (boundary_data['Face Index'].isin(boundary_faces_fix))
             ]
             df_ls.append(fixed_df)
+            n_fix_applied += 1
+
+        if n_fix_skipped > 0:
+            warnings.warn(
+                f"__fix_boundary_hydrodynamics: legacy '<name> - Flow per "
+                f"Face' dataset absent for {n_fix_skipped} of "
+                f"{n_fix_skipped + n_fix_applied} BC line(s); skipping the "
+                "RAS-bug fix for those lines and treating "
+                "Geometry/Boundary Condition Lines/External Faces as "
+                "authoritative. Normal for RAS 5.0.7+ HDFs that do not "
+                "emit the per-face sub-datasets.",
+                stacklevel=3,
+            )
 
         # remove any potential duplicates
         fixed_df_full = pd.concat(df_ls)
