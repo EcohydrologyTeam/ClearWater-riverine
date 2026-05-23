@@ -288,6 +288,23 @@ class Constituent:
                 time=target_time,
                 method="linear"
             )
+            # Phase H-2 amendment (2026-05-21): forward-fill then
+            # backward-fill any trailing/leading NaN produced by
+            # ``interp`` when the BC CSV does not cover the full
+            # simulation window. Daily-cadence BC CSVs (the common
+            # case for Sep 2008 Santiam-Salem) end at the last
+            # midnight in the window and ``interp(method='linear')``
+            # returns NaN for every hour past that timestamp. The
+            # historically-consistent behaviour (matching what RAS
+            # does for its own BCs, and what the pre-Phase-H code
+            # accidentally allowed through) is to hold the last
+            # known daily value through the trailing hours; ffill
+            # for trailing NaN and bfill for any pathological
+            # leading NaN restores that without re-introducing the
+            # silent-NaN propagation that H-2 was added to catch
+            # (the post-interp validation below is now a guard
+            # against genuinely-bad CSVs, not a calendar artefact).
+            boundary = boundary.ffill("time").bfill("time")
             # Phase H-2 (2026-05-21): re-validate AFTER the
             # interpolation step. Interpolating from a source CSV that
             # ends before ``end_datetime`` (or starts after

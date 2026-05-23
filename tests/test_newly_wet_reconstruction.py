@@ -228,3 +228,78 @@ def test_two_pass_wetting_front():
     # Cell 1 should lift to ~100 (from cell 0). Cell 2 should lift to
     # ~100 on the second pass (cell 1's reconstructed value).
     np.testing.assert_array_equal(out.values, np.array([100.0, 100.0, 100.0]))
+
+
+def test_lifts_newly_wet_cell_from_nan_x_full():
+    """A newly-wet cell whose post-solve ``x_full`` value is NaN (e.g.
+    because an RHS NaN propagated through ``spsolve``) must still be
+    lifted by reconstruct_newly_wet when a wet upstream donor offers a
+    finite candidate. Pre-fix, the ``candidate > x_arr[i]`` guard
+    evaluated to False against NaN and the cell stayed at NaN forever.
+    See design/wet_transition_nan_fix.md (Patch 2)."""
+    registry = _make_registry(
+        nreal=2, nghost=0,
+        edges=[(0, 1)],
+        flow_t=[2.5], flow_t1=[2.5],
+        volume_t=[10.0, 0.0], volume_t1=[10.0, 5.0],
+        wet_t=[True, False],
+        wet_t1=[True, True],
+    )
+    # x_arr[1] = NaN (the regression scenario: spsolve propagated NaN
+    # from somewhere else in the sparse system to this newly-wet cell).
+    x, nxt = _make_x_full_and_next(2, [100.0, np.nan])
+    out = reconstruct_newly_wet(
+        registry, T0, timedelta(seconds=60), "tracer", x, nxt,
+    )
+    # Cell 1 must lift to 100 (the upstream-flow-weighted candidate
+    # from cell 0). Pre-fix this assertion failed because NaN stayed.
+    assert np.isfinite(out.values[1]), "newly-wet NaN cell was not lifted"
+    np.testing.assert_array_equal(out.values, np.array([100.0, 100.0]))
+
+
+def test_nan_lift_does_not_lower_finite_solver_value():
+    """Companion to :func:`test_only_lift_never_lower`: the NaN-aware
+    Patch 2 must still respect "only lift, never lower" when the
+    solver wrote a finite value larger than the gather candidate.
+    Solver wrote 150 at cell 1; gather candidate from upstream is
+    100; expected: 150 preserved (NaN handling does not weaken the
+    finite-value rule)."""
+    registry = _make_registry(
+        nreal=2, nghost=0,
+        edges=[(0, 1)],
+        flow_t=[2.5], flow_t1=[2.5],
+        volume_t=[10.0, 0.0], volume_t1=[10.0, 5.0],
+        wet_t=[True, False],
+        wet_t1=[True, True],
+    )
+    x, nxt = _make_x_full_and_next(2, [100.0, 150.0])
+    out = reconstruct_newly_wet(
+        registry, T0, timedelta(seconds=60), "tracer", x, nxt,
+    )
+    np.testing.assert_array_equal(out.values, np.array([100.0, 150.0]))
+
+
+def test_nan_lift_propagates_through_wetting_front():
+    """Three cells in a line with the wetting-front pattern of
+    :func:`test_two_pass_wetting_front`, but cells 1 and 2 both arrive
+    at the reconstruction with NaN x_full (the regression scenario
+    where an upstream RHS NaN poisoned the solve). The two-pass loop
+    should still propagate the wet upstream donor's value all the way
+    down the front."""
+    registry = _make_registry(
+        nreal=3, nghost=0,
+        edges=[(0, 1), (1, 2)],
+        flow_t=[2.0, 2.0], flow_t1=[2.0, 2.0],
+        volume_t=[10.0, 0.0, 0.0],
+        volume_t1=[10.0, 5.0, 5.0],
+        wet_t=[True, False, False],
+        wet_t1=[True, True, True],
+    )
+    x, nxt = _make_x_full_and_next(3, [100.0, np.nan, np.nan])
+    out = reconstruct_newly_wet(
+        registry, T0, timedelta(seconds=60), "tracer", x, nxt,
+    )
+    assert np.isfinite(out.values).all(), (
+        "wetting-front NaN cells must all lift to finite values"
+    )
+    np.testing.assert_array_equal(out.values, np.array([100.0, 100.0, 100.0]))

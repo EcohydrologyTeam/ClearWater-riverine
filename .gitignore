@@ -167,3 +167,7 @@ examples/dev_sandbox/temp/*
 # Clearwater Riverine static-geometry mesh cache (derived from the
 # source HEC-RAS HDF; never source, must not be committed)
 .cwr_mesh_cache/
+
+# Misc
+.idea/*
+

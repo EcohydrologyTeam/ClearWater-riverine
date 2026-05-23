@@ -569,15 +569,39 @@ class RHS:
 
         self.concentrations = constituent_data.fillna(0.0)[0:self.real_cell_count]
         # solver.values[0:]
-        
+
         # solver = np.zeros(
         #     len(
         #         mesh[name].isel(time=t)
         #     )
-        # ) 
+        # )
         # solver[0:self.nreal_count] = solution
-        # solver[self.input_array[t].nonzero()] = self.input_array[t][self.input_array[t].nonzero()] 
+        # solver[self.input_array[t].nonzero()] = self.input_array[t][self.input_array[t].nonzero()]
         self.values[:] = self.__calculate_rhs(registry, current_time, time_step, constituent_name)
+        # Phase J (2026-05-22): RHS NaN detector. NaN in the RHS
+        # propagates through ``spsolve`` to every cell sparse-coupled
+        # downstream, silently nuking the constituent field. Mirrors
+        # the existing LHS NaN warning (around line 515) for the RHS
+        # path, which previously had no diagnostic at all. The
+        # primary historical source was unspecified outflow ghost
+        # concentrations in ``_ghost_cell`` (now defaulted to 0 by
+        # Patch 1); the warning remains as a tripwire for future
+        # regressions. See design/wet_transition_nan_fix.md.
+        n_nan_rhs = int(np.isnan(self.values).sum())
+        if n_nan_rhs > 0:
+            import warnings as _w
+            _w.warn(
+                f"RHS assembly produced {n_nan_rhs} NaN values for "
+                f"constituent {constituent_name!r} at {current_time}. "
+                "These will propagate through spsolve to every cell "
+                "sparse-coupled to them and corrupt the downstream "
+                "constituent field. Likely causes: unspecified ghost "
+                "BC values for an outflow BC line, or NaN in a "
+                "ghost-cell concentration registered for this "
+                "constituent. See design/wet_transition_nan_fix.md.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def _calculate_load(self, registry: VariableRegistry, current_time: datetime, time_step: timedelta):
         """Calculate the load 
@@ -822,10 +846,25 @@ class RHS:
         external_cell_index = edges_face2[index_list]
 
         concentration_multipliers = np.zeros(registry.get_variable(NFACE).get_data())
-        concentration_multipliers[internal_cell_index] = registry.get_at_time(
-            constituent_name,
-            current_time + time_step
+        # Sanitize ghost-cell concentrations: any ghost whose BC value at
+        # ``current_time + time_step`` is NaN (typically an outflow or
+        # otherwise unspecified BC line that the user's BC CSV did not
+        # enumerate) defaults to 0.0 rather than poisoning the multiplier.
+        # Pre-fix, NaN here propagated through ``diffusion_face * NaN`` into
+        # the RHS for every interior cell adjacent to such a ghost, then
+        # through ``spsolve`` to every cell sparse-coupled downstream,
+        # silently nuking the constituent field across the whole wetted
+        # domain. The 0.0 default matches the historical fork-API behavior
+        # (ghosts were pre-filled to 0 at registration). See
+        # design/wet_transition_nan_fix.md.
+        ghost_concs = np.asarray(
+            registry.get_at_time(
+                constituent_name,
+                current_time + time_step,
+            )
         )[external_cell_index]
+        ghost_concs = np.where(np.isfinite(ghost_concs), ghost_concs, 0.0)
+        concentration_multipliers[internal_cell_index] = ghost_concs
 
         if len(index_list) != 0:
             if advection:

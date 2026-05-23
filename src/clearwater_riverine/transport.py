@@ -189,7 +189,17 @@ def reconstruct_newly_wet(
                 if avg > 0:
                     candidate = avg
                     break
-            if candidate is not None and candidate > x_arr[i]:
+            # "Only lift, never lower" rule -- BUT treat a non-finite
+            # entry as ``-inf`` so any qualifying candidate replaces it.
+            # The pre-fix ``candidate > x_arr[i]`` evaluates to False
+            # when ``x_arr[i]`` is NaN (NaN-comparison semantics), which
+            # left newly-wet cells stuck at NaN even when a finite
+            # upstream-flow-weighted candidate was available. See
+            # design/wet_transition_nan_fix.md.
+            should_lift = candidate is not None and (
+                not np.isfinite(x_arr[i]) or candidate > x_arr[i]
+            )
+            if should_lift:
                 x_arr[i] = candidate
                 reconstructed[i] = True
                 gather_conc[i] = candidate
