@@ -144,6 +144,8 @@ class ClearwaterRiverine:
         zero_dry_initial_conditions: bool = False,
         reconstruct_newly_wet: bool = True,
         continuity_correction: str = "bc_only",
+        allow_cell_volume_fallback: bool = False,
+        allow_face_flow_fallback: bool = False,
         _existing_output_store: bool = False,
     ) -> None:
         """
@@ -269,6 +271,23 @@ class ClearwaterRiverine:
         # accepted tradeoff that produced the streaming locked baseline
         # (Salem T bias -0.30 deg C, RMSE 0.62 deg C).
         self.__reconstruct_newly_wet: bool = bool(reconstruct_newly_wet)
+        # Phase J+1 (Corvallis 2026-05-23): per-variable opt-ins for the
+        # geometry-derived fallbacks. Default ``False`` is fail-loud:
+        # ``RASHDFDataSource.__probe_temporal_fallbacks`` raises with a
+        # remediation-rich error if the corresponding RAS optional
+        # output is absent and the flag is False. Override per-variable
+        # via these kwargs or via ``model.allow_*_fallback`` in the YAML
+        # config (``init_from_config`` passes both through verbatim).
+        # See design/missing_temporal_fallback.md for fidelity validation.
+        if config_filepath:
+            allow_cell_volume_fallback = bool(
+                model.get("allow_cell_volume_fallback", allow_cell_volume_fallback)
+            )
+            allow_face_flow_fallback = bool(
+                model.get("allow_face_flow_fallback", allow_face_flow_fallback)
+            )
+        self.__allow_cell_volume_fallback: bool = bool(allow_cell_volume_fallback)
+        self.__allow_face_flow_fallback: bool = bool(allow_face_flow_fallback)
         self.plotter = None
 
         self.__init_model(constituents)
@@ -719,6 +738,8 @@ class ClearwaterRiverine:
             start_datetime=self._start_datetime,
             end_datetime=self._end_datetime,
             calculated_variables=self.__calculated_variables,
+            allow_cell_volume_fallback=self.__allow_cell_volume_fallback,
+            allow_face_flow_fallback=self.__allow_face_flow_fallback,
         )
 
         # Loud precondition (Phase-C C4 / B4). The chunked design and the
@@ -1129,6 +1150,60 @@ class ClearwaterRiverine:
                 ic_value = self.registry.get_at_time(
                     constituent_name, self.__current_time
                 )
+
+            # Real-world-robustness sanitize (Phase J+1, 2026-05-23).
+            # Real river meshes have large dry-cell fractions (the river
+            # channel occupies a small part of the bounding-box mesh; the
+            # rest is floodplain that stays dry through the simulation).
+            # During the transport solve the LHS row for a cell with
+            # V[t+1] ~ 0 is singular and the sparse solver returns NaN
+            # for that cell's concentration. This is a structural
+            # consequence of the wet/dry regime, not a bug in the IC
+            # source or the solver. At a chunk boundary the
+            # ``ic_value`` we just pulled from the registry is exactly
+            # the end-of-prev-chunk transport state, which carries those
+            # dry-cell NaNs. Without sanitization the per-constituent
+            # NaN validator in ``set_initial_conditions`` (Phase F T2-D)
+            # refuses to load chunk 2+ on any real-world mesh.
+            #
+            # Replace NaN with 0 before reset_initial_conditions. The
+            # input-NaN validator stays in place for genuine input bugs
+            # (e.g. an IC CSV with missing rows). What it should not be
+            # catching is the well-understood "dry cell -> mass/0 = NaN"
+            # mode of the previous chunk's transport output. Hand-crafted
+            # small fixtures (Sumwere Creek, Santiam-Salem subset) did
+            # not exercise this; full-mesh real-world models (Corvallis_
+            # Santiam, et al.) do, on every chunk boundary.
+            if isinstance(ic_value, np.ndarray) and not np.all(np.isfinite(ic_value)):
+                n_nan = int(np.sum(~np.isfinite(ic_value)))
+                n_tot = int(ic_value.size)
+                # One-shot per-constituent informational note. Suppressed
+                # if all-finite (the small-fixture common case).
+                if n_nan > 0:
+                    print(
+                        f"      chunk boundary {self.__current_time}: "
+                        f"sanitizing {n_nan:,}/{n_tot:,} NaN values in "
+                        f"{constituent_name} end-of-prev-chunk state "
+                        f"(dry-cell artifacts from transport solve; "
+                        f"replaced with 0)"
+                    )
+                ic_value = np.where(np.isfinite(ic_value), ic_value, 0.0)
+            elif isinstance(ic_value, xr.DataArray):
+                # Same logic for the DataArray-valued path (Phase-D D2).
+                vals = ic_value.values
+                if not np.all(np.isfinite(vals)):
+                    n_nan = int(np.sum(~np.isfinite(vals)))
+                    n_tot = int(vals.size)
+                    if n_nan > 0:
+                        print(
+                            f"      chunk boundary {self.__current_time}: "
+                            f"sanitizing {n_nan:,}/{n_tot:,} NaN values in "
+                            f"{constituent_name} end-of-prev-chunk state "
+                            f"(dry-cell artifacts from transport solve; "
+                            f"replaced with 0)"
+                        )
+                    ic_value = ic_value.where(np.isfinite(vals), 0.0)
+
             constituent.reset_initial_conditions(self.registry, ic_value)
             constituent.register_constituent(self.registry)
             constituent.set_initial_conditions(self.registry, self.__current_time)
