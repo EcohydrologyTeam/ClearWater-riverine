@@ -63,6 +63,11 @@ platforms = ["linux-64", "osx-arm64", "win-64"]
 # bottleneck as an implicit conda dep; not in the original pixi.lock
 # constrains-only entries.
 bottleneck = ">=1.4.2"
+# Phase J+1 (2026-05-23): tabulate is pandas' optional dep for
+# DataFrame.to_markdown(); used by stage-17-style validation scripts
+# that emit Markdown summary reports. Without it the validation script
+# raises ImportError mid-run.
+tabulate = "*"
 
 # Notebooks & Visualization
 geoviews = "*"
