@@ -1004,6 +1004,15 @@ class RASHDFDataSource:
         return xr.DataArray(
             data=cell_volumes,
             dims=('time', NFACE),
+            # Phase J+1 (2026-05-23): attach the chunk's time coord
+            # explicitly. Without it, the returned DataArray has integer
+            # indices on the time dim and downstream registry lookups
+            # via ``get_at_time(VOLUME, Timestamp(...))`` fail with
+            # ``KeyError: "not all values found in index 'time'"``. The
+            # mesh's existing time coord is what the rest of the
+            # pipeline (WET_MASK refresh, ADVECTION_COEFFICIENT compute,
+            # LHS lookups at current_time+time_step) expects.
+            coords={'time': self.mesh.time.values},
             attrs={
                 'Units': 'ft3 or m3 (RAS-native; matches Water Surface units)',
                 'long_name': 'Cell Volume (synthesized from WSE + lookup table)',
@@ -1043,6 +1052,9 @@ class RASHDFDataSource:
         return xr.DataArray(
             data=face_flow,
             dims=('time', NEDGE),
+            # Phase J+1 (2026-05-23): same time-coord rationale as
+            # __synthesize_volume_for_chunk above.
+            coords={'time': self.mesh.time.values},
             attrs={
                 'Units': 'ft3/s or m3/s (RAS-native units)',
                 'long_name': 'Face Flow (synthesized from face_area * edge_velocity)',
