@@ -668,7 +668,7 @@ class TransportEngine:
 
             # Phase F T2-B + Phase I-3 (2026-05-21): per-constituent
             # LHS diagonal modifications -- decay and point-source
-            # sinks. Each adds a positive value to the diagonal so
+            # flow. Each adds a positive value to the diagonal so
             # the implicit solve preserves mass conservation; the
             # additions are independent and may both fire on the
             # same constituent. Build ``A_solve`` once if either
@@ -676,12 +676,38 @@ class TransportEngine:
             #
             # T2-B decay: ``A[i,i] += k * V[t+1]`` so the steady-
             # advection limit yields ``c[t+1] = c[t] / (1 + k*dt)``.
-            # I-3 sink: ``A[i,i] += |Flow_Rate|`` at cells where
-            # the point-source ``Flow_Rate < 0`` (sink withdrawal
-            # at the cell's own concentration). Default behaviour
-            # (no decay + no sinks) is unchanged.
+            #
+            # Point-source diagonal: ``A[i,i] += |Flow_Rate|`` for
+            # BOTH signs of Flow_Rate (Internal-BC fix 2026-05-24).
+            #   * Sink (Flow_Rate < 0, original I-3): withdrawal at
+            #     the cell's own concentration. RHS contribution is
+            #     zero by ``_calculate_point_sources``; the
+            #     ``|Flow_Rate|`` on the diagonal does ``-Q*C_new``
+            #     so the implicit solve removes mass at rate
+            #     ``Q*C[t+1]``.
+            #   * Source (Flow_Rate > 0, new 2026-05-24): well-mixed-
+            #     reactor "through-flow" treatment. RHS contribution
+            #     is ``Q * C_BC`` (mass added at source concentration);
+            #     ``|Flow_Rate|`` on the diagonal does ``-Q*C_new`` so
+            #     the same volumetric flow ``Q`` "leaves" the cell
+            #     carrying its post-mix concentration. Without the
+            #     diagonal term, an Internal-BC cell whose RAS edge
+            #     flows at ``current_time`` are stale (e.g. cell just
+            #     wet up at t+1) saw the injected mass ``Q*C_BC*dt``
+            #     concentrated into the small ``V_new``, producing
+            #     ``C_new = Q*C_BC*dt / V_new`` that can be orders of
+            #     magnitude above ``C_BC``. With the diagonal term,
+            #     the implicit solve is bounded:
+            #         C_new = (V_old*C_old/dt + Q*C_BC + ...) /
+            #                 (V_new/dt + Q + edge_outflow + ...)
+            #     which at startup (V_old~0, edge_outflow~0) reduces
+            #     to ``C_new = C_BC * Q*dt / (V_new + Q*dt)``,
+            #     bounded by ``C_BC``. For trace-level CSV loadings
+            #     (Phase F T2-A) where ``Q*dt << V_new``, the
+            #     diagonal addition is negligible and behaviour is
+            #     unchanged within round-off.
             decay_rate = float(getattr(constituent, "decay_rate", 0.0) or 0.0)
-            sink_diag = None
+            ps_diag = None
             ps_flows_key = f"{constituent_name}_point_source_flows"
             if ps_flows_key in registry:
                 ps_flows = np.asarray(
@@ -689,18 +715,18 @@ class TransportEngine:
                         ps_flows_key, current_time + time_step
                     )
                 )[: int(real_cell_count)]
-                if np.any(ps_flows < 0):
-                    sink_diag = np.where(ps_flows < 0, -ps_flows, 0.0)
+                if np.any(ps_flows != 0):
+                    ps_diag = np.abs(ps_flows)
 
-            if decay_rate > 0.0 or sink_diag is not None:
+            if decay_rate > 0.0 or ps_diag is not None:
                 diag_add = np.zeros(int(real_cell_count), dtype=np.float64)
                 if decay_rate > 0.0:
                     volume_next = np.asarray(
                         registry.get_at_time(VOLUME, current_time + time_step)
                     )[: int(real_cell_count)]
                     diag_add += decay_rate * volume_next
-                if sink_diag is not None:
-                    diag_add += sink_diag
+                if ps_diag is not None:
+                    diag_add += ps_diag
                 A_solve = A.copy()
                 A_solve.setdiag(A_solve.diagonal() + diag_add)
             else:
