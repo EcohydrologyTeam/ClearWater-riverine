@@ -284,6 +284,30 @@ class Constituent:
 
         # linear interpolation over time
         if isinstance(boundary, xr.DataArray):
+            # Phase J+1 (2026-05-23): align the BC source's time
+            # coordinate dtype to the target's before interp. When the
+            # BC source is read from a CSV via pandas (datetime64[us])
+            # and the target time comes from the chunked mesh's VOLUME
+            # axis (datetime64[ns], pandas default for date_range),
+            # ``boundary.interp(time=target_time, method='linear')``
+            # silently returns ALL NaN despite the source covering the
+            # target window. Both [us] and [ns] sources work fine when
+            # the target matches; the failure mode is the dtype-unit
+            # mismatch specifically. Cast the source's time coord to
+            # the target's dtype before interp so the unit conversion
+            # is explicit and total ordering across the two axes is
+            # what xarray's interp expects. Real-world impact: any run
+            # whose BC CSV is loaded via pandas and whose mesh time
+            # comes via pd.date_range hit this; the chunked-mode reload
+            # path made it fatal because chunk 2+ has no out-of-window
+            # data to fall back on.
+            tgt_dt = (target_time.values.dtype
+                      if hasattr(target_time, "values")
+                      else target_time.dtype)
+            if boundary.time.dtype != tgt_dt:
+                boundary = boundary.assign_coords(
+                    time=boundary.time.values.astype(tgt_dt)
+                )
             boundary = boundary.interp(
                 time=target_time,
                 method="linear"
