@@ -55,6 +55,15 @@ channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "win-64"]
 
 [tool.pixi.dependencies]
+# Runtime numeric extensions
+# Phase J+1 (Corvallis 2026-05-23): bottleneck is xarray's preferred
+# backend for ``ffill`` / ``bfill``. Without it (or numbagg), an
+# ``ImportError`` raises during BC handling in ``Constituent.
+# set_boundary_conditions``. The streaming reference environment had
+# bottleneck as an implicit conda dep; not in the original pixi.lock
+# constrains-only entries.
+bottleneck = ">=1.4.2"
+
 # Notebooks & Visualization
 geoviews = "*"
 hvplot = "*"
