@@ -850,7 +850,30 @@ class ClearwaterRiverine:
             NEDGE,
             FloatVariable(self.__variable_data_sources['hydrodynamic_model'].nedge)
         )
-        
+
+        # Phase J+1 (2026-05-23): bridge the Internal-BC metadata that
+        # ``RASHDFDataSource.__read_internal_bc_metadata`` cached on the
+        # mesh's ``attrs`` over to the two surfaces downstream code
+        # expects.
+        #
+        # The HDF reader sets:
+        #   * ``mesh.attrs['internal_bc_line_types']`` -- dict {name: type}
+        #   * ``mesh.attrs['internal_bc_cells_by_line']`` -- dict {name: idx[]}
+        #   * ``mesh.attrs['internal_bc_cells_all']`` -- flat idx[] of all
+        #     Internal-BC cells
+        # but those dataset-level attrs do not flow through to either:
+        #   (a) the registry's VOLUME DataArray (so
+        #       Constituent.set_boundary_conditions cannot see them via
+        #       ``registry.get_variable(VOLUME).get_data().to_dataset()
+        #       .attrs.get('internal_bc_line_types', {})``), nor
+        #   (b) a registry variable named ``internal_bc_cells`` that
+        #       utilities._apply_continuity_correction expects.
+        # Bridge both here, in a single place, immediately after the
+        # registry has been populated with VOLUME but before any
+        # downstream consumer (constituents, continuity correction,
+        # synthetic point sources) runs.
+        self.__bridge_internal_bc_metadata()
+
         # calculate intermediate variables
         self.__update_calculated_variables()
 
@@ -883,7 +906,20 @@ class ClearwaterRiverine:
                 constituent_name=constituent_name,
                 constituent_config=constituents[constituent_name]
             )
-        
+
+        # Phase J+1 (2026-05-23): generate synthetic point sources for
+        # Internal-type BC lines. Each Internal BC's per-cell, per-time
+        # flow Q(t,c) is multiplied by the user's per-time concentration
+        # C(t) (already interpolated to the model time axis by
+        # Constituent.set_boundary_conditions and stashed in
+        # ``{name}_boundary_interp_internal``). The product is registered
+        # under the existing point-source keys
+        # ``{name}_point_source_flows`` / ``_point_source_concentrations``;
+        # the existing RHS._calculate_point_sources adds these as mass-
+        # only injections (no perturbation of the RAS flow field) at the
+        # right Internal-BC cells. See Step 2 plan in the design memo.
+        self.__emit_internal_bc_point_sources()
+
         # set current timestep
         self.__current_time = self._start_datetime
 
@@ -1029,6 +1065,209 @@ class ClearwaterRiverine:
         )
 
 
+    def __bridge_internal_bc_metadata(self):
+        """Phase J+1: bridge Internal-BC metadata from data-source mesh to
+        the registry surfaces that downstream code expects.
+
+        Called once at init (after VOLUME is registered). Idempotent.
+        No-op when the data source has no Internal BCs (External-only
+        HDFs, older HDFs that don't have the Internal Cells dataset).
+
+        Two bridges:
+
+        1. **VOLUME DataArray attrs** -- copy ``internal_bc_line_types``
+           and ``internal_bc_cells_by_line`` from the data-source mesh's
+           Dataset-level attrs onto the registered VOLUME DataArray's
+           own attrs. ``Constituent.set_boundary_conditions`` (Step 3)
+           reads via ``registry.get_variable(VOLUME).get_data().attrs
+           .get('internal_bc_line_types', {})`` -- DIRECTLY off the
+           DataArray's attrs, NOT via ``.to_dataset().attrs``. xarray's
+           ``DataArray.to_dataset()`` does NOT propagate the DataArray's
+           attrs to the resulting Dataset; they end up as variable-level
+           attrs on the contained variable instead. The reader was
+           updated for this on 2026-05-23 (bug discovered via a fresh-
+           init probe); the writer here (``volume_da.attrs[...] = ...``)
+           is unchanged.
+
+        2. **Registry variable ``internal_bc_cells``** -- a flat array
+           of all Internal-BC cell indices, registered as a
+           DataArrayVariable. ``utilities._apply_continuity_correction``
+           (Step 4) reads via ``'internal_bc_cells' in registry`` +
+           ``registry.get_variable('internal_bc_cells').get_data()``,
+           and uses the cell index set to exclude those cells from the
+           residual-redistribution step.
+        """
+        hydro = self.__variable_data_sources['hydrodynamic_model']
+        if not hasattr(hydro, 'mesh') or not hasattr(hydro.mesh, 'attrs'):
+            return
+
+        line_types = hydro.mesh.attrs.get('internal_bc_line_types', {}) or {}
+        cells_by_line = hydro.mesh.attrs.get('internal_bc_cells_by_line', {}) or {}
+        cells_all = hydro.mesh.attrs.get(
+            'internal_bc_cells_all', np.array([], dtype=np.int64)
+        )
+
+        # Bridge 1: VOLUME DataArray attrs (for Step 3 / constituents.py).
+        # The registry stores the DataArray by reference -- modifying
+        # .attrs in place propagates to subsequent reads.
+        try:
+            volume_da = self.registry.get_variable(VOLUME).get_data()
+            if line_types:
+                volume_da.attrs['internal_bc_line_types'] = line_types
+            if cells_by_line:
+                volume_da.attrs['internal_bc_cells_by_line'] = cells_by_line
+        except Exception as e:
+            warnings.warn(
+                f"Could not attach internal_bc_* attrs to VOLUME DataArray "
+                f"({type(e).__name__}: {e}). Internal-BC set_boundary_conditions "
+                f"branching may not activate.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        # Bridge 2: registry variable for the continuity correction
+        # (Step 4 / utilities.py). Register even when empty so callers
+        # can use a simple ``'internal_bc_cells' in registry`` check.
+        cells_arr = np.asarray(cells_all, dtype=np.int64)
+        if 'internal_bc_cells' in self.registry:
+            self.registry.unregister('internal_bc_cells')
+        self.registry.register(
+            'internal_bc_cells',
+            DataArrayVariable(
+                xr.DataArray(cells_arr, dims=('internal_bc_cell',))
+            ),
+        )
+
+
+    def __emit_internal_bc_point_sources(self):
+        """Phase J+1: synthesize per-cell point sources for Internal BCs.
+
+        For each Internal-type BC line, RAS reports per-cell flow Q(t,c)
+        (m^3/s) in
+        ``Results/Unsteady/.../Boundary Conditions/<line> - Flow``,
+        already cached on the data source by
+        ``__read_internal_bc_metadata``. Multiplying by the user's
+        per-time concentration C(t) (interpolated to the model time
+        axis by ``Constituent.set_boundary_conditions`` and stashed in
+        the registry variable ``{name}_boundary_interp_internal``)
+        gives a per-cell mass injection rate. Register that under the
+        existing point-source keys; the existing
+        ``RHS._calculate_point_sources`` (linalg.py) handles the
+        addition to the transport solve as a *mass-only* injection
+        (flow is RAS's already, not perturbed by CWR).
+
+        No-op when the data source has no Internal BCs OR when no
+        constituent has a BC entry whose ``RAS2D_TS_Name`` matches an
+        Internal-type line.
+
+        Called once at init (after constituents are constructed) and
+        again at every chunk boundary (mirrors the Phase H-1
+        point-source CSV reload pattern in ``__load_new_chunk``).
+        """
+        hydro = self.__variable_data_sources['hydrodynamic_model']
+        cells_by_line = (hydro.mesh.attrs.get('internal_bc_cells_by_line', {})
+                         if hasattr(hydro, 'mesh') else {})
+        flows_by_line = getattr(hydro, '_internal_bc_flows', {})
+        if not cells_by_line or not flows_by_line:
+            return
+
+        # Map current chunk's model time grid -> indices in the HDF's
+        # full time axis (so per-cell Q can be sliced to chunk).
+        all_dts = pd.DatetimeIndex(hydro.all_datetimes.values)
+        volume_da = self.registry.get_variable(VOLUME).get_data()
+        chunk_dts = pd.DatetimeIndex(volume_da.time.values)
+        chunk_idx = all_dts.get_indexer(chunk_dts)
+        if (chunk_idx < 0).any():
+            warnings.warn(
+                f"Could not align current chunk's time grid to the HDF "
+                f"full time axis for Internal-BC point-source synthesis. "
+                f"Missing indices: {int((chunk_idx < 0).sum())}. Skipping.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        n_chunk_time = len(chunk_dts)
+
+        # Total nface for the output point-source arrays' shape.
+        nface = int(self.registry.get_variable(NFACE).get_data())
+
+        for constituent_name in self._constituents.keys():
+            internal_key = f"{constituent_name}_boundary_interp_internal"
+            if internal_key not in self.registry:
+                # Constituent has no Internal-type BC entries.
+                continue
+            interp_internal = self.registry.get_variable(internal_key).get_data()
+            # interp_internal shape: (time, RAS2D_TS_Name)
+
+            # Initialize zero (time, nface) arrays; we'll only set
+            # values at Internal-BC cell indices.
+            flows_arr = np.zeros((n_chunk_time, nface), dtype=np.float64)
+            concs_arr = np.zeros((n_chunk_time, nface), dtype=np.float64)
+
+            for line_name, cells in cells_by_line.items():
+                cells = np.asarray(cells, dtype=np.int64)
+                if cells.size == 0:
+                    continue
+                if line_name not in flows_by_line:
+                    continue
+                full_flows = flows_by_line[line_name]  # (full_time, n_cells)
+                # Slice to current chunk's time indices.
+                chunk_flows = full_flows[chunk_idx, :]  # (n_chunk_time, n_cells)
+                # Get the interpolated concentration for this BC line.
+                # interp_internal is (time, RAS2D_TS_Name); .sel by name.
+                try:
+                    line_C = interp_internal.sel(RAS2D_TS_Name=line_name).values
+                except (KeyError, ValueError):
+                    # Constituent's BC CSV has no entry for this Internal
+                    # BC line. Leave its injection at 0 for this line.
+                    continue
+                # line_C shape: (n_chunk_time,); broadcast to per-cell.
+                # Per-cell flow x scalar-per-time C:
+                flows_arr[:, cells] = chunk_flows
+                concs_arr[:, cells] = line_C[:, np.newaxis]
+
+            # Wrap as DataArrays with the chunk time coord + nface dim.
+            time_coord = volume_da.time.values
+            flows_da = xr.DataArray(
+                flows_arr,
+                dims=('time', NFACE),
+                coords={'time': time_coord},
+                attrs={
+                    'Units': 'm3/s',
+                    'long_name': 'Synthetic point-source flow (Internal-BC injection)',
+                    'internal_bc_synthetic': 1,
+                },
+            )
+            concs_da = xr.DataArray(
+                concs_arr,
+                dims=('time', NFACE),
+                coords={'time': time_coord},
+                attrs={
+                    'Units': 'constituent reporting units',
+                    'long_name': 'Synthetic point-source concentration (Internal-BC injection)',
+                    'internal_bc_synthetic': 1,
+                },
+            )
+
+            flows_key = f"{constituent_name}_point_source_flows"
+            concs_key = f"{constituent_name}_point_source_concentrations"
+            if flows_key in self.registry:
+                self.registry.unregister(flows_key)
+            if concs_key in self.registry:
+                self.registry.unregister(concs_key)
+            self.registry.register(
+                flows_key, DataArrayVariable(flows_da, space_dimension=NFACE),
+            )
+            self.registry.register(
+                concs_key, DataArrayVariable(concs_da, space_dimension=NFACE),
+            )
+            # Tell the constituent it now has point sources, so the
+            # transport engine's RHS reads them (mirrors what
+            # Constituent._load_point_sources sets).
+            constituent = self._constituents[constituent_name]
+            constituent.has_point_sources = True
+
+
     def __update_calculated_variables(self):
         """Initialize calculated variables."""
         # unregister
@@ -1134,6 +1373,31 @@ class ClearwaterRiverine:
                 variable_name,
                 data,
             )
+
+        # Phase J+1 amendment (2026-05-24): re-bridge Internal-BC
+        # metadata onto the freshly registered VOLUME DataArray. The
+        # temporal-variables refresh above unregistered the chunk-1
+        # VOLUME DataArray (which carried ``internal_bc_line_types``
+        # and ``internal_bc_cells_by_line`` on its ``.attrs`` via
+        # ``__bridge_internal_bc_metadata`` at __init__) and registered
+        # a FRESH DataArray from ``hydro.mesh[VOLUME]``. The fresh
+        # DataArray's ``.attrs`` does not carry the line-types /
+        # cells-by-line dicts (those live on the Dataset-level
+        # ``hydro.mesh.attrs``, which survive chunk advance, but NOT
+        # on the per-variable DataArray's attrs). Without this
+        # re-bridge, ``Constituent.set_boundary_conditions`` below
+        # reads ``volume_da.attrs.get('internal_bc_line_types', {})``,
+        # finds it empty, classifies every BC line as External, and
+        # NEVER re-registers ``{name}_boundary_interp_internal``;
+        # ``__emit_internal_bc_point_sources`` at the end of this
+        # method then sees no constituent has the interim variable
+        # and returns without refreshing the per-chunk synthetic
+        # point sources, leaving ``{name}_point_source_flows`` bound
+        # to chunk 1's time axis and causing a ``KeyError`` at the
+        # first transport step of chunk 2. (The
+        # ``internal_bc_cells`` registry variable is unaffected
+        # because it persists across chunks under its own name.)
+        self.__bridge_internal_bc_metadata()
 
         self.__update_calculated_variables()
         # Phase-D Unit A: refresh WET_MASK for the new chunk's time window.
@@ -1313,6 +1577,16 @@ class ClearwaterRiverine:
             constituent.set_initial_conditions(self.registry, self.__current_time)
             constituent.set_boundary_conditions(self.registry)
         self.__resuming_ics = None
+
+        # Phase J+1 (2026-05-23): refresh Internal-BC synthetic point
+        # sources for the new chunk's time window. set_boundary_conditions
+        # has just re-registered the {name}_boundary_interp_internal
+        # interim variable on the chunk-2 time grid; we now re-slice the
+        # data source's per-cell Q to the chunk-2 indices and rebuild
+        # {name}_point_source_flows / _concentrations so the existing
+        # RHS._calculate_point_sources reads the right chunk's values.
+        # Mirrors the Phase H-1 point-source CSV reload pattern above.
+        self.__emit_internal_bc_point_sources()
 
     
     def __transport_chunked(self):

@@ -320,6 +320,14 @@ class RASHDFDataSource:
         # the ``allow_*_fallback`` flag between runs does not require
         # cache invalidation.
         self.__probe_temporal_fallbacks()
+        # Internal-BC support Step 1 (2026-05-23): populate
+        # ``self._internal_bc_line_types``, ``self._internal_bc_cell_indices``,
+        # and ``self._internal_bc_flows``, and mirror the cell-index data
+        # onto ``self.mesh.attrs`` so Model (Step 2) can register the
+        # flat Internal-BC cell-index array on the registry and the
+        # constituent solver (Step 3) and continuity correction
+        # (Step 4) can consume it. No-op on HDFs without Internal BCs.
+        self.__read_internal_bc_metadata()
 
     def __preflight_schema_check(self) -> None:
         """Pre-flight schema detection. Runs BEFORE expensive static build.
@@ -549,6 +557,157 @@ class RASHDFDataSource:
                     UserWarning,
                     stacklevel=2,
                 )
+
+    def __read_internal_bc_metadata(self) -> None:
+        """Populate Internal-BC metadata on the instance + mesh attrs.
+
+        Internal-BC support Step 1 (2026-05-23). HEC-RAS classifies each
+        BC line as either ``External`` (drawn on the 2D perimeter; mass
+        enters via external faces) or ``Internal`` (drawn through the
+        mesh interior; mass enters via a per-cell flow distribution).
+        The legacy reader only supports External lines; this method
+        reads the supplementary tables that Step 2/3/4 need to also
+        route Internal-line mass into the transport solve.
+
+        Three pieces of state are produced:
+
+        1. ``self._internal_bc_line_types`` -- ``{name: type_string}``
+           for every BC line in the HDF, e.g.
+           ``{'Upstream': 'Internal', 'Downstream': 'External'}``.
+        2. ``self._internal_bc_cell_indices`` -- ``{name: int64 array}``
+           of the cell indices the BC line maps to, in HDF order. Only
+           populated for Internal-type lines.
+        3. ``self._internal_bc_flows`` -- ``{name: float array}`` of
+           shape ``(n_full_timesteps, n_cells_for_this_line)``. Only
+           populated for Internal-type lines AND only when the per-cell
+           ``<name> - Flow`` dataset exists in the modern (per-2D-area)
+           BC results group. Missing flow datasets emit a warning and
+           leave the entry absent; the rest of init still succeeds.
+
+        Also writes the line-types dict, the per-line cell-index dict,
+        and the concatenated flat array of ALL Internal-BC cell indices
+        to ``self.mesh.attrs`` so Model (Step 2) can register the flat
+        array on the registry without needing a back-reference here.
+
+        Defensive: if the BC Attributes table is missing entirely,
+        every output is set to its empty form and the method returns
+        without raising. This is the common case (HDFs without any BC
+        lines, or where the Attributes table was dropped by a subset
+        extractor).
+        """
+        attrs_path = 'Geometry/Boundary Condition Lines/Attributes'
+        internal_cells_path = 'Geometry/Boundary Condition Lines/Internal Cells'
+
+        # Initialise to empty so every exit path leaves the instance
+        # in a consistent state, even if we return early below.
+        self._internal_bc_line_types: Dict[str, str] = {}
+        self._internal_bc_cell_indices: Dict[str, np.ndarray] = {}
+        self._internal_bc_flows: Dict[str, np.ndarray] = {}
+
+        with h5py.File(self.ras_hdf_path, 'r') as infile:
+            if attrs_path not in infile:
+                # No BC Attributes table at all -- nothing to do.
+                self.mesh.attrs['internal_bc_line_types'] = {}
+                self.mesh.attrs['internal_bc_cells_by_line'] = {}
+                self.mesh.attrs['internal_bc_cells_all'] = np.array(
+                    [], dtype=np.int64
+                )
+                return
+
+            # ---- 1. Line types -----------------------------------------
+            # Attributes is a structured array with fields
+            # (Name S32, SA-2D S16, Type S8, Length f4). Decode the
+            # bytes; build {name: type_string} for every row.
+            attrs_data = infile[attrs_path][()]
+            for row in attrs_data:
+                name = row['Name']
+                type_ = row['Type']
+                if isinstance(name, (bytes, np.bytes_)):
+                    name = name.decode('utf-8', errors='replace').strip()
+                if isinstance(type_, (bytes, np.bytes_)):
+                    type_ = type_.decode('utf-8', errors='replace').strip()
+                self._internal_bc_line_types[str(name)] = str(type_)
+
+            # ---- 2. Per-Internal-line cell indices ---------------------
+            # Internal Cells is a structured array with fields
+            # (BC Line ID i4, Cell Index i4, Station Start f4,
+            # Station End f4). Group rows by BC Line ID; the row index
+            # in the Attributes table is the BC Line ID.
+            internal_line_names = [
+                name for name, t in self._internal_bc_line_types.items()
+                if t.lower() == 'internal'
+            ]
+            if internal_line_names and internal_cells_path in infile:
+                ic_data = infile[internal_cells_path][()]
+                ic_line_ids = ic_data['BC Line ID']
+                ic_cell_idx = ic_data['Cell Index']
+                # Map BC Line ID -> Name via Attributes row order.
+                attr_names_in_order = [
+                    str(
+                        n.decode('utf-8', errors='replace').strip()
+                        if isinstance(n, (bytes, np.bytes_)) else n
+                    )
+                    for n in attrs_data['Name']
+                ]
+                for bc_id, name in enumerate(attr_names_in_order):
+                    if name not in internal_line_names:
+                        continue
+                    mask = ic_line_ids == bc_id
+                    # Preserve file order (already in mask order).
+                    self._internal_bc_cell_indices[name] = (
+                        ic_cell_idx[mask].astype(np.int64)
+                    )
+
+            # ---- 3. Per-Internal-line per-cell flow time series --------
+            # Modern (RAS 5.0.7+) BC results live under the per-2D-area
+            # group. The path depends on project_name, which is set up
+            # by __build_static_from_hdf and is available here because
+            # __init__ calls this method AFTER the static build (cache
+            # hit or rebuild).
+            ts_base = (
+                'Results/Unsteady/Output/Output Blocks/Base Output/'
+                f'Unsteady Time Series/2D Flow Areas/{self.project_name}/'
+                'Boundary Conditions'
+            )
+            for name in self._internal_bc_cell_indices.keys():
+                flow_path = f"{ts_base}/{name} - Flow"
+                if flow_path not in infile:
+                    warnings.warn(
+                        f"Internal-BC line {name!r} is declared "
+                        f"Internal in the BC Attributes table but the "
+                        f"per-cell flow dataset is absent at "
+                        f"{flow_path!r}. Most likely the HDF uses the "
+                        "legacy (top-level) BC results layout or the "
+                        "RAS plan did not write per-cell flow. Skipping "
+                        "this line; it will be visible in "
+                        "``self._internal_bc_cell_indices`` but NOT in "
+                        "``self._internal_bc_flows`` so Step 2/3 can "
+                        "raise a clean error if a constituent attempts "
+                        "to inject mass through it.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                self._internal_bc_flows[name] = infile[flow_path][()]
+
+        # ---- 4. Mirror onto mesh.attrs for Model (Step 2) to pick up ---
+        # Storing on mesh.attrs (rather than direct registry registration)
+        # keeps RASHDFDataSource decoupled from the registry: Model is
+        # the layer that knows about the registry and wires Step 2 there.
+        self.mesh.attrs['internal_bc_line_types'] = (
+            self._internal_bc_line_types
+        )
+        self.mesh.attrs['internal_bc_cells_by_line'] = (
+            self._internal_bc_cell_indices
+        )
+        if self._internal_bc_cell_indices:
+            all_internal_cells = np.concatenate(
+                list(self._internal_bc_cell_indices.values())
+            ).astype(np.int64)
+        else:
+            all_internal_cells = np.array([], dtype=np.int64)
+        self.mesh.attrs['internal_bc_cells_all'] = all_internal_cells
+
 
     def __build_static_from_hdf(self) -> None:
         """Walk the HEC-RAS HDF and populate all static state.

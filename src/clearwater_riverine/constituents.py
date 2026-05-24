@@ -345,12 +345,139 @@ class Constituent:
                 source_label="boundary_conditions (post-interpolation)",
             )
 
+            # Internal-BC support Step 3 (2026-05-23): split the BC
+            # lines into External vs Internal subsets and process them
+            # along separate paths. External-type BC lines sit on the
+            # 2D perimeter and mass enters via ghost cells -- the
+            # existing reshape (boundary_name -> ghost_cell -> nface)
+            # is correct for those. Internal-type BC lines are drawn
+            # cross-channel INSIDE the mesh and have no ghost cells;
+            # mass injection happens at interior cells via the
+            # synthetic point-source path wired by Step 2 in model.py.
+            # Passing an Internal line through the ghost-cell reshape
+            # silently injects nothing (the line has no entry in
+            # ``ghost_cells``), so we MUST exclude it here.
+            #
+            # The line-types dict is published by Step 1 onto
+            # ``mesh.attrs['internal_bc_line_types']`` (in
+            # ``io/hdf.py::__read_internal_bc_metadata``). We read it
+            # via ``registry.get_variable(VOLUME).get_data()
+            # .to_dataset().attrs`` -- the mesh attrs flow through
+            # this path because Step 2 stashes them on the VOLUME
+            # DataArray's containing Dataset. When the dict is missing
+            # or empty (older HDFs, External-only HDFs, or runs where
+            # Step 2 hasn't wired the attrs through yet), every BC
+            # line is treated as External and the original code path
+            # is taken bit-identically. Unknown line names default to
+            # External as well -- the conservative behaviour.
+            # Bugfix (2026-05-23): xarray's DataArray.to_dataset() does
+            # NOT propagate the DataArray's attrs to the resulting
+            # Dataset's .attrs -- they become variable-level attrs on the
+            # contained variable instead. Read directly from the
+            # DataArray's .attrs, which Step 2's
+            # ClearwaterRiverine.__bridge_internal_bc_metadata writes
+            # the 'internal_bc_line_types' / 'internal_bc_cells_by_line'
+            # dicts to. Verified by a fresh-init probe of the registry
+            # state: VOLUME.attrs has the keys; .to_dataset().attrs is
+            # empty.
+            try:
+                mesh_attrs = (
+                    registry.get_variable(VOLUME)
+                    .get_data()
+                    .attrs
+                )
+            except Exception:
+                mesh_attrs = {}
+            line_types = mesh_attrs.get('internal_bc_line_types', {}) or {}
+
+            # Bugfix (2026-05-23): partition BC line names using the BC
+            # SOURCE's RAS2D_TS_Name coord, NOT BOUNDARY_NAME. The
+            # ``BOUNDARY_NAME`` registry variable contains only the
+            # names of EXTERNAL faces (one entry per external mesh
+            # face -- e.g., 17 entries all = 'Downstream' for the
+            # Corvallis HDF). Internal-type BC lines have no external
+            # faces and therefore do NOT appear in BOUNDARY_NAME at
+            # all; partitioning over BOUNDARY_NAME would silently miss
+            # every Internal line. The BC source DataArray's
+            # ``RAS2D_TS_Name`` coord, by contrast, contains every BC
+            # line name that the user's CSV provided (both Internal
+            # and External). De-dupe (boundary_names from the registry
+            # may carry duplicates from face-replication; the source
+            # coord carries each name once).
+            bc_name_list = list(dict.fromkeys(
+                str(n) for n in np.asarray(
+                    boundary.RAS2D_TS_Name.values
+                ).tolist()
+            ))
+            internal_names_list = [
+                n for n in bc_name_list
+                if str(line_types.get(n, 'External')).lower() == 'internal'
+            ]
+            external_names_list = [
+                n for n in bc_name_list
+                if str(line_types.get(n, 'External')).lower() != 'internal'
+            ]
+
+            # Stash the interpolated Internal-line subset on the
+            # registry so Step 2 (the synthetic point-source path in
+            # model.py) can pick up the per-timestep concentration
+            # values keyed by BC line name. The dimension is
+            # ``RAS2D_TS_Name``; consumers map that to per-cell flows
+            # using ``mesh.attrs['internal_bc_cells_by_line']`` and
+            # ``mesh.attrs['internal_bc_flows']`` (also published by
+            # Step 1). We unregister-then-register so repeated
+            # ``set_boundary_conditions`` calls (e.g. chunked mode)
+            # refresh the value cleanly.
+            internal_key = f"{self._name}_boundary_interp_internal"
+            if internal_key in registry:
+                registry.unregister(internal_key)
+            if len(internal_names_list) > 0:
+                internal_lines_subset = boundary.sel(
+                    RAS2D_TS_Name=internal_names_list
+                )
+                registry.register(
+                    internal_key,
+                    DataArrayVariable(
+                        internal_lines_subset,
+                        space_dimension="RAS2D_TS_Name",
+                    ),
+                )
+
+            # If every BC line is Internal there is no ghost-cell
+            # reshape to perform; the constituent registry value for
+            # this constituent stays at its initial-condition state on
+            # exit (Step 2 writes the Internal-line mass via the
+            # synthetic point-source path, not by overwriting ghost
+            # cells here).
+            if len(external_names_list) == 0:
+                return
+
             # reshape from (time, boundary_name) to (time, boundary_index)
-            # then map boundary indices to their associated ghost cells
+            # then map boundary indices to their associated ghost cells.
+            # Filter both ``boundary_names`` and ``ghost_cells`` by the
+            # External-subset mask so the reshape only processes lines
+            # that actually have a ghost-cell entry. When every line is
+            # External (``external_mask`` all-True), this is byte-
+            # equivalent to the historical reshape -- both arrays
+            # collapse to their unfiltered selves and the downstream
+            # ``.sel(RAS2D_TS_Name=...)`` + ``.groupby("nface").first()``
+            # behave exactly as before.
+            names_array = np.asarray(boundary_names)
+            external_set = set(external_names_list)
+            external_mask = np.array(
+                [str(n) in external_set for n in names_array],
+                dtype=bool,
+            )
+            external_boundary_names = boundary_names.isel(
+                **{boundary_names.dims[0]: external_mask}
+            )
+            external_ghost_cells = ghost_cells.isel(
+                **{ghost_cells.dims[0]: external_mask}
+            )
             boundary = boundary.sel(
-                RAS2D_TS_Name=boundary_names
+                RAS2D_TS_Name=external_boundary_names
             ).assign_coords(
-                nface = ghost_cells
+                nface=external_ghost_cells
             ).groupby(
                 "nface"
             ).first()
@@ -358,14 +485,14 @@ class Constituent:
             # reshape to the shape of our constituent array
             boundary_reindexed = boundary.reindex(nface=constituent.nface)
 
-            # place the boundary conditions into the constituent array      
+            # place the boundary conditions into the constituent array
             registry.set(
                 self._name,
                 xr.where(
                     boundary_reindexed.notnull(),
                     boundary_reindexed,
                     constituent
-                )   
+                )
             )
 
         # TODO: does there need to be a custom set method to set at custom locations?

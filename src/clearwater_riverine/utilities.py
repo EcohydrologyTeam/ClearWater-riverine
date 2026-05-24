@@ -803,6 +803,44 @@ def _apply_continuity_correction(
     nreal_count = int(registry.get_variable(NUMBER_OF_REAL_CELLS).get_data())  # number of real cells
     nreal_attr = nreal_count - 1  # maximum real-cell index (streaming convention)
 
+    # Internal-BC-support Step 4 (2026-05-23): per-cell residuals at
+    # Internal-BC cells must be PRESERVED, not redistributed. RAS injects
+    # Q_bc(t,c) at the cell (not through a face), so the discrete
+    # residual at such a cell equals Q_bc(t,c) * dt by construction --
+    # i.e. it is real BC inflow, not a continuity defect. Step 2 of this
+    # feature consumes Q_bc(t,c) as a synthetic point-source mass
+    # injection (mass_in = Q_bc(t,c) * C_user(t)); if this continuity
+    # correction were allowed to smear r_c across cell c's incident
+    # edges, the redistributed "flow" would carry mass at the wet-
+    # neighbor concentration and effectively cancel Step 2's point
+    # source.
+    #
+    # Dependency: the Internal-BC cell-index set is published by Step 1
+    # on the registry under the variable name ``'internal_bc_cells'``.
+    # When the variable is absent (External-only BCs, or the legacy
+    # path), or present-but-empty, the exclusion below is a no-op and
+    # this function behaves exactly as before.
+    internal_cells = np.array([], dtype=np.int64)
+    if 'internal_bc_cells' in registry:
+        raw = np.asarray(
+            registry.get_variable('internal_bc_cells').get_data()
+        ).ravel().astype(np.int64, copy=False)
+        if raw.size > 0:
+            in_range = (raw >= 0) & (raw < nreal_count)
+            if not np.all(in_range):
+                bad = raw[~in_range]
+                warnings.warn(
+                    "continuity_correction: dropping "
+                    f"{int(bad.size)} 'internal_bc_cells' index/indices "
+                    f"outside [0, nreal_count={nreal_count}) "
+                    f"(first few: {bad[:5].tolist()}). These indices "
+                    "are ignored; the remaining valid Internal-BC cell "
+                    "indices are still excluded from residual "
+                    "redistribution.",
+                    stacklevel=3,
+                )
+            internal_cells = raw[in_range]
+
     V = np.asarray(registry.get_variable(VOLUME).get_data())  # (ntime, nface)
     ef = np.asarray(registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data())
     f1 = ef[:, 0].astype(np.int64)
@@ -828,6 +866,7 @@ def _apply_continuity_correction(
             n_steps=n_steps,
             eps=eps,
             eps_warn=eps_warn,
+            internal_cells=internal_cells,
         )
     else:  # mode == "all_edges"
         _apply_all_edges_correction(
@@ -841,6 +880,7 @@ def _apply_continuity_correction(
             eps_converged=eps_converged,
             max_iter=max_iter,
             omega=omega,
+            internal_cells=internal_cells,
         )
 
 
@@ -857,6 +897,7 @@ def _apply_bc_only_correction(
     n_steps: int,
     eps: float,
     eps_warn: float,
+    internal_cells: np.ndarray = None,
 ) -> None:
     """BC-edge-only continuity correction (Option B-lite).
 
@@ -864,7 +905,17 @@ def _apply_bc_only_correction(
     the cell's BC edges, weighted by ``|face_flow|``. Interior cells
     (no BC edge) are left alone; their cumulative ``sum |r_i|`` is
     reported via ``warnings.warn`` if it exceeds ``eps_warn``.
+
+    ``internal_cells`` (optional, Step 4 of Internal-BC-support): real-
+    cell indices whose residuals must be PRESERVED rather than
+    redistributed. See ``_apply_continuity_correction`` for rationale.
+    Defensive even in this code path: an Internal-BC cell typically
+    has no BC edge, so the per-cell loop below would already skip it;
+    zeroing ``r`` at those indices also keeps the interior-residual
+    L1 accounting from double-counting them as "uncovered."
     """
+    if internal_cells is None:
+        internal_cells = np.array([], dtype=np.int64)
     bc_edge_mask = (f2 > nreal_attr) | (f1 > nreal_attr)
     if not bc_edge_mask.any():
         return
@@ -912,6 +963,14 @@ def _apply_bc_only_correction(
 
         dV = V[t + 1, :nreal_count] - V[t, :nreal_count]
         r = dV - dt[t] * Q[:nreal_count]
+        # Step 4: zero residual at Internal-BC cells before any
+        # redistribution accounting. r_c == Q_bc(t,c) * dt by
+        # construction at these cells; Step 2's point source explains
+        # it, so it must not be smeared onto adjacent edges (which
+        # would otherwise convey BC inflow at wet-neighbor
+        # concentration).
+        if internal_cells.size > 0:
+            r[internal_cells] = 0.0
         abs_r = np.abs(r)
 
         interior_mask = ~has_bc_edge[:nreal_count]
@@ -966,6 +1025,7 @@ def _apply_all_edges_correction(
     eps_converged: float,
     max_iter: int,
     omega: float,
+    internal_cells: np.ndarray = None,
 ) -> None:
     """Full Option-B continuity correction across all edges.
 
@@ -981,7 +1041,25 @@ def _apply_all_edges_correction(
     (nreal_count x n_edge) and ``b = r / dt``. Minimum-norm solution:
     ``c = D^T phi``, ``L phi = b``, ``L = D D^T`` (the cell-graph
     Laplacian).
+
+    ``internal_cells`` (optional, Step 4 of Internal-BC-support): real-
+    cell indices whose per-cell residuals must be PRESERVED rather than
+    redistributed (RAS injects Q_bc at the cell, not through a face;
+    Step 2's point source explains the residual). The residual vector
+    ``b`` is zeroed at these indices before each solve, so the
+    minimum-norm correction satisfies (*) at all OTHER real cells while
+    leaving the Internal-BC cells' apparent residual untouched.
+
+    Implementation note (Option alpha): Option-beta would drop the
+    corresponding rows/columns from ``D`` and refactor a smaller
+    Laplacian. That is algebraically equivalent for the minimum-norm
+    solution at the remaining cells (the zeroed RHS rows contribute
+    nothing), but more invasive than zeroing ``b`` in-place. Option
+    alpha was chosen for code simplicity; the factorization of ``L``
+    is unchanged.
     """
+    if internal_cells is None:
+        internal_cells = np.array([], dtype=np.int64)
     from scipy.sparse import csr_matrix, csc_matrix
     from scipy.sparse.linalg import splu
 
@@ -1072,6 +1150,14 @@ def _apply_all_edges_correction(
             np.add.at(Q, f1, -ff_t)
             np.add.at(Q, f2, +ff_t)
             r = dV - dt[t] * Q[:nreal_count]
+            # Step 4: zero residual at Internal-BC cells before the
+            # convergence check AND before the solve. These cells'
+            # residuals are real BC inflow (Q_bc(t,c) * dt), not a
+            # continuity defect; Step 2 consumes them as point-source
+            # mass injection, so the correction must not redistribute
+            # them across incident edges.
+            if internal_cells.size > 0:
+                r[internal_cells] = 0.0
             max_abs_r = float(np.max(np.abs(r))) if r.size else 0.0
             if max_abs_r <= eps_converged:
                 converged = True
