@@ -1662,10 +1662,20 @@ class ClearwaterRiverine:
         if not is_last:
             self.__last_finalized_boundary = self.__current_time
 
+        # Interior chunks drop the shared trailing slot; the next chunk
+        # owns it as its first slot, so the cross-chunk write covers each
+        # stamp exactly once. For the final chunk (is_last=True) there is
+        # no next chunk, so keep the trailing slot -- otherwise the last
+        # computed transport result is silently dropped from the zarr.
+        end_slice = None if is_last else -1
         for variable_name in self.__output_variables:
-            # calculate mass flux, if necessary                
+            # calculate mass flux, if necessary
             # TODO: clean up chunk indexing
-            variable = self.registry.get_variable(variable_name).get_data().isel(time=slice(0, -1))
+            variable = (
+                self.registry.get_variable(variable_name)
+                .get_data()
+                .isel(time=slice(0, end_slice))
+            )
             self.__output_data_store.write_chunk(
                 data=variable,
                 parameter_name=variable_name,
