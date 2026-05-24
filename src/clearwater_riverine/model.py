@@ -1624,13 +1624,33 @@ class ClearwaterRiverine:
             # snapshots into the accumulator. Interior chunks drop the
             # shared trailing slot so each timestep is counted once across
             # the run; the final chunk keeps it.
+            #
+            # Phase J+1 amendment (2026-05-24): when ``is_last=True``,
+            # ``accumulate_chunk_mass_balance`` looks up VOLUME and the
+            # constituent array at the end timestamp to capture the
+            # run's end snapshot. Passing ``self._end_datetime``
+            # directly raises ``KeyError`` whenever the caller has
+            # advanced fewer transport steps than the configured window
+            # implies -- e.g., the runner does ``--days 10`` updates
+            # against an HDF whose final stamp is 10.4 days past the
+            # start, so ``self._end_datetime`` is past the last chunk's
+            # last grid stamp. The mass balance then fails BEFORE the
+            # ``write_chunk`` loop below, dropping the final chunk's
+            # output. Use ``self.__current_time`` for ``is_last=True``
+            # instead: it is the actual last-computed stamp (= the last
+            # stamp with data in the registry after the user's final
+            # ``update()`` call) and is always in the resident chunk's
+            # grid by construction.
+            end_for_mb = (
+                self.__current_time if is_last else self._end_datetime
+            )
             for constituent_name in self._constituents:
                 self.__mb_acc = accumulate_chunk_mass_balance(
                     self.__mb_acc,
                     self.registry,
                     constituent_name,
                     self._start_datetime,
-                    self._end_datetime,
+                    end_for_mb,
                     drop_last_slot=not is_last,
                     is_last=is_last,
                 )
