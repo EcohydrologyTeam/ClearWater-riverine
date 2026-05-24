@@ -979,12 +979,24 @@ class ClearwaterRiverine:
             # In that case canonical computes it from WSE - cell-bed
             # elevation via the calculated-variable path so depth-based
             # wet-mask metrics work uniformly across all HDFs.
-            if FACE_HYD_DEPTH not in self.registry:
-                from clearwater_riverine.utilities import calculate_face_hyd_depth
-                self.registry.register(
-                    FACE_HYD_DEPTH,
-                    calculate_face_hyd_depth(self.registry),
-                )
+            #
+            # Phase J+1 (2026-05-23): force-refresh on every call. The
+            # previous "register only if absent" form left a stale
+            # chunk-1 FACE_HYD_DEPTH (with chunk-1 time coord) in the
+            # registry at chunk-2 boundary. The wet-mask then computed
+            # ``(volume_chunk2 > V_min) & (depth_chunk1 > h_min)``,
+            # which xarray broadcasts onto the *intersection* of the
+            # two time axes (one shared stamp), producing a 1-timestep
+            # WET_MASK that fails downstream LHS lookups. Always
+            # recompute so the time coord matches VOLUME's current
+            # chunk window.
+            if FACE_HYD_DEPTH in self.registry:
+                self.registry.unregister(FACE_HYD_DEPTH)
+            from clearwater_riverine.utilities import calculate_face_hyd_depth
+            self.registry.register(
+                FACE_HYD_DEPTH,
+                calculate_face_hyd_depth(self.registry),
+            )
             depth = self.registry.get_variable(FACE_HYD_DEPTH).get_data()
         mask = compute_wet_mask(
             volume,
@@ -993,6 +1005,22 @@ class ClearwaterRiverine:
             V_min=self.__wet_dry_v_min,
             metric=self.__wet_dry_metric,
         )
+        # Phase J+1 (2026-05-23) diagnostic
+        try:
+            t = mask.time.values if hasattr(mask, 'time') else None
+            tdt = mask.time.dtype if hasattr(mask, 'time') else None
+            vt = volume.time.values if hasattr(volume, 'time') else None
+            vtdt = volume.time.dtype if hasattr(volume, 'time') else None
+            print(f"      [WET_MASK refresh] volume.time dtype={vtdt}, "
+                  f"range [{vt[0] if vt is not None and len(vt)>0 else '?'} "
+                  f".. {vt[-1] if vt is not None and len(vt)>0 else '?'}] "
+                  f"({len(vt) if vt is not None else '?'} stamps); "
+                  f"mask.time dtype={tdt}, "
+                  f"range [{t[0] if t is not None and len(t)>0 else '?'} "
+                  f".. {t[-1] if t is not None and len(t)>0 else '?'}] "
+                  f"({len(t) if t is not None else '?'} stamps)")
+        except Exception as e:
+            print(f"      [WET_MASK refresh] diag print failed: {e}")
         if WET_MASK in self.registry:
             self.registry.unregister(WET_MASK)
         self.registry.register(
@@ -1135,6 +1163,43 @@ class ClearwaterRiverine:
                     registry=self.registry,
                     filepath=_PathH1(ps_path),
                 )
+
+        # Phase J+1 (2026-05-23): refresh per-constituent boundary-
+        # condition source on the new chunk's time window. The BC source
+        # is loaded once at ``Constituent.__init__`` via the data source's
+        # ``.read()``; for non-chunked providers that's the full file,
+        # but the subsequent ``set_boundary_conditions`` interp pass in
+        # ``__load_new_chunk`` operates against the CURRENT chunk's
+        # constituent time axis, and the BC source the registry holds
+        # can drift out of sync with the chunked target if the in-memory
+        # source's time index was modified at chunk-1 set up. The
+        # symptom: ``set_boundary_conditions``'s post-interp validator
+        # raises with "N of N NaN" at chunk 2 even though the on-disk
+        # BC CSV covers the full window.
+        #
+        # Re-read the BC source from disk at the chunk boundary and re-
+        # register; mirrors the point-source refresh above. Cheap (BC
+        # CSVs are small; a 10-day daily-cadence two-line CSV is ~700
+        # bytes), explicit, and decoupled from whether the underlying
+        # data source is chunked or not.
+        for constituent_name, constituent in self._constituents.items():
+            bc_source = self.__boundary_condition_data_sources.get(
+                constituent_name
+            )
+            if bc_source is None:
+                continue
+            try:
+                fresh = bc_source.read(constituent_name)
+            except Exception:
+                # Best-effort: if the data source can't re-read (e.g.
+                # ChunkedDataSource requiring read_chunk), leave the
+                # existing registry entry alone and let
+                # set_boundary_conditions handle it.
+                continue
+            bkey = f"{constituent_name}_boundary"
+            if bkey in self.registry:
+                self.registry.unregister(bkey)
+            self.registry.register(bkey, fresh)
         for constituent_name, constituent in self._constituents.items():
             # C3b: on the first __load_new_chunk after from_checkpoint, the
             # in-memory registry holds chunk 1's array, not the end-of-prev-
@@ -1166,43 +1231,82 @@ class ClearwaterRiverine:
             # NaN validator in ``set_initial_conditions`` (Phase F T2-D)
             # refuses to load chunk 2+ on any real-world mesh.
             #
-            # Replace NaN with 0 before reset_initial_conditions. The
-            # input-NaN validator stays in place for genuine input bugs
-            # (e.g. an IC CSV with missing rows). What it should not be
-            # catching is the well-understood "dry cell -> mass/0 = NaN"
-            # mode of the previous chunk's transport output. Hand-crafted
-            # small fixtures (Sumwere Creek, Santiam-Salem subset) did
-            # not exercise this; full-mesh real-world models (Corvallis_
-            # Santiam, et al.) do, on every chunk boundary.
+            # Sanitize branch on ``constituent.is_intensive`` (Phase-D
+            # Unit D1):
+            #   * Extensive species (mass concentrations: Ap, NH4, NO3,
+            #     TIP, DOX, dye, ...): NaN -> 0. 0 mg/L at a dry cell
+            #     is the physically defensible "no mass present" value.
+            #   * Intensive properties (temperature, ...): NaN -> median
+            #     of the finite (wet-cell) values. 0 deg C at a dry
+            #     cell is NOT physically defensible: it drags the
+            #     spatial median toward 0 and produces unrealistic
+            #     temperature comparisons downstream. The wet-cell
+            #     median is the best estimate of "bulk temperature in
+            #     the absence of any cell-specific information."
+            #     Degenerate case (all NaN) falls back to 0 with warning.
+            #
+            # The input-NaN validator stays in place for genuine input
+            # bugs (e.g. an IC CSV with missing rows).
+            is_intensive = bool(getattr(constituent, "is_intensive", False))
+
+            def _sanitize_arr(arr: np.ndarray) -> tuple[np.ndarray, int]:
+                """Return (sanitized array, count of NaNs replaced)."""
+                finite_mask = np.isfinite(arr)
+                n_nan = int(arr.size - np.sum(finite_mask))
+                if n_nan == 0:
+                    return arr, 0
+                if is_intensive:
+                    if finite_mask.any():
+                        fill_value = float(np.nanmedian(arr))
+                    else:
+                        fill_value = 0.0
+                        print(
+                            f"      WARN chunk boundary {self.__current_time}: "
+                            f"intensive constituent {constituent_name} has "
+                            f"NO finite values to draw a median from; "
+                            f"falling back to 0.0. Downstream comparisons "
+                            f"may be unphysical."
+                        )
+                else:
+                    fill_value = 0.0
+                return np.where(finite_mask, arr, fill_value), n_nan
+
             if isinstance(ic_value, np.ndarray) and not np.all(np.isfinite(ic_value)):
-                n_nan = int(np.sum(~np.isfinite(ic_value)))
-                n_tot = int(ic_value.size)
-                # One-shot per-constituent informational note. Suppressed
-                # if all-finite (the small-fixture common case).
-                if n_nan > 0:
-                    print(
-                        f"      chunk boundary {self.__current_time}: "
-                        f"sanitizing {n_nan:,}/{n_tot:,} NaN values in "
-                        f"{constituent_name} end-of-prev-chunk state "
-                        f"(dry-cell artifacts from transport solve; "
-                        f"replaced with 0)"
-                    )
-                ic_value = np.where(np.isfinite(ic_value), ic_value, 0.0)
+                sanitized, n_nan = _sanitize_arr(ic_value)
+                kind = "intensive" if is_intensive else "extensive"
+                fill_descr = (f"median of finite values"
+                              if is_intensive else "0")
+                print(
+                    f"      chunk boundary {self.__current_time}: "
+                    f"sanitizing {n_nan:,}/{ic_value.size:,} NaN values in "
+                    f"{constituent_name} end-of-prev-chunk state "
+                    f"(dry-cell artifacts from transport solve; "
+                    f"{kind} constituent, replaced with {fill_descr})"
+                )
+                ic_value = sanitized
             elif isinstance(ic_value, xr.DataArray):
                 # Same logic for the DataArray-valued path (Phase-D D2).
                 vals = ic_value.values
                 if not np.all(np.isfinite(vals)):
-                    n_nan = int(np.sum(~np.isfinite(vals)))
-                    n_tot = int(vals.size)
-                    if n_nan > 0:
-                        print(
-                            f"      chunk boundary {self.__current_time}: "
-                            f"sanitizing {n_nan:,}/{n_tot:,} NaN values in "
-                            f"{constituent_name} end-of-prev-chunk state "
-                            f"(dry-cell artifacts from transport solve; "
-                            f"replaced with 0)"
-                        )
-                    ic_value = ic_value.where(np.isfinite(vals), 0.0)
+                    sanitized, n_nan = _sanitize_arr(vals)
+                    kind = "intensive" if is_intensive else "extensive"
+                    fill_descr = (f"median of finite values"
+                                  if is_intensive else "0")
+                    print(
+                        f"      chunk boundary {self.__current_time}: "
+                        f"sanitizing {n_nan:,}/{vals.size:,} NaN values in "
+                        f"{constituent_name} end-of-prev-chunk state "
+                        f"(dry-cell artifacts from transport solve; "
+                        f"{kind} constituent, replaced with {fill_descr})"
+                    )
+                    # Re-wrap the sanitized values as a DataArray with
+                    # the same dims/coords as the original.
+                    ic_value = xr.DataArray(
+                        sanitized,
+                        dims=ic_value.dims,
+                        coords=ic_value.coords,
+                        attrs=ic_value.attrs,
+                    )
 
             constituent.reset_initial_conditions(self.registry, ic_value)
             constituent.register_constituent(self.registry)
