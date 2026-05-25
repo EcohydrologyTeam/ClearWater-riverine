@@ -666,6 +666,53 @@ class TransportEngine:
             # -- and zeros out on the legacy path.
             constituent.rhs.values[:] = constituent.rhs.values + drain_source
 
+            # Phase-D Unit D2-ext (2026-05-25): per-constituent dry-cell
+            # fill. The LHS pins every cell flagged dry at t+1 to an
+            # identity row (``A[i,i] = 1`` via
+            # ``LHS.__fill_empty_cells``) so the matrix stays invertible.
+            # Without this block, the RHS row for that cell is 0 and
+            # the cell solves to ``c_new = 0`` -- correct for extensive
+            # concentrations (no water -> no mass; the 0 is a
+            # placeholder and is read back as an extensive zero) but
+            # non-physical for intensive scalars such as temperature
+            # (0 deg C is "ice cold", not "no value") and produces
+            # the dark cells visible in folium animations of dry
+            # floodplain.
+            #
+            # Decision tree per constituent (see also
+            # ``Constituent.dry_cell_fill_value``):
+            #   * If the constituent has ``dry_cell_fill_value`` set to
+            #     a numeric value, pin dry cells to that literal.
+            #   * Else if the constituent is intensive, carry forward
+            #     the previous-step value (= IC for never-been-wet
+            #     cells; = last-known T for cells that wet-then-dry).
+            #   * Else (extensive without override), leave the RHS at
+            #     0 -- the legacy behaviour, preserved bit-identically
+            #     for every existing extensive constituent that does
+            #     not opt in.
+            #
+            # The pin is applied AFTER the drain source is folded in
+            # and BEFORE the LHS diagonal modifications below so the
+            # decay / point-source diagonals do not influence the
+            # dry-cell row. Gated on ``lhs.dry_cells_t1`` being
+            # available (an empty array on the legacy path with no
+            # WET_MASK in the registry); no-op when nothing is dry.
+            dry_cells_t1 = getattr(
+                lhs_for_constituent, "dry_cells_t1", None
+            )
+            if dry_cells_t1 is not None and dry_cells_t1.size > 0:
+                fill_value = getattr(
+                    constituent, "dry_cell_fill_value", None
+                )
+                if fill_value is not None:
+                    constituent.rhs.values[dry_cells_t1] = float(fill_value)
+                elif is_intensive:
+                    c_old_full = np.asarray(constituent_value)
+                    constituent.rhs.values[dry_cells_t1] = (
+                        c_old_full[: int(real_cell_count)][dry_cells_t1]
+                    )
+                # else: extensive without override -> leave RHS at 0
+
             # Phase F T2-B + Phase I-3 (2026-05-21): per-constituent
             # LHS diagonal modifications -- decay and point-source
             # sinks. Each adds a positive value to the diagonal so

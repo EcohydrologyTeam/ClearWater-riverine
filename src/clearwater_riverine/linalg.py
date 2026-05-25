@@ -262,7 +262,14 @@ class LHS:
             # arrays so downstream consumers can treat absence uniformly.
             self.wet_dry_leak_donors = np.array([], dtype=np.int64)
             self.wet_dry_leak_abs_adv = np.array([], dtype=float)
-            self.dry_cells_t1 = np.array([], dtype=np.int64)
+            # Phase-D Unit D2-ext (2026-05-25): expose the identity-
+            # pinned cell list on this attribute even on the legacy
+            # (no-WET_MASK) path, so the transport engine's per-
+            # constituent dry-cell fill (Constituent.dry_cell_fill_value
+            # or the intensive carry-forward default) applies
+            # uniformly. ``empty_cells`` on the legacy path is the
+            # set of real cells with ``volume == 0`` at t+1.
+            self.dry_cells_t1 = empty_cells.astype(np.int64)
 
         # initialize arrays that will define the sparse matrix
         self.start_index = 0

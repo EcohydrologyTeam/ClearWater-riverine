@@ -124,6 +124,36 @@ class Constituent:
         self.is_intensive: bool = bool(
             constituent_config.get("is_intensive", False)
         )
+        # Phase-D Unit D2-ext (2026-05-25): per-constituent dry-cell
+        # fill value. The LHS pins every cell flagged dry at t+1 to an
+        # identity row (``A[i,i] = 1``) so the matrix stays invertible;
+        # the RHS row for that cell determines what the cell solves to.
+        # Without this override the RHS row is 0, so dry cells solve
+        # to 0 -- correct for extensive concentrations (no water -> no
+        # mass) but non-physical for intensive scalars such as
+        # temperature (T = 0 means "ice cold", not "no value") and
+        # produces the dark cells visible in folium animations of dry
+        # floodplain.
+        #
+        # Default behaviour (``dry_cell_fill_value = None``):
+        #   * extensive: dry cells solve to 0 (unchanged).
+        #   * intensive: dry cells carry forward the previous-step
+        #     value (= IC for never-been-wet cells). Applied by the
+        #     transport engine using this constituent's own array at
+        #     ``current_time``; see ``TransportEngine.run`` for the
+        #     application site.
+        #
+        # Override: set ``dry_cell_fill_value`` to a numeric value in
+        # the constituent config to pin dry cells to that literal
+        # number every step. Useful for "fill dry cells with the
+        # current air temperature" (set to the air temp), for "match
+        # the IC for nutrient animations" (set to the IC value), or to
+        # match any other reference value.
+        cfg_fill = constituent_config.get("dry_cell_fill_value", None)
+        if cfg_fill is None:
+            self.dry_cell_fill_value: Optional[float] = None
+        else:
+            self.dry_cell_fill_value = float(cfg_fill)
         # Phase F T2-B (2026-05-21): first-order decay rate. Config
         # value is per day (matches streaming convention and common
         # water-quality literature for nutrients, BOD, pathogen
