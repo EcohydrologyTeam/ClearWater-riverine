@@ -25,19 +25,34 @@ from clearwater_riverine.variables import(
 
 # matrix solver 
 class LHS:
-    def __init__(self, registry: VariableRegistry):
+    def __init__(
+        self,
+        registry: VariableRegistry,
+        wet_dry_volume_threshold: float = 1.0e-3,
+    ):
         """
-        Initialize Sparse Matrix used to solve transport equation. 
+        Initialize Sparse Matrix used to solve transport equation.
 
-        Rather than looping through every single cell at every timestep, we can instead set up a sparse 
-        matrix at each timestep that will allow us to solve the entire unstructured grid all at once. 
-        We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load 
-        concentrations. This discretization produces a linear system of equations that can be represented by 
-        a sparse-matrix problem. 
+        Rather than looping through every single cell at every timestep, we can instead set up a sparse
+        matrix at each timestep that will allow us to solve the entire unstructured grid all at once.
+        We will solve an implicit Advection-Diffusion (transport) equation for the fractional total-load
+        concentrations. This discretization produces a linear system of equations that can be represented by
+        a sparse-matrix problem.
 
-        All constituents will have the same LHS matrix, since this is populated entirely by 
-        hydrodynamic and topological information from the model grid. 
+        All constituents will have the same LHS matrix, since this is populated entirely by
+        hydrodynamic and topological information from the model grid.
 
+        Phase-D Unit D2-ext (2026-05-25): the legacy (no-WET_MASK) path
+        classifies a cell as "dry at t+1" when its volume is below
+        ``wet_dry_volume_threshold`` (default ``1.0e-3`` m^3 -- roughly
+        sub-millimeter depth on a 1 m^2 cell, two orders of magnitude
+        below any physically meaningful river-cell volume). Cells in
+        this band were previously treated as wet by the strict
+        ``volume == 0`` comparison and fell through to the normal LHS
+        solve with V_new ~ epsilon, producing numerical garbage (NaN
+        or extreme values) at the plume's newly-wet leading edge.
+        Setting the threshold to 0 restores the prior exact-equality
+        behaviour.
         """
         edges_face1 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[0]
         edges_face2 = registry.get_variable(EDGE_FACE_CONNECTIVITY).get_data().T[1]
@@ -51,6 +66,7 @@ class LHS:
         self.real_edges_face1 = np.where(edges_face1 <= self.real_cell_index)[0]
         self.real_edges_face2 = np.where(edges_face2 <= self.real_cell_index)[0]
         self.has_gate_flow = GATE_FLOW in registry
+        self.wet_dry_volume_threshold: float = float(wet_dry_volume_threshold)
                 
     def update_values(
         self,
@@ -251,8 +267,18 @@ class LHS:
             # and donor-diagonal in the negative-adv case; keep that
             # contract by aliasing.
             flow_in_indices_diag = flow_in_indices
+            # Phase-D Unit D2-ext (2026-05-25): classify a cell as dry
+            # at t+1 when its volume is below ``wet_dry_volume_threshold``
+            # (default 1e-3 m^3; configurable via the LHS constructor).
+            # Setting threshold = 0 restores the strict ``volume == 0``
+            # contract. NaN volumes (occasional in cell-volume-fallback
+            # at cells with missing WSE) are caught by the legacy code
+            # path's own NaN handling downstream; they are not flagged
+            # dry here so the existing diagnostics continue to fire.
+            _thr = self.wet_dry_volume_threshold
             empty_cells = np.where(
-                (volume.values == 0)
+                np.isfinite(volume.values)
+                & (volume.values < _thr)
                 & (np.isin(volume.nface, np.arange(self.real_cell_count)))
             )[0]
             active_internal_edges = self.internal_edges

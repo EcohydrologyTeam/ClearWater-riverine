@@ -143,6 +143,7 @@ class ClearwaterRiverine:
         mass_loss_warn_threshold: Optional[float] = 0.01,
         zero_dry_initial_conditions: bool = False,
         reconstruct_newly_wet: bool = True,
+        wet_dry_volume_threshold: float = 1.0e-3,
         continuity_correction: str = "bc_only",
         allow_cell_volume_fallback: bool = False,
         allow_face_flow_fallback: bool = False,
@@ -271,6 +272,23 @@ class ClearwaterRiverine:
         # accepted tradeoff that produced the streaming locked baseline
         # (Salem T bias -0.30 deg C, RMSE 0.62 deg C).
         self.__reconstruct_newly_wet: bool = bool(reconstruct_newly_wet)
+        # Phase-D Unit D2-ext (2026-05-25): threshold for the legacy
+        # (no-WET_MASK) dry-cell detection in ``LHS.__fill_empty_cells``.
+        # Cells with ``volume < threshold`` at t+1 are flagged as dry
+        # (identity-pinned, eligible for the per-constituent
+        # ``dry_cell_fill_value``) instead of falling through to the
+        # normal LHS solve with V ~ epsilon (which produces NaN or
+        # extreme garbage at the newly-wet plume edge). Default
+        # 1e-3 m^3 is ~submillimeter depth on a ~1 m^2 cell -- well
+        # below any physically meaningful river-cell volume. Set to 0
+        # to restore the prior strict ``volume == 0`` contract. Pass
+        # via the YAML config under ``model.wet_dry_volume_threshold``
+        # or via this kwarg.
+        if config_filepath:
+            wet_dry_volume_threshold = float(
+                model.get("wet_dry_volume_threshold", wet_dry_volume_threshold)
+            )
+        self.__wet_dry_volume_threshold: float = float(wet_dry_volume_threshold)
         # Phase J+1 (Corvallis 2026-05-23): per-variable opt-ins for the
         # geometry-derived fallbacks. Default ``False`` is fail-loud:
         # ``RASHDFDataSource.__probe_temporal_fallbacks`` raises with a
@@ -296,6 +314,7 @@ class ClearwaterRiverine:
         self.__transport_engine = TransportEngine(
             self.registry,
             reconstruct_newly_wet=self.__reconstruct_newly_wet,
+            wet_dry_volume_threshold=self.__wet_dry_volume_threshold,
         )
 
         # Phase-D Unit D2: model-level IC-zeroing opt-in.

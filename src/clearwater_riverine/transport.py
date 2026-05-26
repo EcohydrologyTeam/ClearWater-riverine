@@ -556,13 +556,26 @@ class TransportEngine:
         self,
         registry: VariableRegistry,
         reconstruct_newly_wet: bool = True,
+        wet_dry_volume_threshold: float = 1.0e-3,
     ):
         # initialize left hand side of transport equation. ``self.lhs``
         # remains the extensive LHS (``is_intensive=False``). When any
         # constituent in a ``run()`` call is intensive, the engine
         # lazily builds a second LHS keyed by ``is_intensive=True``
         # below.
-        self.lhs = LHS(registry)
+        #
+        # Phase-D Unit D2-ext (2026-05-25): ``wet_dry_volume_threshold``
+        # forwards to both LHS instances. Cells with ``volume < threshold``
+        # at t+1 are pinned to identity (dry) and pick up the
+        # constituent's ``dry_cell_fill_value`` instead of falling
+        # through to the LHS solve with V ~ epsilon. Default 1e-3 m^3
+        # is ~submillimeter depth on a 1 m^2 cell. Set to 0 to restore
+        # exact-equality (legacy) behaviour.
+        self._wet_dry_volume_threshold: float = float(wet_dry_volume_threshold)
+        self.lhs = LHS(
+            registry,
+            wet_dry_volume_threshold=self._wet_dry_volume_threshold,
+        )
         self._lhs_intensive: LHS | None = None
         # Phase-D Unit C-beta: per-constituent mass-loss accumulator.
         # Lazily populated -- one list entry appended per ``run()`` call
@@ -609,7 +622,10 @@ class TransportEngine:
 
         if any_intensive:
             if self._lhs_intensive is None:
-                self._lhs_intensive = LHS(registry)
+                self._lhs_intensive = LHS(
+                    registry,
+                    wet_dry_volume_threshold=self._wet_dry_volume_threshold,
+                )
             self._lhs_intensive.update_values(
                 registry,
                 current_time,
