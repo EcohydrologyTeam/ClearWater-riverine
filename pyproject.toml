@@ -24,7 +24,7 @@ dependencies=[
     "pyyaml",
     "scipy",
     "shapely",
-    "xarray",
+    "xarray>=2025.8",
     "zarr", # dependency of clearwater-data, so not strictly required here
 ]
 
