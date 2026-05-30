@@ -174,6 +174,15 @@ class RASHDFDataSource:
         # rather than reading from disk.
         self._volume_fallback_active: bool = False
         self._face_flow_fallback_active: bool = False
+        # Riverine MeshView-compat (2026-05-30): True once
+        # ``__read_temporal_variables`` confirms the optional RAS
+        # "Cell Hydraulic Depth" dataset is present in the HDF. This is
+        # the source of truth for the v3 coupling-depth precedence
+        # resolver: registry presence of FACE_HYD_DEPTH does NOT imply
+        # RAS-authoritative (``model.__populate_wet_mask`` can synthesize
+        # WSE-bed into FACE_HYD_DEPTH), but this flag is set strictly at
+        # read time from ``hdf_path in infile``.
+        self.ras_cell_hydraulic_depth_available: bool = False
         # Lookup-table DataFrames cached by ``__preload_fallback_lookups``.
         # ``None`` until preload runs; absence is checked at synthesis
         # time so a stale cache load cannot silently skip the preload.
@@ -804,6 +813,14 @@ class RASHDFDataSource:
             EDDY_VISCOSITY: NEDGE,
             CELL_EDDY_VISCOSITY_X: NFACE,
             CELL_EDDY_VISCOSITY_Y: NFACE,
+            # Riverine MeshView-compat (2026-05-30): read RAS's own
+            # "Cell Hydraulic Depth" (the authoritative cell mean depth)
+            # into the data-source mesh when the HDF ships it. It is the
+            # top precedence source for the v3 coupling depth resolver.
+            # Optional: minimal-output decks (e.g. the Santiam-Salem
+            # subset) do not write it, so the read loop skips it and the
+            # ``ras_cell_hydraulic_depth_available`` flag stays False.
+            FACE_HYD_DEPTH: NFACE,
         }
 
 
@@ -1300,6 +1317,13 @@ class RASHDFDataSource:
             hdf_path = self.paths.get(variable)
             if hdf_path is None or hdf_path not in infile:
                 continue
+            # Riverine MeshView-compat (2026-05-30): record RAS
+            # "Cell Hydraulic Depth" availability at read time. Set on
+            # every (re)read so the flag is correct whether the dataset
+            # is read here for the first chunk or re-read per chunk; the
+            # presence test is identical each call (the HDF is static).
+            if variable == FACE_HYD_DEPTH:
+                self.ras_cell_hydraulic_depth_available = True
             self.mesh[variable] = _hdf_to_xarray(
                 infile[hdf_path],
                 ('time', space_dim),

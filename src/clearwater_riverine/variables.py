@@ -53,6 +53,12 @@ GHOST_CELL_VOLUMES_OUT = 'ghost_volumes_out'
 FACE_VEL_MAG = 'face_velocity_magnitude'
 AVERAGE_DEPTH = 'average_depth'
 MAXIMUM_DEPTH = 'maximum_depth'
+# Riverine MeshView-compat (2026-05-30): on-demand coupling depth. The
+# cell mean water-column depth the v3 NSM coupling consumes, resolved by
+# precedence (RAS Cell Hydraulic Depth -> volume/wsa -> WSE-bed). Only
+# computed/registered when ``ClearwaterRiverine.enable_coupling_depth()``
+# has been called; standalone transport runs never compute it.
+COUPLING_DEPTH = 'coupling_depth'
 
 # Structures
 GATE_CONNECTIVITY = 'gate_connectivity'

@@ -30,12 +30,15 @@ from clearwater_data.variables.xarray import DataArrayVariable
 
 from clearwater_riverine.utilities import(
     CALCULATED_VARIABLE_MAP,
+    CALCULATED_VARIABLE_DEPENDENCIES,
     compute_wet_mask,
 )
 import clearwater_riverine.variables
 from clearwater_riverine.variables import (
     ADVECTION_COEFFICIENT,
+    AVERAGE_DEPTH,
     COEFFICIENT_TO_DIFFUSION_TERM,
+    COUPLING_DEPTH,
     EDGES_FACE1,
     EDGES_FACE2,
     FACES,
@@ -205,7 +208,41 @@ class ClearwaterRiverine:
             # Phase I-1 default for the no-config path: constant diffusion.
             self.__diffusion_method = "constant"
             self.__diffusion_params = {}
-        
+            # Riverine MeshView-compat (2026-05-29): the direct-kwargs
+            # path never set ``__calculated_variables``; seed it here so
+            # the normalization below has a value to read.
+            self.__calculated_variables = None
+
+        # Riverine MeshView-compat (2026-05-30): normalize
+        # ``self.__calculated_variables`` to a dict in BOTH construction
+        # paths so ``__update_calculated_variables`` (which iterates
+        # ``.items()``) never crashes on the pre-existing ``.items()``-
+        # on-None path. The config path can leave it as ``None``
+        # (``model.get("calculated_variables", None)``); the direct-kwargs
+        # path seeded ``None`` above. This normalization is harmless: it
+        # forces NO variable on. ``average_depth`` is NOT defaulted on --
+        # standalone transport runs compute nothing new. The coupling
+        # depth is opt-in via ``enable_coupling_depth()`` (see below).
+        if not isinstance(self.__calculated_variables, dict):
+            self.__calculated_variables = {}
+
+        # Riverine MeshView-compat (2026-05-30): on-demand coupling-depth
+        # state. ``__coupling_depth_enabled`` stays False for standalone
+        # runs; the v3 modules coupling flips it via the public
+        # ``enable_coupling_depth()`` after construction. While enabled,
+        # ``COUPLING_DEPTH`` is (re)computed by the precedence resolver
+        # and re-registered in every calculated-variable refresh (init +
+        # per chunk). ``__ras_cell_hydraulic_depth_available`` is the
+        # read-time source of truth for the resolver's top precedence
+        # branch (set from the HDF data source in ``__init_model``).
+        self.__coupling_depth_enabled: bool = False
+        self.__ras_cell_hydraulic_depth_available: bool = False
+        # Private registry key under which the RAS-read FACE_HYD_DEPTH is
+        # stashed at read time (init + each chunk) so the resolver's
+        # branch-1 RAS value survives ``__populate_wet_mask`` overwriting
+        # the public FACE_HYD_DEPTH with synthesized WSE - bed.
+        self.__ras_cell_hyd_depth_stash: str = "_ras_cell_hydraulic_depth"
+
         self.__chunked_mode: bool = self.__chunk_size is not None
         # Cross-chunk mass-balance accumulator (C3a). None until the first
         # chunk is finalized; only used in chunked mode.
@@ -382,6 +419,52 @@ class ClearwaterRiverine:
         through the mangled name.
         """
         return self.__current_time
+
+    @property
+    def is_chunked(self) -> bool:
+        """Whether the model is operating in chunked mode.
+
+        Riverine MeshView-compat (2026-05-29): public accessor for the
+        name-mangled ``__chunked_mode`` flag (True when ``chunk_size``
+        was configured). Used by v3-coupling tests/diagnostics that need
+        to know whether calculated variables (e.g. ``average_depth``)
+        are refreshed per chunk rather than once at init.
+        """
+        return self.__chunked_mode
+
+    @property
+    def chunk_size(self):
+        """Read-only accessor for the configured chunk size (or None).
+
+        Riverine MeshView-compat (2026-05-29): companion to
+        ``is_chunked``; returns the ``pd.Timedelta`` chunk window in
+        chunked mode, ``None`` otherwise.
+        """
+        return self.__chunk_size
+
+    @property
+    def ras_cell_hydraulic_depth_available(self) -> bool:
+        """Whether RAS wrote a "Cell Hydraulic Depth" dataset.
+
+        Riverine MeshView-compat (2026-05-30): read-only view of the
+        read-time flag that drives the coupling-depth resolver's top
+        precedence branch. ``True`` only when the HDF actually shipped
+        the optional dataset (set in ``__stash_ras_cell_hydraulic_depth``
+        from the data source's own probe); independent of whether
+        ``FACE_HYD_DEPTH`` happens to be in the registry (which
+        ``__populate_wet_mask`` can synthesize).
+        """
+        return self.__ras_cell_hydraulic_depth_available
+
+    @property
+    def coupling_depth_enabled(self) -> bool:
+        """Whether on-demand coupling-depth computation is enabled.
+
+        Riverine MeshView-compat (2026-05-30): read-only view of the
+        flag flipped by ``enable_coupling_depth()``. ``False`` for
+        standalone runs (``COUPLING_DEPTH`` never computed/registered).
+        """
+        return self.__coupling_depth_enabled
 
     def run(self) -> None:
         while self.__current_time < self._end_datetime:
@@ -831,7 +914,17 @@ class ClearwaterRiverine:
                 variable_name,
                 data,
             )
-        
+
+        # Riverine MeshView-compat (2026-05-30): record RAS Cell Hydraulic
+        # Depth availability (read-time source of truth for the coupling-
+        # depth resolver). Cheap flag-only probe -- does NOT register
+        # anything, so standalone runs stay byte-unchanged. The temporal
+        # reads above triggered the data source's optional-temporal read,
+        # so its ``mesh`` and availability flag are now populated. The RAS
+        # array itself is stashed lazily, only when coupling depth is
+        # enabled (``enable_coupling_depth`` -> ``__refresh_coupling_depth``).
+        self.__record_ras_cell_hydraulic_depth_availability()
+
         non_temporal_variables = list(self.__variable_data_sources['hydrodynamic_model'].static_variables.keys()) \
             + list(self.__variable_data_sources['hydrodynamic_model'].topology_variables)
         for variable_name in non_temporal_variables:
@@ -1293,7 +1386,7 @@ class ClearwaterRiverine:
         for calculated_variable, calculate in self.__calculated_variables.items():
             if calculate and calculated_variable in self.registry:
                 self.registry.unregister(calculated_variable)
-        
+
         # recalculate and register
         for calculated_variable, calculate in self.__calculated_variables.items():
             if calculate:
@@ -1308,6 +1401,170 @@ class ClearwaterRiverine:
                         calculated_variable,
                         calculated_result,
                     )
+
+        # Riverine MeshView-compat (2026-05-30): on-demand coupling depth.
+        # Only fires when ``enable_coupling_depth()`` has flipped the
+        # enabled flag (standalone runs compute nothing here). Refreshed
+        # in this same path so it tracks each chunk's time window; the
+        # wsa branch's per-chunk dependency unregister is handled inside
+        # ``__refresh_coupling_depth``.
+        if self.__coupling_depth_enabled:
+            self.__refresh_coupling_depth()
+
+    def __record_ras_cell_hydraulic_depth_availability(self):
+        """Mirror the data source's read-time availability flag.
+
+        Riverine MeshView-compat (2026-05-30): cheap, always-run probe
+        (init + each chunk). Sets ``__ras_cell_hydraulic_depth_available``
+        from the data source's own ``hdf_path in infile`` result. Does
+        NOT touch the registry, so standalone runs are byte-unchanged.
+        The actual RAS array is only stashed when coupling depth is
+        enabled (see ``__stash_ras_cell_hydraulic_depth``).
+        """
+        hydro = self.__variable_data_sources['hydrodynamic_model']
+        available = bool(
+            getattr(hydro, 'ras_cell_hydraulic_depth_available', False)
+        )
+        # Defensive: the flag means the dataset was read into the data
+        # source mesh; require the array to actually be present there.
+        if available and FACE_HYD_DEPTH not in hydro.mesh.data_vars:
+            available = False
+        self.__ras_cell_hydraulic_depth_available = available
+
+    def __stash_ras_cell_hydraulic_depth(self):
+        """Stash the RAS-read ``FACE_HYD_DEPTH`` for the current window.
+
+        Riverine MeshView-compat (2026-05-30): registers the RAS "Cell
+        Hydraulic Depth" array under a private registry key so the
+        resolver's branch-1 RAS value survives ``__populate_wet_mask``
+        overwriting the public ``FACE_HYD_DEPTH`` with synthesized
+        WSE - bed. Only called from the coupling-depth path (enable +
+        per-chunk refresh) so standalone runs never register it; no-op
+        when RAS did not write the dataset.
+        """
+        if not self.__ras_cell_hydraulic_depth_available:
+            return
+        hydro = self.__variable_data_sources['hydrodynamic_model']
+        if FACE_HYD_DEPTH not in hydro.mesh.data_vars:
+            return
+        if self.__ras_cell_hyd_depth_stash in self.registry:
+            self.registry.unregister(self.__ras_cell_hyd_depth_stash)
+        self.registry.register(
+            self.__ras_cell_hyd_depth_stash,
+            DataArrayVariable(
+                hydro.mesh[FACE_HYD_DEPTH], space_dimension=NFACE
+            ),
+        )
+
+    def __resolve_coupling_depth(self):
+        """Resolve the cell mean coupling depth for the current window.
+
+        Riverine MeshView-compat (2026-05-30): returns a
+        ``DataArrayVariable`` for ``COUPLING_DEPTH`` by precedence, used
+        by both ``enable_coupling_depth()`` (seed compute) and the
+        per-chunk ``__refresh_coupling_depth``:
+
+          1. ``__ras_cell_hydraulic_depth_available`` (read-time flag,
+             the source of truth) -> the RAS-read ``FACE_HYD_DEPTH``.
+             The RAS array is stashed under a private registry name at
+             read time (``__stash_ras_cell_hydraulic_depth``) so it is
+             robust to ``__populate_wet_mask`` later overwriting the
+             public ``FACE_HYD_DEPTH`` with synthesized ``WSE - bed``.
+          2. else ``volume / wetted_surface_area``
+             (``calculate_average_depth``) -- matches the validated
+             manual coupling path. Guarded: a config lacking the
+             elevation-volume lookups falls through to branch 3 rather
+             than raising.
+          3. else ``WSE - bed`` (``calculate_face_hyd_depth``) with a
+             warning that this is max depth and overestimates the mean.
+        """
+        from clearwater_riverine.utilities import (
+            calculate_average_depth,
+            calculate_face_hyd_depth,
+        )
+
+        # Branch 1: RAS Cell Hydraulic Depth (authoritative).
+        if self.__ras_cell_hydraulic_depth_available:
+            if self.__ras_cell_hyd_depth_stash in self.registry:
+                ras_depth = self.registry.get_variable(
+                    self.__ras_cell_hyd_depth_stash
+                ).get_data()
+            else:
+                # The flag is set but the stash is absent (defensive):
+                # fall back to the public FACE_HYD_DEPTH if it has not
+                # been overwritten yet. The resolver runs in the
+                # calculated-variable refresh, which PRECEDES
+                # ``__populate_wet_mask``, so the RAS value is intact here.
+                ras_depth = self.registry.get_variable(FACE_HYD_DEPTH).get_data()
+            return DataArrayVariable(ras_depth, space_dimension=NFACE)
+
+        # Branch 2: volume / wetted_surface_area (validated manual path).
+        try:
+            return calculate_average_depth(self.registry)
+        except (ValueError, KeyError) as exc:
+            # Branch 3: WSE - bed (last resort, overestimates the mean).
+            warnings.warn(
+                f"Resolving {COUPLING_DEPTH!r} as WSE - bed elevation "
+                f"(maximum depth) because neither RAS 'Cell Hydraulic "
+                f"Depth' nor the volume/wetted_surface_area path is "
+                f"available ({type(exc).__name__}: {exc}). Maximum depth "
+                f"OVERESTIMATES the cell mean depth NSM needs.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return calculate_face_hyd_depth(self.registry)
+
+    def __refresh_coupling_depth(self):
+        """Recompute and re-register ``COUPLING_DEPTH`` for the window.
+
+        Riverine MeshView-compat (2026-05-30): called from
+        ``__update_calculated_variables`` (init + each chunk) while
+        ``__coupling_depth_enabled``. The volume/wsa precedence branch
+        self-registers ``wetted_surface_area`` (via
+        ``calculate_average_depth``); that array is bound to the current
+        chunk's time axis, so without unregistering it per chunk the
+        chunk-2 ``volume / wsa`` would raise an xarray ``AlignmentError``
+        (chunk-1 wsa axis vs chunk-2 volume axis). Unregister the
+        coupling-depth dependencies (CALCULATED_VARIABLE_DEPENDENCIES,
+        keyed on AVERAGE_DEPTH since that is the function the wsa branch
+        calls) and the stale COUPLING_DEPTH before recomputing.
+        """
+        # Stash the RAS Cell Hydraulic Depth for the current window
+        # (no-op when RAS did not write it) so branch 1 of the resolver
+        # reads a value bound to this chunk's time axis.
+        self.__stash_ras_cell_hydraulic_depth()
+        for dependency in CALCULATED_VARIABLE_DEPENDENCIES.get(AVERAGE_DEPTH, ()):
+            if (
+                dependency not in self.__calculated_variables
+                and dependency in self.registry
+            ):
+                self.registry.unregister(dependency)
+        if COUPLING_DEPTH in self.registry:
+            self.registry.unregister(COUPLING_DEPTH)
+        self.registry.register(
+            COUPLING_DEPTH,
+            self.__resolve_coupling_depth(),
+        )
+
+    def enable_coupling_depth(self) -> None:
+        """Enable on-demand coupling-depth computation (idempotent).
+
+        Riverine MeshView-compat (2026-05-30): public entry point for the
+        v3 modules coupling (``processes/riverine.py``). Called AFTER
+        construction -- by which time the first
+        ``__update_calculated_variables`` has already run -- so it must
+        compute the resolved depth for the CURRENT window NOW (not merely
+        set a flag) and register it under ``COUPLING_DEPTH``. Once
+        enabled, ``__update_calculated_variables`` re-registers
+        ``COUPLING_DEPTH`` on every chunk load so it tracks the chunk's
+        time window. Idempotent: calling it again is a cheap refresh.
+
+        Contract (the modules repo builds to this): enables + seed-
+        computes the resolved depth and registers it under the string
+        ``'coupling_depth'``, refreshed per chunk while enabled.
+        """
+        self.__coupling_depth_enabled = True
+        self.__refresh_coupling_depth()
 
 
     def __init_output_store(self):
@@ -1417,6 +1674,15 @@ class ClearwaterRiverine:
         # ``internal_bc_cells`` registry variable is unaffected
         # because it persists across chunks under its own name.)
         self.__bridge_internal_bc_metadata()
+
+        # Riverine MeshView-compat (2026-05-30): re-record RAS Cell
+        # Hydraulic Depth availability for the freshly loaded chunk
+        # BEFORE the calculated-variable refresh resolves COUPLING_DEPTH.
+        # The data source re-read its optional temporal set (including
+        # FACE_HYD_DEPTH) during the temporal refresh above. The RAS
+        # array is re-stashed inside ``__refresh_coupling_depth`` (only
+        # when coupling depth is enabled).
+        self.__record_ras_cell_hydraulic_depth_availability()
 
         self.__update_calculated_variables()
         # Phase-D Unit A: refresh WET_MASK for the new chunk's time window.
