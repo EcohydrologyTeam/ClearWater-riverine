@@ -67,9 +67,9 @@ For the canonical-side replication, the swap is:
 
 | Variable | Path | Notes |
 |---|---|---|
-| HDF (hydraulics) | `/Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM/case_studies/santiam_salem/data/synthetic/santiam_salem_subset_2008-09_hourly.p01.hdf` | Option C: real USGS Sep-2008 unsteady, spatially subset to 158k cells, transcoded to CW-Riverine HDF. NOT rating-curve synthesized. |
+| HDF (hydraulics) | `/Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/data/synthetic/santiam_salem_subset_2008-09_hourly.p01.hdf` | Option C: real USGS Sep-2008 unsteady, spatially subset to 158k cells, transcoded to CW-Riverine HDF. NOT rating-curve synthesized. |
 | Nutmet CSV | `/Users/todd/LargeProjects/ClearWater-riverine-case-study-Willamette/data/observed/derived_bcs_2008/synthetic_nutrients_meteorology_2008-09__obs_T.csv` | The filename says "synthetic" but the contents are observation-derived (WQP grab samples + NWIS unit-value temperature). Filename is a documented hazard; a rename has been done in some other-session work but back-compat symlink remains. |
-| Met CSV | `/Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM/case_studies/santiam_salem/data/synthetic/met_KSLE_2008-09_hourly.csv` | Observed KSLE (Salem airport) hourly meteorology. |
+| Met CSV | `/Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/data/synthetic/met_KSLE_2008-09_hourly.csv` | Observed KSLE (Salem airport) hourly meteorology. |
 | Original RAS model (full mesh) | `/Users/todd/LargeProjects/ClearWater-riverine-case-study-Willamette/data/hecras_model/Santiam_Salem/Santiam_Salem.p01.hdf` | 5.7 GB, ~2,035,430-cell USGS validated model; only used for the Stage-01 subset extraction. Not consumed at runtime by the Stage-08 validation. |
 
 ### Run arguments (from `run_provenance.json`)
@@ -239,7 +239,7 @@ git log --oneline -3
 ls /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/output/v3_smoke_15day_wind10m_final_mumax_1_3/validation_2008/validation_metrics.csv
 
 # Verify HDF and BCs exist
-ls -lh /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM/case_studies/santiam_salem/data/synthetic/santiam_salem_subset_2008-09_hourly.p01.hdf
+ls -lh /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/data/synthetic/santiam_salem_subset_2008-09_hourly.p01.hdf
 ls -lh /Users/todd/LargeProjects/ClearWater-riverine-case-study-Willamette/data/observed/derived_bcs_2008/synthetic_nutrients_meteorology_2008-09__obs_T.csv
 
 # After F1: run the existing 94-test suite as no-regression check
@@ -249,7 +249,7 @@ pixi run -e dev python -m pytest tests/ -v
 # After F2: run the canonical comparator
 cd /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming
 python case_studies/santiam_salem/scripts/08_run_coupled_v3_smoke_canonical.py \
-    --hdf /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM/case_studies/santiam_salem/data/synthetic/santiam_salem_subset_2008-09_hourly.p01.hdf \
+    --hdf /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/data/synthetic/santiam_salem_subset_2008-09_hourly.p01.hdf \
     --days 15 \
     --output-dir /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/output/canonical_test_mumax_1_3 \
     --diffusion 0.1 \
@@ -258,7 +258,7 @@ python case_studies/santiam_salem/scripts/08_run_coupled_v3_smoke_canonical.py \
     --ic-nh4 0.02 --ic-no3 0.137 --ic-tip 0.029 --ic-dox 9.4 --ic-ap 1.6 \
     --wind-input-height 10.0 \
     --window-start 2008-09-01 \
-    --met-csv-hourly /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM/case_studies/santiam_salem/data/synthetic/met_KSLE_2008-09_hourly.csv \
+    --met-csv-hourly /Users/todd/GitHub/ecohydrology/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/data/synthetic/met_KSLE_2008-09_hourly.csv \
     --nutmet-csv /Users/todd/LargeProjects/ClearWater-riverine-case-study-Willamette/data/observed/derived_bcs_2008/synthetic_nutrients_meteorology_2008-09__obs_T.csv \
     --continuity-correction all_edges
 
@@ -319,7 +319,7 @@ Sources still on disk (sufficient for full regeneration):
 
 ### Regeneration sequence
 
-Each Stage script lives at `…/ClearWater-modules-phase2-ESM/case_studies/santiam_salem/scripts/`. The Stages produce inputs the runner (`08_run_coupled_v3_smoke_canonical.py`) needs.
+Each Stage script lives at `…/ClearWater-modules-phase2-ESM-streaming/case_studies/santiam_salem/scripts/`. The Stages produce inputs the runner (`08_run_coupled_v3_smoke_canonical.py`) needs.
 
 1. **Stage 01** (`01_extract_hydraulic_library.py`): crop the 2.035M-cell RAS HDF to a 5x3 km UTM bbox (~158k cells); emit `library_subset.nc`. Input to Stage 04e and Stage 02. Expected ~5-15 min.
 2. **Stage 04e** (`04e_extract_subset_timeseries.py`): extract 361 hourly stamps from the completed Sep 2008 unsteady run on the subset mesh; produces the timeseries NetCDF that Stage 06c transcodes. Expected ~5-15 min.
