@@ -129,17 +129,67 @@ Critical caveat grounded in the actual files (verified 2026-05-30). RAS 2D outpu
 
 Bottom line: CWR cannot read RAS's intent, but it does not need to. Method 1 distinguishes face-wetting from source-wetting using data already in hand; Method 3 peels off internal-BC cells; Method 2 (after path confirmation) supplies the exact rain volume and rate when precipitation is enabled. Combine them: classify a newly-wet cell as flow-wetted when the face flows explain the volume, internal-BC-wetted when it is in the BC set, and rain-wetted otherwise, then initialize its constituents from the matching source water.
 
+## Where the artifact cells actually are (item 3, measured 2026-05-30)
+
+A read-only census of the transcoded Santiam-Salem Sept-2008 hydraulics HDF (`Cell Volume`, `Water Surface`, `Cells Minimum Elevation`, `Face Flow`, `Faces Cell Indexes`; 361 hourly steps x 158,037 real cells = 57,051,357 cell-steps) characterized the newly-wet and thin-wet populations directly from volume, depth, and the face-flow field. Every reported split was computed with asserted accounting invariants (wet+dry = total; bucket sums = population) that passed. The HDF lives under `ClearWater-modules-ESM/case_studies/santiam_salem/data/synthetic/` after the streaming branch was merged to main and the `-phase2-...-streaming` checkout was retired.
+
+Domain: 27.5% of cell-steps are wet (V >= 1e-3 m^3), 72.5% dry.
+
+A. Newly-wet transitions (dry -> wet), the transport/cold-artifact population:
+
+- 77,221 dry->wet events across 77,220 distinct cells -- 48.9% of real cells wet at least once over 15 days, roughly one wetting per cell (a monotonic flood pulse, not oscillation). This is the floodplain filling, and it is not a corner case.
+- Depth AT the wetting step: p25 = 0.029 m, p50 = 0.118 m, p75 = 0.695 m. The median newly-wet cell appears at ~12 cm, not a sliver. Volume AT wetting: p50 = 5.3 m^3, p75 = 19.8 m^3.
+- Landing-depth split: 64.9% land >= 0.05 m (clean front), 23.7% land 0.01-0.05 m (thin, 1/V risk), 11.5% land < 0.01 m (sub-grid tiny, worst). About a third of wettings land below the 0.05 m Rec B proxy.
+
+B. Thin-wet cell-steps (wet by volume but depth < 0.05 m), the TSM/hot-artifact population:
+
+- 146,244 thin-wet cell-steps -- only 0.93% of the 15.67M wet cell-steps. The artifact-prone window is small. 27,260 distinct cells are ever thin-wet (17.2% of real cells).
+- Dwell (longest consecutive thin-wet run per cell), an empirical residence proxy: p50 = 1 h, p75 = 2 h, p95 = 24 h, p100 = 361 h. Buckets: dwell <= 1 h 61.2% (transient front = artifact); 2-3 h 19.6%; 4-6 h 5.6%; 7-24 h 8.9%; > 24 h 4.7% (1,281 cells, persistent stable shallow pools = potential REAL signal). About 81% of ever-thin cells are transient (<= 3 h); only 4.7% persist beyond a day.
+
+C. Dry-state composition (RAS-treated-dry vs sub-grid tiny-V):
+
+- Of 41.38M dry cell-steps, 53.7% are exactly V == 0 (RAS-treated-dry) and 46.3% are 0 < V < 1e-3 (sub-grid tiny that the model still calls dry). The dry state is a near-even mix, not overwhelmingly clean-zero.
+
+Answer to item 3's question. It is not a static "RAS-dry vs sub-grid-tiny" split; it is a transition with a substantial sub-grid component on both sides. While dry, 46% of cell-steps already carry a sub-grid tiny volume rather than exact zero -- which directly validates a nonzero `wet_dry_volume_threshold` (commit 559a370): a strict V == 0 contract would misclassify nearly half the effectively-dry cells. Cells then pass through a thin sub-grid-V state for a few hours as the wetting front crosses, before deepening or re-drying. The transport cold artifact lives at the dry -> wet transition; the TSM hot artifact lives in the thin-wet state just after wetting (one-third of wettings land < 0.05 m, median 12 cm), but 81% of ever-thin cells are transient fronts and only 4.7% are persistent pools.
+
+## Residence-time gate vs depth proxy, measured (item 3b, 2026-05-30)
+
+Because the transcoded HDF carries per-face `Face Flow` (361 x 322,612) and `Faces Cell Indexes` (322,612 x 2), residence time was computed per cell per step from the signed face-flow field (face flow summed into per-cell outflow and inflow magnitudes via the RAS face-normal convention), together with the per-cell volume trend `dV/dt`, and compared to the 1-hour transport step. All splits below are from a float64 computation with asserted partition invariants. This tests the item-4 gate directly, and the result refines how that gate must be defined.
+
+Instantaneous (single-step) classification of the 146,244 thin-wet cell-steps:
+
+- flushed (has outflow, tau_out = V/sum|Q_out| < dt): 43,636 (29.8%) -- water replaced within a step.
+- slow throughflow (has outflow, tau_out >= dt): 4,132 (2.8%) -- genuine slow-throughflow cells.
+- no outflow, FILLING (sum|Q_out| = 0, dV/dt > 0): 53,964 (36.9%) -- advancing front, inflow but no outflow yet.
+- no outflow, STATIC (sum|Q_out| = 0, dV/dt ~ 0): 44,512 (30.4%) -- no in, no out, volume steady; candidate stagnant pool.
+
+Whole thin-wet set by volume trend: 80,481 (55.0%) filling (dV/dt > 0), 45.0% not filling. Among cells that do have outflow, finite residence times are tiny: tau_out p50 = 7.2 s, p75 = 44 s, p95 = 1.0e4 s -- such a cell flushes almost instantly.
+
+The correction. The outflow-only residence `tau_out = V/sum|Q_out|` does NOT separate transient fronts from stable pools, because a filling advancing front has inflow but no outflow yet -- so `sum|Q_out| = 0`, `tau_out = inf`, and an outflow-only gate labels it "retained" when it is in fact the most artifact-prone population. That filling-front population is 36.9% of all thin-wet cell-steps, the single largest class.
+
+Gate performance, measured on the thin-wet set (fraction flagged for a kinetics skip):
+
+- Fixed depth proxy (Rec B, depth < 0.05 m): flags all 146,244 (100%). Over-flags -- it also zeroes the genuine stable pools.
+- Outflow-only residence gate (tau_out < dt), item 4 as literally written: flags 43,636 (29.8%). Under-flags badly -- it misses the 36.9% no-outflow filling fronts (tau_out = inf), the opposite of correct.
+- Inflow-aware residence gate (tau = V/max(sum|Q_in|, sum|Q_out|) < dt): flags 51,472 (35.2%). Better than outflow-only but still far short -- it catches only ~5 points more, because a cell filling over roughly one step has V approximately sum|Q_in|*dt, so tau lands right at dt and most filling fronts fall just above the threshold.
+
+Conclusion. No single residence-time ratio at threshold dt cleanly isolates the transient population at the 1-hour stamp: the outflow-only form misses filling fronts entirely (29.8%), and the inflow-aware form is marginal (35.2%) because filling cells sit at tau ~ dt. The clean discriminator of transient-vs-stable is the volume trend dV/dt (55.0% filling) combined with throughflow, not a tau ratio alone. The refined item-4 gate should skip kinetics where the cell is flushed (tau_out < dt) OR filling (dV/dt > 0), and run kinetics only where it is both low-throughflow and not-filling. The depth proxy still over-flags (it clips genuine pools); the residence-time concept still beats it; but the gate must be (flushed OR filling), not (tau < dt).
+
+How big is the genuine stable-pool (real-signal-at-risk) population? It is bounded but uncertain: the instantaneous "static, no-flow" class is 30.4%, but instantaneous dV/dt ~ 0 over-counts pools (a transient cell caught at the turning point of its thin phase looks static for one step). The multi-hour dwell census is the better persistence estimate: only 4.7% of ever-thin cells persist thin beyond 24 h. So the true stable-pool fraction the depth proxy wrongly clips is between ~5% (multi-hour-persistent) and ~33% (instantaneous static plus slow-throughflow); the lower figure is the better estimate of genuinely-real signal.
+
+Caveats. (1) The 1-hour stamp is the hydraulics output cadence; sub-hourly wetting dynamics are unresolved, which is exactly why a single-step tau is marginal for filling cells. (2) `dV/dt` and the inflow/outflow sums are advective only; diffusive exchange is excluded, minor at fronts. (3) The filling/static split uses dV/dt > V_THR/dt as the "meaningfully filling" cutoff; a finer cutoff shifts the static fraction modestly.
+
 ## Punch list
 
 Priority 1, root cause:
 
 1. Determine HEC-RAS's wet/dry tolerance and volume treatment, and whether the RAS HDF writes a per-cell wet/dry indicator that `ClearWater-riverine` can read directly instead of re-deriving. Decide whether to consume the RAS mask or to align `wet_dry_volume_threshold` / `wet_dry_threshold` to RAS's criterion. Hooks: model.py:144-145, transport.py:559, linalg.py:278-282.
 2. Audit the staggered-time pairing of cell volume `V` and face flow `Q` at the front for stamp consistency, mirroring the donor-inheritance assumption already documented at transport.py:100-106.
-3. Map where the artifact cells actually are in the Willamette/Santiam Sept-2008 run: are they cells RAS treated as dry, cells with sub-grid tiny `V`, or both. This evidence decides whether the threshold fix alone removes the artifacts.
+3. DONE (2026-05-30; see "Where the artifact cells actually are" and "Residence-time gate vs depth proxy"). Both: the dry state is a 54/46 mix of exact-zero and sub-grid-tiny, and cells transition through a thin sub-grid-V state for a few hours as the front crosses. 49% of the mesh wets at least once; one-third of wettings land < 0.05 m; the thin-wet window is only 0.93% of wet cell-steps. The threshold fix alone does NOT remove the artifacts (cells legitimately wet to small-but-real volumes; median wetting depth 12 cm), but the 46% sub-grid-dry fraction does validate keeping `wet_dry_volume_threshold > 0`. The residence-time analysis (item 3b) refines item 4: 55.0% of thin-wet cell-steps are filling advancing fronts (artifact-prone) and the genuine stable-pool fraction is small (~5% multi-hour-persistent, up to ~33% instantaneous). No single tau-ratio at threshold dt isolates the fronts -- outflow-only flags 29.8% (misses the 36.9% no-outflow filling fronts), inflow-aware flags only 35.2% (filling cells sit at tau ~ dt), the depth proxy flags 100% (clips real pools). The refined gate must be (flushed OR filling = dV/dt>0), not a tau ratio alone.
 
 Priority 2, reconciliation:
 
-4. Implement a shared residence-time gate `tau = V / sum(|Q_out|)` compared to `dt`, computed once per step. Consume it in `reconstruct_newly_wet` (transport.py:21) to replace rather than only lift when `tau < dt`, and expose it to the kinetics skip as the rigorous replacement for the fixed `0.05` m depth proxy in Rec B (modules `q_net_depth_skip_threshold`).
+4. Implement a shared transient-cell gate compared to `dt`, computed once per step. Item 3b measured that NO single residence-time ratio at threshold dt isolates the transient population: outflow-only `tau = V/sum|Q_out| < dt` flags only 29.8% (misses the 36.9% no-outflow filling fronts, which have tau_out = inf), and inflow-aware `tau = V/max(sum|Q_in|, sum|Q_out|) < dt` flags only 35.2% (filling cells sit at tau ~ dt). Use instead a combined criterion: treat a cell as transient when it is flushed (tau_out < dt) OR filling (dV/dt > 0); run kinetics only where it is both low-throughflow and not-filling. Consume it in `reconstruct_newly_wet` (transport.py:21) to replace rather than only lift when transient, and expose it to the kinetics skip as the rigorous replacement for the fixed `0.05` m depth proxy in Rec B (modules `q_net_depth_skip_threshold`). The 55.0%-filling and ~5% persistent-pool figures (item 3b) bound the real-signal the depth proxy clips.
 5. Test the lift-only assumption: construct a case where a donor or ghost value drives a newly-wet cell too high and confirm whether lift-only wrongly preserves it. If so, the symmetric replacement in item 4 is required, not merely preferable.
 
 Priority 3, source-water initialization for no-donor wetting (real for rain-on-grid; see "DOX gap"):
