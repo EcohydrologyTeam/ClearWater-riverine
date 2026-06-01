@@ -263,6 +263,24 @@ class ClearwaterRiverine:
         # the chunk we just loaded in from_checkpoint.
         self.__just_resumed: bool = False
         self.__config_filepath = config_filepath
+        # Config-file precedence for the wet/dry, continuity, and newly-wet
+        # controls, mirroring the wet_dry_volume_threshold / allow_*_fallback
+        # pattern below: when a YAML config is supplied, a value under the
+        # ``model:`` block overrides the constructor kwarg default, so a
+        # config-driven run can reach the same transport settings a direct
+        # kwarg caller can. Keys: ``wet_dry_metric`` (str: "volume"/"depth"/
+        # "both"), ``wet_dry_threshold`` (mapping {h_min, V_min}),
+        # ``continuity_correction`` (str), ``reconstruct_newly_wet`` (bool).
+        # Absent keys leave the kwarg defaults untouched (back-compatible).
+        if config_filepath:
+            wet_dry_metric = model.get("wet_dry_metric", wet_dry_metric)
+            wet_dry_threshold = model.get("wet_dry_threshold", wet_dry_threshold)
+            continuity_correction = model.get(
+                "continuity_correction", continuity_correction
+            )
+            reconstruct_newly_wet = bool(
+                model.get("reconstruct_newly_wet", reconstruct_newly_wet)
+            )
         # Phase-D Unit A wet/dry scaffolding. wet_dry_metric=None (default)
         # is opt-out: no WET_MASK is registered and behavior is identical
         # to the pre-Unit-A path. Setting metric to "volume", "depth", or
