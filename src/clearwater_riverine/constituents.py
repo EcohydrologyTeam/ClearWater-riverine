@@ -166,6 +166,20 @@ class Constituent:
             constituent_config.get("decay_rate", 0.0) or 0.0
         )
         self.decay_rate: float = decay_rate_per_day / 86400.0
+        # Two-way coupling flag (consumed by an external kinetics model
+        # such as the ClearWater-modules ``Riverine`` bridge, not by the
+        # transport solver itself). ``True`` (default) means a coupled
+        # kinetics model that writes this constituent's canonical alias
+        # feeds the reacted result back into transport (the bridge shares
+        # the buffer). ``False`` means the kinetics may read the
+        # transported value and react on it, but its writes do not
+        # overwrite the transported field (the bridge hands kinetics an
+        # isolated per-step snapshot). Standalone transport runs ignore
+        # this flag entirely. Default ``True`` preserves existing coupled
+        # behaviour.
+        self.two_way_coupling: bool = bool(
+            constituent_config.get("two_way_coupling", True)
+        )
         self.__initial_condition_spatial_field = constituent_config["initial_conditions"]["data"].get(
             "spatial_field", "Cell_Index"  # Default to old config requriement
         )

@@ -389,6 +389,25 @@ class ClearwaterRiverine:
         """
         return self.__transport_engine
 
+    def constituent_coupling(self) -> dict:
+        """Per-constituent two-way coupling flags.
+
+        Maps each transported constituent name to its
+        ``two_way_coupling`` flag. ``True`` (the default) means a coupled
+        kinetics model writing the constituent's canonical alias feeds
+        the reacted result back into transport (shared buffer); ``False``
+        means the kinetics may read and react on the transported value
+        but its writes do not overwrite the transported field. The
+        transport solver itself never reads this; it exists so an
+        external consumer (e.g. the ClearWater-modules ``Riverine``
+        bridge) can decide shared vs isolated registration per
+        constituent without reaching into private state.
+        """
+        return {
+            name: bool(getattr(c, "two_way_coupling", True))
+            for name, c in self._constituents.items()
+        }
+
     @property
     def mesh(self) -> MeshView:
         """Fork-compat view of the registry shaped like ``model.mesh``.
